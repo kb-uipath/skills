@@ -5,7 +5,6 @@ Each page describes when to use the skill, what inputs to provide, and a starter
 | Skill | Category | Docs |
 | --- | --- | --- |
 | account-meeting-availability | Customer operations | [account-meeting-availability.md](./account-meeting-availability.md) |
-| act-2-customer-expansion-proposals | GTM and executive proposals | [act-2-customer-expansion-proposals.md](./act-2-customer-expansion-proposals.md) |
 | estimate-du-units | Consumption planning | [estimate-du-units.md](./estimate-du-units.md) |
 | gtm-org-proposal-generator | GTM and executive proposals | [gtm-org-proposal-generator.md](./gtm-org-proposal-generator.md) |
 | llm-council | Decision support | [llm-council.md](./llm-council.md) |

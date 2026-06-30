@@ -6,7 +6,7 @@ The skills are copied as top-level directories so they can be installed or synce
 
 ## What is included
 
-- 18 top-level personal Codex skills from `~/.codex/skills`.
+- 17 top-level personal Codex skills from `~/.codex/skills`.
 - Per-skill `SKILL.md` files plus bundled references, scripts, assets, and templates.
 - Generated documentation in `docs/` with use cases, required inputs, and prompt examples.
 - Hidden backups, `.DS_Store` files, local zip artifacts, and upstream `UiPath/skills` exports are intentionally excluded.
@@ -74,7 +74,6 @@ Use $repo-hardening-sprint on this repository. Identify the highest-impact clean
 
 | Skill | What it does | When to use it | Docs |
 | --- | --- | --- | --- |
-| [act-2-customer-expansion-proposals](./act-2-customer-expansion-proposals/SKILL.md) | Create Act 2 customer expansion proposal cards from a customer-provided use case or automation idea inventory. | Create Act 2 customer expansion proposal cards from a customer-provided use case or automation idea inventory. Use when Codex is asked to analyze an existing UiPath customer, agency, public-sector entity, enterprise account, or department; identify strategic objectives from public sources; cross-reference those objectives against an uploaded spreadsheet/CSV/table of automation ideas; prioritize expansion-ready agentic use cases; estimate planning value; validate UiPath Automation Cloud capability fit; and produce a concise .docx Word executive briefing as the final artifact. | [docs](./docs/act-2-customer-expansion-proposals.md) |
 | [gtm-org-proposal-generator](./gtm-org-proposal-generator/SKILL.md) | Build executive-level UiPath automation proposal cards from public organizational research. | Build executive-level UiPath automation proposal cards from public organizational research. Use when Codex is asked to research an organization, agency, department, public company, healthcare system, university, or other institution; analyze budgets, strategic goals, administrative burden, or cost drivers; identify automation use cases; and produce cited GTM, sales, C-suite, public sector, or federal proposal content aligned to a specified industry vertical and UiPath deployment type. | [docs](./docs/gtm-org-proposal-generator.md) |
 | [uipath-agentic-expansion-planner](./uipath-agentic-expansion-planner/SKILL.md) | analyze detailed customer automation or use-case inventories to produce evidence-backed uipath act 2 expansion plans, agentic automation portfolios, top 5 high-impact recommendations, top 3 low-friction poc candidates, and a final verified executive .docx Word brief every run. | analyze detailed customer automation or use-case inventories to produce evidence-backed uipath act 2 expansion plans, agentic automation portfolios, top 5 high-impact recommendations, top 3 low-friction poc candidates, and a final verified executive .docx Word brief every run. use when the user provides or references a customer inventory spreadsheet, asks for agentic expansion ideas, asks to prioritize uipath opportunities, or needs a customer-ready proposal grounded in inventory data, public strategy evidence, deployment-aware validation, and Word-ready executive packaging. | [docs](./docs/uipath-agentic-expansion-planner.md) |
 

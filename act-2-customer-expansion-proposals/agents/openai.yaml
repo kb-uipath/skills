@@ -1,4 +1,0 @@
-interface:
-  display_name: "Act 2 Customer Expansion Proposals"
-  short_description: "Create final Word proposal briefs"
-  default_prompt: "Use $act-2-customer-expansion-proposals to crosswalk this customer use-case inventory against public strategy and create concise executive proposal cards, a prioritization table, and a final .docx brief."
