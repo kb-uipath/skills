@@ -1,0 +1,4 @@
+interface:
+  display_name: "LLM Council"
+  short_description: "Structured advisor deliberation"
+  default_prompt: "Use $llm-council to stress-test this decision and produce a council verdict."

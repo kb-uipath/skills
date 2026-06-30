@@ -1,0 +1,4 @@
+interface:
+  display_name: "PubSec Big Rocks Row Research"
+  short_description: "Research one PubSec Big Rocks account row from internal sources."
+  default_prompt: "Research one account row in the PubSec CS Portfolio Big Rocks workbook and return evidence-backed fill recommendations."

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Salesforce MEDDPICC Update"
+  short_description: "Safely update Salesforce MEDDPICC fields"
+  brand_color: "#00A1E0"
+  default_prompt: "Use $salesforce-meddpicc-update to draft, confirm, write, and verify MEDDPICC updates on this Salesforce Opportunity."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,4 @@
+interface:
+  display_name: "UiPath RPA Skill Hardening"
+  short_description: "Improve RPA skill docs for agent reliability"
+  default_prompt: "Use $uipath-rpa-skill-hardening to harden UiPath RPA skill docs for agent use."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Repo Hardening Sprint"
+  short_description: "Safe cleanup, refactor, docs, and commit gates"
+  default_prompt: "Use $repo-hardening-sprint to review, clean up, validate, and prepare this repository for a safe commit."

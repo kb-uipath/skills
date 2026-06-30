@@ -1,0 +1,4 @@
+interface:
+  display_name: "UiPath Skills Contributor"
+  short_description: "Prioritize, implement, and publish UiPath skills PRs"
+  default_prompt: "Use $uipath-skills-contributor to find and ship the next high-impact UiPath/skills contribution."

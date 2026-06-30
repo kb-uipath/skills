@@ -1,0 +1,4 @@
+interface:
+  display_name: "Account Meeting Availability"
+  short_description: "Manage account meeting contacts"
+  default_prompt: "Use $account-meeting-availability to add, edit, or source customer and UiPath account meeting contacts with evidence."

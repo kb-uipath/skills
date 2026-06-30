@@ -1,0 +1,24 @@
+{
+  "fields": [
+    { "name": "Metrics__c", "type": "textarea", "length": 32768, "updateable": true },
+    { "name": "Economic_Buyer__c", "type": "reference", "length": 18, "updateable": true, "referenceTo": ["Contact"] },
+    { "name": "Required_Capabilities__c", "type": "textarea", "length": 10000, "updateable": true },
+    { "name": "Decision_Process_Actual__c", "type": "textarea", "length": 32768, "updateable": true },
+    { "name": "Paper_Process__c", "type": "textarea", "length": 32768, "updateable": true },
+    { "name": "Pains_Challenges__c", "type": "textarea", "length": 32768, "updateable": true },
+    { "name": "Champion_Actual__c", "type": "reference", "length": 18, "updateable": true, "referenceTo": ["Contact"] },
+    {
+      "name": "Competition__c",
+      "type": "multipicklist",
+      "length": 4099,
+      "updateable": true,
+      "picklistValues": [
+        { "value": "Automation Anywhere", "active": true },
+        { "value": "Blue Prism", "active": true }
+      ]
+    },
+    { "name": "Competition_meddic__c", "type": "textarea", "length": 32768, "updateable": true },
+    { "name": "NextStep", "type": "string", "length": 255, "updateable": true },
+    { "name": "Opportunity_Next_Steps__c", "type": "textarea", "length": 32768, "updateable": true }
+  ]
+}

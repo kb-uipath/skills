@@ -1,0 +1,23 @@
+{
+  "Id": "006Pa00000TNhhtIAD",
+  "Name": "Selective Insurance",
+  "AccountId": "001Pa00000Account",
+  "Account": {
+    "Name": "Selective Insurance"
+  },
+  "StageName": "Proposal/Price Quote",
+  "CloseDate": "2026-06-30",
+  "Amount": 250000,
+  "LastModifiedDate": "2026-05-19T14:30:00.000+0000",
+  "NextStep": null,
+  "Opportunity_Next_Steps__c": null,
+  "Metrics__c": "Existing metrics",
+  "Economic_Buyer__c": null,
+  "Required_Capabilities__c": null,
+  "Decision_Process_Actual__c": null,
+  "Paper_Process__c": null,
+  "Pains_Challenges__c": null,
+  "Champion_Actual__c": null,
+  "Competition__c": null,
+  "Competition_meddic__c": null
+}

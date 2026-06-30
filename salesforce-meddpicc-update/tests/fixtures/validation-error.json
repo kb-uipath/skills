@@ -1,0 +1,10 @@
+{
+  "status": 400,
+  "body": [
+    {
+      "errorCode": "INVALID_FIELD_FOR_INSERT_UPDATE",
+      "message": "bad value for restricted picklist field: Unknown Vendor",
+      "fields": ["Competition__c"]
+    }
+  ]
+}

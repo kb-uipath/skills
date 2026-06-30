@@ -1,0 +1,10 @@
+{
+  "status": 400,
+  "body": [
+    {
+      "errorCode": "INVALID_FIELD",
+      "message": "No such column 'Compelling_Event__c' on entity 'Opportunity'",
+      "fields": ["Compelling_Event__c"]
+    }
+  ]
+}

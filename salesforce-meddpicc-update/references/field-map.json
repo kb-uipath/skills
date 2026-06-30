@@ -1,0 +1,110 @@
+{
+  "apiVersion": "v60.0",
+  "targetConnector": "uipath-salesforce-sfdc",
+  "opportunityPrefix": "006",
+  "contactPrefix": "003",
+  "staleDraftMinutes": 10,
+  "fields": {
+    "metrics": {
+      "label": "Metrics",
+      "apiName": "Metrics__c",
+      "expectedType": "textarea",
+      "mode": "append",
+      "maxLength": 32768,
+      "aliases": ["metrics", "metrics__c"]
+    },
+    "economicBuyer": {
+      "label": "Economic Buyer",
+      "apiName": "Economic_Buyer__c",
+      "expectedType": "reference",
+      "mode": "lookup",
+      "referenceTo": "Contact",
+      "referencePrefix": "003",
+      "strategyHeader": "ECONOMIC BUYER STRATEGY",
+      "strategyRouteTo": "Opportunity_Next_Steps__c",
+      "aliases": ["economic buyer", "economicbuyer", "economic_buyer__c", "economicbuyer__c"]
+    },
+    "decisionCriteria": {
+      "label": "Decision Criteria",
+      "apiName": "Required_Capabilities__c",
+      "expectedType": "textarea",
+      "mode": "append",
+      "maxLength": 10000,
+      "aliases": ["decision criteria", "decisioncriteria", "required_capabilities__c", "requiredcapabilities__c"]
+    },
+    "decisionProcess": {
+      "label": "Decision Process",
+      "apiName": "Decision_Process_Actual__c",
+      "expectedType": "textarea",
+      "mode": "append",
+      "maxLength": 32768,
+      "aliases": ["decision process", "decisionprocess", "decision_process_actual__c", "decisionprocessactual__c"]
+    },
+    "paperProcess": {
+      "label": "Paper Process",
+      "apiName": "Paper_Process__c",
+      "expectedType": "textarea",
+      "mode": "append",
+      "maxLength": 32768,
+      "aliases": ["paper process", "paperprocess", "paper_process__c", "paperprocess__c"]
+    },
+    "identifiedPain": {
+      "label": "Identified Pain",
+      "apiName": "Pains_Challenges__c",
+      "expectedType": "textarea",
+      "mode": "append",
+      "maxLength": 32768,
+      "aliases": ["identified pain", "identified pains", "identifiedpain", "identifiedpains", "pains_challenges__c", "painschallenges__c"]
+    },
+    "champion": {
+      "label": "Champion",
+      "apiName": "Champion_Actual__c",
+      "expectedType": "reference",
+      "mode": "lookup",
+      "referenceTo": "Contact",
+      "referencePrefix": "003",
+      "strategyHeader": "CHAMPION STRATEGY",
+      "strategyRouteTo": "Opportunity_Next_Steps__c",
+      "aliases": ["champion", "champion_actual__c", "championactual__c"]
+    },
+    "competition": {
+      "label": "Competition Narrative",
+      "apiName": "Competition_meddic__c",
+      "expectedType": "textarea",
+      "mode": "append",
+      "maxLength": 32768,
+      "aliases": ["competition", "competition narrative", "competitionnarrative", "competition_meddic__c", "competitionmeddic__c"]
+    },
+    "competitionPicklist": {
+      "label": "Competition Picklist",
+      "apiName": "Competition__c",
+      "expectedType": "multipicklist",
+      "mode": "replace",
+      "maxLength": 4099,
+      "aliases": ["competition picklist", "competitionpicklist", "competition__c"]
+    },
+    "nextStep": {
+      "label": "Next Step",
+      "apiName": "NextStep",
+      "expectedType": "string",
+      "mode": "replace",
+      "maxLength": 255,
+      "aliases": ["next step", "nextstep", "next step short", "nextstepshort"]
+    },
+    "opportunityNextSteps": {
+      "label": "Opportunity Next Steps",
+      "apiName": "Opportunity_Next_Steps__c",
+      "expectedType": "textarea",
+      "mode": "append",
+      "maxLength": 32768,
+      "aliases": ["opportunity next steps", "opportunitynextsteps", "opportunity_next_steps__c"]
+    },
+    "compellingEvent": {
+      "label": "Compelling Event",
+      "mode": "route",
+      "routeTo": "Opportunity_Next_Steps__c",
+      "header": "COMPELLING EVENT",
+      "aliases": ["compelling event", "compelling_event", "compellingevent", "compellingevent__c"]
+    }
+  }
+}
