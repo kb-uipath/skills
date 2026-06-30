@@ -13,11 +13,8 @@ Each page describes when to use the skill, what inputs to provide, and a starter
 | salesforce-meddpicc-update | Sales operations | [salesforce-meddpicc-update.md](./salesforce-meddpicc-update.md) |
 | uipath-agentic-expansion-planner | GTM and executive proposals | [uipath-agentic-expansion-planner.md](./uipath-agentic-expansion-planner.md) |
 | uipath-diagnostics | UiPath troubleshooting | [uipath-diagnostics.md](./uipath-diagnostics.md) |
-| uipath-interact | UiPath UI interaction | [uipath-interact.md](./uipath-interact.md) |
 | uipath-llm-configuration-byo-connections | UiPath platform | [uipath-llm-configuration-byo-connections.md](./uipath-llm-configuration-byo-connections.md) |
 | uipath-rpa-legacy | UiPath build | [uipath-rpa-legacy.md](./uipath-rpa-legacy.md) |
-| uipath-rpa-skill-hardening | Skill maintenance | [uipath-rpa-skill-hardening.md](./uipath-rpa-skill-hardening.md) |
-| uipath-skills-contributor | Skill maintenance | [uipath-skills-contributor.md](./uipath-skills-contributor.md) |
 | uipath-solution-design | UiPath design | [uipath-solution-design.md](./uipath-solution-design.md) |
 | uipcodedappdeploy | UiPath deploy | [uipcodedappdeploy.md](./uipcodedappdeploy.md) |
 | usecasehandoff | Delivery handoff | [usecasehandoff.md](./usecasehandoff.md) |

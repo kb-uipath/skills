@@ -26,7 +26,7 @@ def decimal_arg(value: str) -> Decimal:
 def parse_case(value: str) -> tuple[str, Decimal, Decimal]:
     try:
         label, rest = value.split("=", 1)
-        transactions, pages = rest.split(",", 1)
+        transactions, pages = rest.rsplit(",", 1)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(
             "case must be label=transactions,pages, for example base=197518,1"

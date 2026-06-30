@@ -89,19 +89,6 @@ Use $repo-hardening-sprint on this repository. Identify the highest-impact clean
 | --- | --- | --- | --- |
 | [salesforce-meddpicc-update](./salesforce-meddpicc-update/SKILL.md) | Update MEDDPICC qualification fields and Next Steps on UiPath Salesforce Opportunities through the UiPath Integration Service Salesforce connector. | Update MEDDPICC qualification fields and Next Steps on UiPath Salesforce Opportunities through the UiPath Integration Service Salesforce connector. Use when the user provides or references a Salesforce Opportunity URL or ID and asks to update MEDDPICC, qualification, Metrics, Economic Buyer, Decision Criteria, Decision Process, Paper Process, Identified Pain, Champion, Competition, Compelling Event, or Next Steps. Requires read-before-write, schema describe validation, explicit user confirmation, append-with-date behavior for narrative fields, read-after-write verification, prompt-injection guardrail, fuzzy near-duplicate detection, force-duplicate override, and privacy-safe telemetry logging. | [docs](./docs/salesforce-meddpicc-update.md) |
 
-### Skill maintenance
-
-| Skill | What it does | When to use it | Docs |
-| --- | --- | --- | --- |
-| [uipath-rpa-skill-hardening](./uipath-rpa-skill-hardening/SKILL.md) | Use when Codex needs to improve, review, or repair UiPath/skills RPA skill content for agent reliability: `skills/uipath-rpa`, RPA discovery docs, XAML/UIA guidance, CLI snippets, project-context instructions, activity docs, validation guidance, or RPA-related PRs and issues. | Use when Codex needs to improve, review, or repair UiPath/skills RPA skill content for agent reliability: `skills/uipath-rpa`, RPA discovery docs, XAML/UIA guidance, CLI snippets, project-context instructions, activity docs, validation guidance, or RPA-related PRs and issues. | [docs](./docs/uipath-rpa-skill-hardening.md) |
-| [uipath-skills-contributor](./uipath-skills-contributor/SKILL.md) | Use when Codex needs to contribute to the UiPath/skills repository end to end: analyze open issues and PRs, prioritize high-impact low-effort fixes or enhancements, implement clean external-contributor patches, validate repo requirements, push branches, create ready pull requests, and review or repair submitted PRs without Codex branding or inappropriate labels. | Use when Codex needs to contribute to the UiPath/skills repository end to end: analyze open issues and PRs, prioritize high-impact low-effort fixes or enhancements, implement clean external-contributor patches, validate repo requirements, push branches, create ready pull requests, and review or repair submitted PRs without Codex branding or inappropriate labels. | [docs](./docs/uipath-skills-contributor.md) |
-
-### UiPath UI interaction
-
-| Skill | What it does | When to use it | Docs |
-| --- | --- | --- | --- |
-| [uipath-interact](./uipath-interact/SKILL.md) | UiPath UI interaction (`uip rpa uia`) - drive live desktop/browser apps: click, type, read values, screenshot, inspect UI state, verify behavior, fill forms, navigate menus, extract table data from running applications. | User wants to drive or inspect a live running app (Windows desktop or browser) - 'click the button', 'fill this form', 'read the value from the screen', 'screenshot the dialog', 'extract this table', 'verify the UI shows X', 'walk through this app'. Live execution only - NOT for authoring XAML/coded selectors at design time (use uipath-rpa). | [docs](./docs/uipath-interact.md) |
-
 ### UiPath build
 
 | Skill | What it does | When to use it | Docs |
