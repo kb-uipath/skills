@@ -1,6 +1,6 @@
 # Output templates
 
-Use these templates to create consistent outputs for UiPath agentic expansion planning. Treat Markdown as the source for the final Word brief or as a supporting artifact; the final deliverable is the verified `.docx` unless the user explicitly prohibits file output.
+Use these templates to create consistent outputs for UiPath agentic expansion planning. Treat Markdown as the source for the final Word brief or as a supporting artifact; the final deliverable is the verified `.docx` unless the user explicitly prohibits file output. Apply `brand_and_brief_quality.md` before rendering.
 
 ## Default executive brief structure
 
@@ -10,7 +10,7 @@ Use this structure for the concise Word-source Markdown. Keep it executive-skimm
 
 ## Executive Summary
 
-[3 to 5 sentences. State the current automation footprint, the strategic alignment thesis, the strongest expansion themes, and the recommended next step. Be specific and avoid generic AI language.]
+[3 to 5 sentences. Lead with why this matters now for the customer, state the current automation footprint, the strategic alignment thesis, the strongest expansion themes, and the recommended decision or next step. Be specific and avoid generic AI language.]
 
 ## Source and Assumption Note
 
@@ -137,7 +137,7 @@ Use the full GTM-ready proposal card format for the Top 5 High-Impact Recommenda
 
 **Recommendation:** [One sentence stating what to do.]
 
-**Why now:** [Public strategy and account context.]
+**Why now:** [Customer need, public strategy, and account context.]
 
 **Inventory evidence:** [Specific process clusters, departments, statuses, volume/value fields, or row examples.]
 
@@ -158,6 +158,14 @@ Use the full GTM-ready proposal card format for the Top 5 High-Impact Recommenda
 - [Question 3]
 
 Cards should be detailed enough for GTM use but short enough that executives can skim the section quickly.
+
+Before rendering the Word brief, run:
+
+```bash
+python3 scripts/validate_executive_brief.py <brief.md>
+```
+
+Fix any failure instead of treating the validator as advisory.
 
 ## Proposal card format
 
@@ -219,8 +227,11 @@ Use this if the output is meant to support a customer workshop.
 ## Tone rules
 
 - Be direct and executive-ready.
+- Start with the customer's need and desired outcome before naming UiPath capabilities.
+- State the decision ask, workshop ask, or pilot next step in the executive summary.
 - Use evidence-backed claims.
 - Separate facts, assumptions, and inferences.
 - Avoid hype words such as revolutionary, game-changing, or guaranteed.
 - Avoid generic use-case language.
 - Use specific workflow names, departments, and value levers whenever possible.
+- Do not create unofficial logos, lockups, badges, avatar art, or decorative pixel treatments in generated artifacts.

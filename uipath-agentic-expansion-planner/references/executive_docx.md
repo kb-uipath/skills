@@ -4,7 +4,7 @@ Use these rules when `uipath-agentic-expansion-planner` produces its final Word 
 
 ## Document Shape
 
-Create a concise Markdown briefing first, then render it with `scripts/render_executive_docx.py` and verify it with `scripts/verify_executive_docx.py`. Portrait orientation is mandatory unless the user explicitly asks for landscape.
+Create a concise Markdown briefing first, validate it with `scripts/validate_executive_brief.py`, then render it with `scripts/render_executive_docx.py` and verify it with `scripts/verify_executive_docx.py`. Portrait orientation is mandatory unless the user explicitly asks for landscape.
 
 Recommended sections:
 
@@ -28,6 +28,7 @@ Do not paste the full research narrative into Word. The brief should be executiv
 ## Executive Style Rules
 
 - Write for executive skimming and GTM/workshop preparation.
+- Lead with the customer's "why now" and the decision or workshop ask.
 - Prefer short paragraphs of 2-4 sentences.
 - Prefer direct headings over clever titles.
 - Keep proposal cards direct but GTM-usable: recommendation, why now, inventory evidence, agentic enhancement, capability fit, value levers, feasibility, governance, and validation questions.
@@ -36,6 +37,7 @@ Do not paste the full research narrative into Word. The brief should be executiv
 - Preserve confidence ratings and downgrade reasons.
 - Put dirty-data caveats plainly in the main body when they affect priority or value.
 - Move URLs and long source details to the source ledger or appendix.
+- Apply `brand_and_brief_quality.md`; avoid hype, generic agentic claims, product-first summaries, and unofficial brand assets.
 
 ## Table Rules
 
@@ -53,6 +55,12 @@ Use these table patterns unless the user asks otherwise:
 Avoid wide, overloaded tables in Word. If a table becomes cramped, shorten cell text before switching to landscape.
 
 ## Rendering Command
+
+Run the quality gate first:
+
+```bash
+python3 scripts/validate_executive_brief.py <brief.md>
+```
 
 Use:
 
@@ -74,10 +82,14 @@ If `python3` or `python-docx` is missing, call `load_workspace_dependencies` and
 After rendering, run:
 
 ```bash
-python3 scripts/verify_executive_docx.py <brief.docx> --require-output-dir
+python3 scripts/verify_executive_docx.py <brief.docx> --require-output-dir --require-brand-style
 ```
 
 If verification fails, fix the source Markdown, rerender the `.docx`, and rerun verification. Do not deliver a `.docx` that fails this script unless the failure is explicitly explained and accepted by the user.
+
+## Brand-safe Word styling
+
+The generated Word brief should use restrained UiPath-derived styling: Robotic Orange for title emphasis, Deep Blue for structure and table headers, Agentic Teal for agentic recommendation accents, Bright White and neutral greys for readability, and Arial as the shared-document fallback font. Do not add unofficial logos, lockups, Otto graphics, badges, or decorative pixel treatments unless the user supplies an approved template or asset.
 
 ## Verification
 
@@ -85,12 +97,14 @@ The verification script checks the core structural requirements. If verifying ma
 
 - The document has a non-empty title.
 - The document is portrait unless the user explicitly asked for landscape.
+- The Markdown source passed `scripts/validate_executive_brief.py`.
 - Expected AZ DES-style section headings are present: Executive Summary, Source and Assumption Note, Current Automation Footprint, Public Strategy Alignment, Prioritized Portfolio, Top 5 High-Impact Recommendations, Top 3 Low-Friction POC Candidates, Value Framing, Deployment and Governance Considerations, Facts/Assumptions/Validation Questions, Workshop Prep, Recommended Next Steps, and Appendix/Source Ledger.
 - Prioritized Portfolio includes at least one ranked table.
 - Top 5 High-Impact Recommendations render as proposal-card headings.
 - Top 3 Low-Friction POC Candidates render as headings or a compact table.
 - Deployment/governance, Workshop Prep, and Source Ledger sections are present.
 - Long source ledgers are not dominating the first pages.
+- Brand-style verification passes when `--require-brand-style` is used.
 - The file path is in the user-facing `outputs/` directory when that directory exists.
 - Final chat response links to the generated `.docx`; Markdown or chat text is never treated as the final deliverable.
 - If the Documents skill renderer is available, render the `.docx` to page PNGs and visually inspect for clipping, cramped tables, and broken headings before delivery.

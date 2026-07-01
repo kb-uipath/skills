@@ -1,13 +1,13 @@
 ---
 name: uipath-agentic-expansion-planner
-description: analyze detailed customer automation or use-case inventories to produce evidence-backed uipath act 2 expansion plans, agentic automation portfolios, top 5 high-impact recommendations, top 3 low-friction poc candidates, and a final verified executive .docx Word brief every run. use when the user provides or references a customer inventory spreadsheet, asks for agentic expansion ideas, asks to prioritize uipath opportunities, or needs a customer-ready proposal grounded in inventory data, public strategy evidence, deployment-aware validation, and Word-ready executive packaging.
+description: analyze detailed customer automation or use-case inventories to produce evidence-backed uipath act 2 expansion plans, agentic automation portfolios, top 5 high-impact recommendations, top 3 low-friction poc candidates, and a final on-brand verified executive .docx Word brief every run. use when the user provides or references a customer inventory spreadsheet, asks for agentic expansion ideas, asks to prioritize uipath opportunities, or needs a customer-ready proposal grounded in inventory data, public strategy evidence, deployment-aware validation, UiPath brand-aware executive writing, and Word-ready packaging.
 ---
 
 # UiPath Agentic Expansion Planner
 
 ## Purpose
 
-Transform a detailed customer automation/use-case inventory into a defensible UiPath agentic expansion portfolio and a polished, verified executive `.docx` briefing as the final deliverable every time. Anchor recommendations in two evidence sources: the customer's actual inventory and current public strategy evidence. Do not produce generic AI brainstorming.
+Transform a detailed customer automation/use-case inventory into a defensible UiPath agentic expansion portfolio and a polished, on-brand, verified executive `.docx` briefing as the final deliverable every time. Anchor recommendations in two evidence sources: the customer's actual inventory and current public strategy evidence. Do not produce generic AI brainstorming.
 
 ## Required inputs
 
@@ -44,7 +44,7 @@ Follow this sequence:
 8. Scoring and prioritization: use `references/scoring_model.md`.
 9. Value framing: use conservative planning assumptions and label uncertainty.
 10. Capability and deployment validation: map to likely UiPath capability patterns without entitlement overclaims.
-11. Executive packaging: always use `references/output_templates.md` and `references/executive_docx.md`, then render the final `.docx` with `scripts/render_executive_docx.py` and verify it with `scripts/verify_executive_docx.py`.
+11. Executive packaging: always use `references/output_templates.md`, `references/brand_and_brief_quality.md`, and `references/executive_docx.md`, validate the Markdown with `scripts/validate_executive_brief.py`, then render the final `.docx` with `scripts/render_executive_docx.py` and verify it with `scripts/verify_executive_docx.py --require-brand-style`.
 
 ## Inventory profiling script
 
@@ -85,6 +85,7 @@ A recommendation must include:
 - Specific use-case name.
 - Inventory evidence.
 - Public strategy alignment.
+- The customer "why now" and the decision ask or next step.
 - Agentic enhancement beyond baseline RPA.
 - UiPath capability fit stated as likely fit, not entitlement.
 - Value levers.
@@ -93,6 +94,8 @@ A recommendation must include:
 - Validation questions.
 
 Reject or downgrade recommendations that are generic, unsupported by inventory, unsupported by strategy, deterministic with no agentic need, high-risk without human review, or dependent on invented ROI.
+
+Before rendering, apply `references/brand_and_brief_quality.md`. Reject vendor-brochure language, hype terms, or product-first summaries that do not start from the customer's need.
 
 ## Default outputs
 
@@ -119,22 +122,28 @@ The final artifact is always a structurally verified `.docx` Word executive brie
 For every run:
 
 1. Write a concise Markdown briefing first. Do not render raw research notes directly to Word.
-2. Follow `references/executive_docx.md` for the default AZ DES-style executive portfolio structure, table patterns, proposal-card density, workshop prep, and verification. If the analysis draft is long, create a separate concise Word-source Markdown rather than rendering raw research notes.
-3. Render the Markdown with:
+2. Follow `references/brand_and_brief_quality.md` and `references/executive_docx.md` for executive voice, default AZ DES-style executive portfolio structure, table patterns, proposal-card density, workshop prep, brand-safe styling, and verification. If the analysis draft is long, create a separate concise Word-source Markdown rather than rendering raw research notes.
+3. Validate the Markdown quality gate with:
+
+```bash
+python scripts/validate_executive_brief.py <brief.md>
+```
+
+4. Render the Markdown with:
 
 ```bash
 python scripts/render_executive_docx.py <brief.md> <brief.docx> --portrait
 ```
 
-4. Save the final `.docx` under the user-facing `outputs/` directory when that directory exists.
-5. Verify the resulting document with:
+5. Save the final `.docx` under the user-facing `outputs/` directory when that directory exists.
+6. Verify the resulting document with structural and brand-style checks:
 
 ```bash
-python scripts/verify_executive_docx.py <brief.docx> --require-output-dir
+python scripts/verify_executive_docx.py <brief.docx> --require-output-dir --require-brand-style
 ```
 
-6. If the environment has the Documents skill renderer available, render the `.docx` to page images and visually inspect them before delivery. If visual rendering is unavailable, state that only structural verification was completed.
-7. Final chat responses must link to the generated `.docx` and summarize the verification result. Do not stop with Markdown, CSV, slide outline, or chat text as the final deliverable.
+7. If the environment has the Documents skill renderer available, render the `.docx` to page images and visually inspect them before delivery. If visual rendering is unavailable, state that only structural verification was completed.
+8. Final chat responses must link to the generated `.docx` and summarize the verification result. Do not stop with Markdown, CSV, slide outline, or chat text as the final deliverable.
 
 The default Word brief must be executive-skimmable and GTM/workshop-ready. It should contain the executive thesis, current footprint, strategy alignment, ranked portfolio, top 5 high-impact recommendations, top 3 low-friction POC candidates, value framing, deployment/governance considerations, facts/assumptions/validation questions, workshop prep, recommended next steps, and a concise appendix source ledger. Use a shorter compact brief only when the user explicitly asks for a short executive summary, minimal proposal-card output, or a very concise table-first artifact. It should not include raw research notes or every row-level detail.
 
@@ -144,4 +153,5 @@ The default Word brief must be executive-skimmable and GTM/workshop-ready. It sh
 - Use `references/methodology.md` for the complete workflow and evidence gates.
 - Use `references/scoring_model.md` for ranking, weighting, confidence, and rejection criteria.
 - Use `references/output_templates.md` for executive briefs, proposal cards, POC cards, source ledger, and workshop agenda.
+- Use `references/brand_and_brief_quality.md` before writing the final Markdown and before rendering any Word brief.
 - Use `references/executive_docx.md` when the output is a Word executive brief or `.docx`.

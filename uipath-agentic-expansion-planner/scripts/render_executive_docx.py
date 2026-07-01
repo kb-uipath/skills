@@ -18,11 +18,15 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 
-ACCENT = RGBColor(31, 78, 121)
-ACCENT_DARK = "1F4E79"
-ACCENT_LIGHT = "D9EAF7"
-GRAY_TEXT = RGBColor(82, 82, 82)
-ROW_ALT = "F7F9FB"
+UIPATH_ORANGE = RGBColor(250, 70, 22)
+UIPATH_DEEP_BLUE = RGBColor(24, 33, 38)
+UIPATH_AGENTIC_TEAL = RGBColor(11, 162, 179)
+UIPATH_GRAY_TEXT = RGBColor(72, 72, 72)
+UIPATH_ORANGE_HEX = "FA4616"
+UIPATH_DEEP_BLUE_HEX = "182126"
+UIPATH_AGENTIC_TEAL_HEX = "0BA2B3"
+UIPATH_ROW_ALT = "F6F6F6"
+BRAND_FONT = "Arial"
 
 
 def parse_args() -> argparse.Namespace:
@@ -178,6 +182,17 @@ def set_cell_margins(cell, top: int = 80, start: int = 80, bottom: int = 80, end
         element.set(qn("w:type"), "dxa")
 
 
+def set_font(run, *, name: str = BRAND_FONT) -> None:
+    run.font.name = name
+    r_pr = run._element.get_or_add_rPr()
+    r_fonts = r_pr.find(qn("w:rFonts"))
+    if r_fonts is None:
+        r_fonts = OxmlElement("w:rFonts")
+        r_pr.append(r_fonts)
+    for attr in ("ascii", "hAnsi", "cs"):
+        r_fonts.set(qn(f"w:{attr}"), name)
+
+
 def add_inline_markdown(paragraph, text: str, *, font_size: float | None = None) -> None:
     parts = re.split(r"(\*\*[^*]+\*\*|`[^`]+`)", text)
     for part in parts:
@@ -192,6 +207,8 @@ def add_inline_markdown(paragraph, text: str, *, font_size: float | None = None)
             run.font.color.rgb = RGBColor(75, 75, 75)
         else:
             run = paragraph.add_run(part)
+        if not (part.startswith("`") and part.endswith("`")):
+            set_font(run)
         if font_size is not None:
             run.font.size = Pt(font_size)
 
@@ -208,16 +225,16 @@ def style_document(document: Document, *, landscape: bool) -> None:
 
     styles = document.styles
     normal = styles["Normal"]
-    normal.font.name = "Aptos"
+    normal.font.name = BRAND_FONT
     normal.font.size = Pt(9.5)
 
     for style_name, size, color in [
-        ("Heading 1", 16, ACCENT),
-        ("Heading 2", 12, ACCENT),
-        ("Heading 3", 10.5, ACCENT),
+        ("Heading 1", 16, UIPATH_ORANGE),
+        ("Heading 2", 12, UIPATH_DEEP_BLUE),
+        ("Heading 3", 10.5, UIPATH_AGENTIC_TEAL),
     ]:
         style = styles[style_name]
-        style.font.name = "Aptos Display"
+        style.font.name = BRAND_FONT
         style.font.size = Pt(size)
         style.font.bold = True
         style.font.color.rgb = color
@@ -228,7 +245,8 @@ def style_document(document: Document, *, landscape: bool) -> None:
     footer.text = "Agentic expansion briefing"
     footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     footer.runs[0].font.size = Pt(8)
-    footer.runs[0].font.color.rgb = GRAY_TEXT
+    footer.runs[0].font.color.rgb = UIPATH_GRAY_TEXT
+    set_font(footer.runs[0])
 
 
 def add_title_block(document: Document, title: str, subtitle: str) -> None:
@@ -237,12 +255,14 @@ def add_title_block(document: Document, title: str, subtitle: str) -> None:
     title_run = title_para.add_run(title)
     title_run.bold = True
     title_run.font.size = Pt(20)
-    title_run.font.color.rgb = ACCENT
+    title_run.font.color.rgb = UIPATH_ORANGE
+    set_font(title_run)
 
     subtitle_para = document.add_paragraph()
     subtitle_run = subtitle_para.add_run(subtitle)
     subtitle_run.font.size = Pt(9.5)
-    subtitle_run.font.color.rgb = GRAY_TEXT
+    subtitle_run.font.color.rgb = UIPATH_GRAY_TEXT
+    set_font(subtitle_run)
 
     rule = document.add_paragraph()
     rule.paragraph_format.space_after = Pt(8)
@@ -254,7 +274,7 @@ def add_title_block(document: Document, title: str, subtitle: str) -> None:
     bottom.set(qn("w:val"), "single")
     bottom.set(qn("w:sz"), "12")
     bottom.set(qn("w:space"), "1")
-    bottom.set(qn("w:color"), ACCENT_DARK)
+    bottom.set(qn("w:color"), UIPATH_DEEP_BLUE_HEX)
     border.append(bottom)
     p_pr.append(border)
 
@@ -275,9 +295,9 @@ def add_table(document: Document, rows: Sequence[Sequence[str]]) -> None:
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
             set_cell_margins(cell)
             if row_index == 0:
-                set_cell_shading(cell, ACCENT_DARK)
+                set_cell_shading(cell, UIPATH_DEEP_BLUE_HEX)
             elif row_index % 2 == 0:
-                set_cell_shading(cell, ROW_ALT)
+                set_cell_shading(cell, UIPATH_ROW_ALT)
             paragraph = cell.paragraphs[0]
             paragraph.paragraph_format.space_after = Pt(0)
             add_inline_markdown(paragraph, text, font_size=7.8 if column_count > 5 else 8.5)

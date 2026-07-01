@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import zipfile
 from pathlib import Path
 
 from docx import Document
@@ -25,6 +26,10 @@ REQUIRED_HEADINGS = [
     "Workshop Prep",
     "Recommended Next Steps",
 ]
+
+REQUIRED_BRAND_COLORS = {"FA4616", "182126", "0BA2B3"}
+FORBIDDEN_BRAND_COLORS = {"1F4E79"}
+BRAND_FONT = "Arial"
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,6 +59,11 @@ def parse_args() -> argparse.Namespace:
         default=3,
         help="Minimum level-3 POC headings required after the Top 3 section.",
     )
+    parser.add_argument(
+        "--require-brand-style",
+        action="store_true",
+        help="Require UiPath-derived colors and shared-document font styling.",
+    )
     return parser.parse_args()
 
 
@@ -79,6 +89,31 @@ def table_has_rank_header(document: Document) -> bool:
         if len(headers) >= 2 and headers[0] == "rank" and headers[1] == "opportunity":
             return True
     return False
+
+
+def docx_xml_text(path: Path) -> str:
+    chunks: list[str] = []
+    with zipfile.ZipFile(path) as archive:
+        for name in archive.namelist():
+            if name.startswith("word/") and name.endswith(".xml"):
+                chunks.append(archive.read(name).decode("utf-8", errors="ignore"))
+    return "\n".join(chunks).upper()
+
+
+def brand_style_failures(path: Path) -> list[str]:
+    xml = docx_xml_text(path)
+    failures: list[str] = []
+    missing = sorted(color for color in REQUIRED_BRAND_COLORS if color not in xml)
+    if missing:
+        failures.append("Missing required UiPath brand color(s): " + ", ".join(missing))
+    forbidden = sorted(color for color in FORBIDDEN_BRAND_COLORS if color in xml)
+    if forbidden:
+        failures.append("Old generic Office-style color(s) still present: " + ", ".join(forbidden))
+    if BRAND_FONT.upper() not in xml:
+        failures.append(f"Missing shared-document fallback font: {BRAND_FONT}")
+    if "APTOS" in xml:
+        failures.append("Aptos font remains in generated DOCX styling.")
+    return failures
 
 
 def main() -> int:
@@ -153,6 +188,9 @@ def main() -> int:
     first_heading_names = [text for _, text in headings[:6]]
     if any("Source Ledger" in text or text.startswith("Appendix") for text in first_heading_names):
         failures.append("Source ledger appears too early; keep it in the appendix.")
+
+    if args.require_brand_style:
+        failures.extend(brand_style_failures(args.docx))
 
     if failures:
         for failure in failures:

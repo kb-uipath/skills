@@ -18,7 +18,7 @@ Do not brainstorm generic AI use cases. Use the customer's inventory as operatio
 8. Scoring and prioritization.
 9. Conservative value sizing.
 10. UiPath capability and deployment validation.
-11. Executive packaging, required DOCX rendering, and deterministic DOCX verification.
+11. Executive packaging, Markdown quality validation, required DOCX rendering, and deterministic structural/brand verification.
 
 ## 1. Intake and quality gate
 
@@ -109,6 +109,7 @@ For each candidate, define:
 - Use-case name.
 - Current-state evidence from inventory.
 - Public strategy alignment.
+- Customer "why now" and the decision ask.
 - Business problem.
 - Agentic enhancement beyond baseline RPA.
 - Affected users or process owners.
@@ -205,7 +206,7 @@ Validate deployment context:
 
 ## 11. Executive packaging
 
-Use `references/output_templates.md`. Keep executive outputs concise and defensible.
+Use `references/output_templates.md` and `references/brand_and_brief_quality.md`. Keep executive outputs concise, defensible, and aligned to UiPath voice: direct, human, practical, and customer-need-first.
 
 Every final output should include:
 
@@ -222,16 +223,25 @@ Every final output should include:
 
 Do not include raw chain-of-thought or excessive research narrative. Show evidence, assumptions, and decisions. Markdown, chat summaries, slide outlines, spreadsheets, and other formats can support the work, but they are not the final deliverable. If the analysis draft is long, create a separate concise Word-source Markdown before rendering instead of dumping raw research into the `.docx`.
 
+Before rendering, validate that the brief:
+
+- Leads with why the customer should care now.
+- States the decision ask, workshop ask, or pilot next step.
+- Connects inventory evidence to public strategy evidence.
+- Uses specific process names, owners, value levers, and validation questions.
+- Avoids hype, generic agentic brainstorming, unofficial brand assets, and product-first language.
+
 ### Word executive brief rendering
 
 For every run:
 
 1. Create a concise Markdown brief using `references/output_templates.md`.
 2. Shape the Word version as the default AZ DES-style executive portfolio brief. If the analysis draft is long, shorten supporting prose before rendering rather than dropping required sections.
-3. Load `references/executive_docx.md` and follow its document-shape and table rules.
-4. Render with `scripts/render_executive_docx.py` in portrait orientation unless the user explicitly requests landscape.
-5. Verify the output with `scripts/verify_executive_docx.py <brief.docx> --require-output-dir`. Fix the Markdown or rerender if verification fails.
-6. Visually inspect with the Documents skill renderer or another local preview path when available.
-7. Link the final `.docx` in the chat response and summarize verification. Do not stop at Markdown or chat text unless `.docx` creation is impossible or the user explicitly prohibits file output.
+3. Load `references/brand_and_brief_quality.md` and `references/executive_docx.md`, then follow the document-shape, tone, table, and brand-safe styling rules.
+4. Run `scripts/validate_executive_brief.py <brief.md>` before rendering. Fix the Markdown if it fails.
+5. Render with `scripts/render_executive_docx.py` in portrait orientation unless the user explicitly requests landscape.
+6. Verify the output with `scripts/verify_executive_docx.py <brief.docx> --require-output-dir --require-brand-style`. Fix the Markdown or rerender if verification fails.
+7. Visually inspect with the Documents skill renderer or another local preview path when available.
+8. Link the final `.docx` in the chat response and summarize verification. Do not stop at Markdown or chat text unless `.docx` creation is impossible or the user explicitly prohibits file output.
 
 The target format is a polished executive Word brief, not a transcript of the analysis. If the user needs the full research ledger, provide it as a separate Markdown, CSV, or appendix artifact rather than bloating the Word brief.
