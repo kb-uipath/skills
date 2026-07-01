@@ -1,45 +1,43 @@
 # repo-hardening-sprint
 
-## Purpose
+Run a bounded cleanup and validation sprint on a repository without changing public contracts unnecessarily.
 
-Run safe, repository-agnostic cleanup and production-hardening sprints.
+## When To Use
 
-## When to use
+Use this skill when the user asks to harden, clean up, refactor, document, test, prepare for commit, or make a repo safe to push.
 
-Run safe, repository-agnostic cleanup and production-hardening sprints. Use when Codex is asked to
-review, clean up, refactor, harden, reorganize docs, improve tests, add smoke checks, prepare a repo
-for commit, or verify that a change can be safely pushed to main without breaking public behavior.
+## Inputs
 
-## Required inputs
+- Repository path.
+- Desired hardening goal.
+- Public contracts that must not break.
+- Validation commands if known.
+- Commit, push, or PR expectations.
 
-- Repository path and target branch or commit state.
-- Scope of hardening: tests, docs, lint, security, structure, or release readiness.
-- Behavior that must not change.
-- Checks that should pass before completion.
-
-## Prompt template
+## Prompt
 
 ```text
-Use $repo-hardening-sprint to <desired outcome>.
-
-Context:
-- Target/account/project: <name or path>
-- Source files or IDs: <paths, URLs, record IDs, job IDs, or screenshots>
-- Constraints: <deployment context, read-only/write intent, timeline, output format>
-- Acceptance criteria: <how to know the work is done>
+Use $repo-hardening-sprint on this repository. Identify the highest-risk cleanup items, implement safe fixes, run the repo validation gate, and summarize residual risks.
 ```
 
-## Example prompt
+## Outputs
 
-```text
-Use $repo-hardening-sprint on this repository. Identify the highest-impact cleanup, implement safe fixes, run the relevant checks, and summarize remaining risks before commit.
+- Scoped findings and changes.
+- Tests or validation gates added or run.
+- Public contracts preserved.
+- Residual risks and follow-ups.
+- Optional review report based on `references/review-report-template.md`.
+
+## Safety
+
+- Do not revert unrelated user changes.
+- Do not perform destructive git operations unless explicitly requested.
+- Keep broad rewrites, dependency upgrades, and generated artifact churn out of scope unless needed for the stated goal.
+- For this skills repo, use `make validate` when available.
+
+## Validation
+
+```bash
+make validate
+python3 tools/validate_repo.py
 ```
-
-## Expected output
-
-A task-specific result that follows the skill's `SKILL.md` instructions, cites or references the evidence used, and calls out assumptions, blockers, and verification steps. For write-capable UiPath or Salesforce skills, expect explicit read-before-write behavior and confirmation where the skill requires it.
-
-## Source files
-
-- Skill instructions: [`../repo-hardening-sprint/SKILL.md`](../repo-hardening-sprint/SKILL.md)
-- Bundled references, templates, scripts, and assets live under [`../repo-hardening-sprint/`](../repo-hardening-sprint/) when present.

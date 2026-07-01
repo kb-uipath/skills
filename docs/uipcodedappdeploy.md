@@ -1,46 +1,43 @@
 # uipcodedappdeploy
 
-## Purpose
+Plan and execute UiPath coded app packaging, publish, and deploy commands through the native `uip` CLI.
 
-Deploy UiPath coded app projects with the native UiPath CLI.
+## When To Use
 
-## When to use
+Use this skill when Codex needs to increment a coded app project version, validate/build the app, pack it, publish it, and deploy it to UiPath Automation Cloud.
 
-Deploy UiPath coded app projects with the native UiPath CLI. Use when Codex needs to increment a
-coded app package version, validate the project, build the app dist, pack it, publish it, and deploy
-it to UiPath Automation Cloud alpha using `uip codedapp pack`, `uip codedapp publish`, and `uip
-codedapp deploy`.
+## Inputs
 
-## Required inputs
+- Project root containing `pyproject.toml`.
+- Target URL, tenant name or ID, and org name or ID as required.
+- Folder name or folder key for deploy.
+- Version bump part or explicit version.
+- Whether to run dry-run planning or `--execute`.
 
-- Coded app project path.
-- Current and target package version.
-- Target Automation Cloud environment.
-- Build, pack, publish, and deploy requirements.
-
-## Prompt template
+## Prompt
 
 ```text
-Use $uipcodedappdeploy to <desired outcome>.
-
-Context:
-- Target/account/project: <name or path>
-- Source files or IDs: <paths, URLs, record IDs, job IDs, or screenshots>
-- Constraints: <deployment context, read-only/write intent, timeline, output format>
-- Acceptance criteria: <how to know the work is done>
+Use $uipcodedappdeploy for this coded app project. Plan the version bump and pack/publish/deploy commands in dry-run mode first, and do not modify files or deploy unless I approve --execute.
 ```
 
-## Example prompt
+## Outputs
 
-```text
-Use $uipcodedappdeploy for this coded app project. Increment the package version, validate, build dist, pack, publish, and deploy with the native UiPath CLI.
+- Dry-run command plan by default.
+- Version bump in `pyproject.toml` only when `--execute` is passed.
+- `uip codedapp pack`, `publish`, and `deploy` command sequence.
+- Folder key resolution when a folder name is provided.
+
+## Safety
+
+- Dry-run is the default and must not edit files or deploy.
+- `--execute` is required for file writes and live CLI commands.
+- Do not use `--folder` and `--folder-key` together.
+- Do not deploy to a personal workspace without an explicit folder or folder key.
+- Do not print or store secrets.
+
+## Validation
+
+```bash
+python3 -m unittest discover -s uipcodedappdeploy/tests -p 'test_*.py'
+python3 tools/validate_repo.py
 ```
-
-## Expected output
-
-A task-specific result that follows the skill's `SKILL.md` instructions, cites or references the evidence used, and calls out assumptions, blockers, and verification steps. For write-capable UiPath or Salesforce skills, expect explicit read-before-write behavior and confirmation where the skill requires it.
-
-## Source files
-
-- Skill instructions: [`../uipcodedappdeploy/SKILL.md`](../uipcodedappdeploy/SKILL.md)
-- Bundled references, templates, scripts, and assets live under [`../uipcodedappdeploy/`](../uipcodedappdeploy/) when present.

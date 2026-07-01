@@ -41,6 +41,8 @@ Use this skill to turn a messy implementation into a safer, cleaner, commit-read
 4. **Validation**
    - Run targeted tests after each subsystem edit.
    - Run the full repo gate before finalizing. Prefer the repo's CI-equivalent command when present.
+   - For this skills repository, prefer `make validate` when available; it wraps `tools/validate_repo.py`, Python syntax checks, Python unit tests, Node syntax checks, Node tests, and `git diff --check`.
+   - If `make validate` is not available but `tools/validate_repo.py` exists, run `python3 tools/validate_repo.py` before final review.
    - Add a read-only smoke script when the repo has CLI/integration paths that are hard to validate through unit tests.
    - Run `git diff --check` before commit readiness.
    - If a smoke test requires credentials, production data, or writes to external systems, make it opt-in and document the manual step instead.
@@ -73,3 +75,5 @@ Report:
 - Validation commands and results.
 - Any residual risks or follow-ups.
 - Commit/push details only if those actions actually succeeded.
+
+Use `references/review-report-template.md` for org-shareable hardening summaries when the user wants a written report artifact.

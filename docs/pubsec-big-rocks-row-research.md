@@ -1,49 +1,44 @@
 # pubsec-big-rocks-row-research
 
-## Purpose
+Research one account row in the PubSec CS Portfolio Big Rocks workbook and return evidence-backed fill recommendations.
 
-Research and synthesize evidence for one account row in the PubSec CS Portfolio Big Rocks
-spreadsheet.
+## When To Use
 
-## When to use
+Use this skill when the user asks to fill, review, or validate a single Big Rocks account row using workbook tabs and provided internal evidence sources.
 
-Research and synthesize evidence for one account row in the PubSec CS Portfolio Big Rocks
-spreadsheet. Use when Codex is asked to fill, review, validate, or provide organized content for a
-single account/row/record in the PUBSEC Big Rocks workbook, especially columns for utilization,
-cloud status, AI Units, Agent Units, Test/IXP/Agentic status, FY27 Big Rocks, value tracking,
-churn/risk, and notes using SharePoint, Slack, OneNote, migration, TAC, Gov SFDC, Wingman/license,
-and workbook tabs.
+## Inputs
 
-## Required inputs
+- Big Rocks workbook path.
+- Target row number or exact account name.
+- Optional local source workbook paths.
+- Recency cutoff, either months or max age days.
+- Permission boundaries for SharePoint, Slack, OneNote, Teams, Salesforce, or other internal sources.
 
-- Workbook path or SharePoint location.
-- Exact account row or customer name.
-- Columns that need filling or validation.
-- Allowed evidence systems such as SharePoint, Slack, OneNote, Salesforce, or local files.
-
-## Prompt template
+## Prompt
 
 ```text
-Use $pubsec-big-rocks-row-research to <desired outcome>.
-
-Context:
-- Target/account/project: <name or path>
-- Source files or IDs: <paths, URLs, record IDs, job IDs, or screenshots>
-- Constraints: <deployment context, read-only/write intent, timeline, output format>
-- Acceptance criteria: <how to know the work is done>
+Use $pubsec-big-rocks-row-research for row 42 in this Big Rocks workbook. Identify blank target fields, scan only current evidence, and return fill recommendations with source-backed caveats. Do not write to the workbook.
 ```
 
-## Example prompt
+## Outputs
 
-```text
-Use $pubsec-big-rocks-row-research for the Department of Example row in the PubSec Big Rocks workbook. Fill utilization, cloud status, AI Units, FY27 Big Rocks, risks, and notes with cited evidence.
+- Target account row summary.
+- Blank or placeholder target fields.
+- Structured source matches.
+- Internal workbook tab matches.
+- Stale/missing source report.
+- Recommendation leads to investigate before filling cells.
+
+## Safety
+
+- Do not fill workbook cells unless the user explicitly asks after reviewing evidence.
+- Treat stale rows, missing files, placeholder bullets, and weak source timestamps as `do not fill` signals.
+- Use internal sources only within the user's authorization.
+- Keep customer-specific evidence citations specific enough for review but avoid exposing credentials or private exports in public docs.
+
+## Validation
+
+```bash
+python3 -m unittest discover -s pubsec-big-rocks-row-research/tests -p 'test_*.py'
+python3 tools/validate_repo.py
 ```
-
-## Expected output
-
-A task-specific result that follows the skill's `SKILL.md` instructions, cites or references the evidence used, and calls out assumptions, blockers, and verification steps. For write-capable UiPath or Salesforce skills, expect explicit read-before-write behavior and confirmation where the skill requires it.
-
-## Source files
-
-- Skill instructions: [`../pubsec-big-rocks-row-research/SKILL.md`](../pubsec-big-rocks-row-research/SKILL.md)
-- Bundled references, templates, scripts, and assets live under [`../pubsec-big-rocks-row-research/`](../pubsec-big-rocks-row-research/) when present.

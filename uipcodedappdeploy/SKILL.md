@@ -54,13 +54,13 @@ Use `scripts/uipcodedappdeploy.py` for a consistent version bump and command seq
 Dry run from a project root:
 
 ```bash
-python ~/.codex/skills/uipcodedappdeploy/scripts/uipcodedappdeploy.py --project-root . --tenant-name "<tenant>" --folder "<folder>"
+python scripts/uipcodedappdeploy.py --project-root . --tenant-name "<tenant>" --folder "<folder>"
 ```
 
 Execute:
 
 ```bash
-python ~/.codex/skills/uipcodedappdeploy/scripts/uipcodedappdeploy.py --project-root . --tenant-name "<tenant>" --folder "<folder>" --execute
+python scripts/uipcodedappdeploy.py --project-root . --tenant-name "<tenant>" --folder "<folder>" --execute
 ```
 
 Useful options:

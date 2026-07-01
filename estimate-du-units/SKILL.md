@@ -7,7 +7,7 @@ description: Estimate annual UiPath Document Understanding AI Unit or Platform U
 
 ## Operating Rules
 
-- Treat licensing and metering as time-sensitive. For customer-facing estimates, verify current UiPath docs and licensing pages before finalizing.
+- Treat licensing and metering as time-sensitive. For customer-facing estimates, verify current UiPath docs and licensing pages before finalizing, and include the exact verification date in the estimate.
 - Prefer official UiPath sources for metering, customer operational data for volume, and official/regulatory sources only when customer data is unavailable.
 - Keep AI Units and Platform Units separate. Do not convert between them unless the current licensing source provides the rate.
 - State whether the result is a planning estimate, not a quote.

@@ -1,47 +1,45 @@
 # gtm-org-proposal-generator
 
-## Purpose
+Generate source-backed UiPath automation proposal cards from public organizational research.
 
-Build executive-level UiPath automation proposal cards from public organizational research.
+## When To Use
 
-## When to use
+Use this skill for public-sector agencies, companies, universities, healthcare systems, or other institutions where the user wants budget-informed proposal cards and a prioritized use-case table.
 
-Build executive-level UiPath automation proposal cards from public organizational research. Use when
-Codex is asked to research an organization, agency, department, public company, healthcare system,
-university, or other institution; analyze budgets, strategic goals, administrative burden, or cost
-drivers; identify automation use cases; and produce cited GTM, sales, C-suite, public sector, or
-federal proposal content aligned to a specified industry vertical and UiPath deployment type.
+## Inputs
 
-## Required inputs
+- Organization name and exact target entity.
+- Industry or vertical.
+- UiPath deployment context.
+- Any scope limits, geography, fiscal year, or output format.
+- Permission to browse current public sources and current UiPath product documentation.
 
-- Target organization or account.
-- Industry or public-sector vertical.
-- UiPath deployment context and capability constraints.
-- Desired number of use cases and final format.
-
-## Prompt template
+## Prompt
 
 ```text
-Use $gtm-org-proposal-generator to <desired outcome>.
-
-Context:
-- Target/account/project: <name or path>
-- Source files or IDs: <paths, URLs, record IDs, job IDs, or screenshots>
-- Constraints: <deployment context, read-only/write intent, timeline, output format>
-- Acceptance criteria: <how to know the work is done>
+Use $gtm-org-proposal-generator for Fixture Agency in public sector on Automation Cloud Public Sector. Build a public-source ledger, rank budget-backed program areas, and produce cited proposal cards without unsupported ROI claims.
 ```
 
-## Example prompt
+## Outputs
 
-```text
-Use $gtm-org-proposal-generator for Tennessee STS, vertical public sector, deployment Automation Cloud Public Sector. Research public sources and generate five cited UiPath proposal cards.
+- Confirmed scope.
+- Source ledger with IDs such as `[S1]`.
+- Budget/program-area table.
+- Prioritized use cases.
+- Executive proposal cards with estimate tier labels.
+- Assumptions and validation questions.
+
+## Safety
+
+- Use public authoritative sources by default; do not use internal Slack, Teams, SharePoint, Drive, email, or Salesforce unless the user explicitly changes scope.
+- Browse for current laws, budgets, filings, and UiPath capability availability because those details drift.
+- Never fabricate budget lines, savings, licensing availability, or deployment eligibility.
+- Label impact estimates as `Documented`, `Derived`, `Benchmarked`, or `Assumption`.
+
+## Validation
+
+```bash
+python3 -m unittest discover -s gtm-org-proposal-generator/tests -p 'test_*.py'
+python3 gtm-org-proposal-generator/scripts/validate_gtm_output.py path/to/proposal.md
+python3 tools/validate_repo.py
 ```
-
-## Expected output
-
-A task-specific result that follows the skill's `SKILL.md` instructions, cites or references the evidence used, and calls out assumptions, blockers, and verification steps. For write-capable UiPath or Salesforce skills, expect explicit read-before-write behavior and confirmation where the skill requires it.
-
-## Source files
-
-- Skill instructions: [`../gtm-org-proposal-generator/SKILL.md`](../gtm-org-proposal-generator/SKILL.md)
-- Bundled references, templates, scripts, and assets live under [`../gtm-org-proposal-generator/`](../gtm-org-proposal-generator/) when present.

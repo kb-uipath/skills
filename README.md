@@ -1,14 +1,14 @@
 # kb-uipath skills
 
-This repository contains Keith Born's personal Codex skills from `~/.codex/skills`, packaged for public GitHub use.
+This repository contains Codex skills packaged for public GitHub use and broader organizational sharing.
 
 The skills are copied as top-level directories so they can be installed or synced directly into a Codex skills folder. The `docs/` folder contains usage notes, required inputs, and example prompts for each skill.
 
 ## What is included
 
-- 10 top-level personal Codex skills from `~/.codex/skills`.
+- 10 top-level Codex skills.
 - Per-skill `SKILL.md` files plus bundled references, scripts, assets, and templates.
-- Generated documentation in `docs/` with use cases, required inputs, and prompt examples.
+- Skill-specific documentation in `docs/` with inputs, prompts, outputs, safety notes, and validation commands.
 - Hidden backups, `.DS_Store` files, local zip artifacts, and upstream `UiPath/skills` exports are intentionally excluded.
 
 ## Install
@@ -37,6 +37,16 @@ Upstream `UiPath/skills` exports are not vendored here.
 ```text
 Use $repo-hardening-sprint on this repository. Identify the highest-impact cleanup, implement safe fixes, run the relevant checks, and summarize remaining risks before commit.
 ```
+
+## Validate
+
+Run the local gate before committing or sharing changes:
+
+```bash
+make validate
+```
+
+The gate checks skill metadata, docs coverage, relative Markdown links, local absolute path leaks, Python syntax, Python unit tests, Node syntax/tests, and whitespace errors.
 
 ## Skill index
 

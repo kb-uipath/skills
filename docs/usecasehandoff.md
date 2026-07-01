@@ -1,48 +1,44 @@
 # usecasehandoff
 
-## Purpose
+Capture, verify, synthesize, package, and route automation use-case handoffs for delivery teams.
 
-Capture, verify, synthesize, package, and route customer or internal automation use case handoffs.
+## When To Use
 
-## When to use
+Use this skill when a customer or internal automation idea needs to become an evidence-backed handoff package with executive framing, delivery plan, risks, references, and next steps.
 
-Capture, verify, synthesize, package, and route customer or internal automation use case handoffs.
-Use when Codex needs to gather known information from chats, email, Slack, Teams, SharePoint, Drive,
-local files, or web sources; produce executive framing, cited metrics, business impact, solution
-workflow, delivery plan, enterprise hardening recommendations, AI/UiPath AI Unit consumption
-opportunities, risk register, next steps, and downloadable artifacts for a professional services or
-automation delivery team.
+## Inputs
 
-## Required inputs
+- Customer or internal team.
+- Use case name, process name, sponsor, and stakeholders.
+- Source materials from chat, files, email, Slack, Teams, SharePoint, Drive, or public sources.
+- Current and target process details.
+- Metrics, systems, integrations, constraints, and delivery audience.
 
-- Use case notes, source links, or conversation context.
-- Customer, internal owner, and destination team.
-- Evidence sources to verify.
-- Required deliverables and routing instructions.
-
-## Prompt template
+## Prompt
 
 ```text
-Use $usecasehandoff to <desired outcome>.
-
-Context:
-- Target/account/project: <name or path>
-- Source files or IDs: <paths, URLs, record IDs, job IDs, or screenshots>
-- Constraints: <deployment context, read-only/write intent, timeline, output format>
-- Acceptance criteria: <how to know the work is done>
+Use $usecasehandoff to package this automation use case for a delivery team. Build an evidence ledger first, separate facts from assumptions, create the delivery plan, and do not upload or send anything without confirmation.
 ```
 
-## Example prompt
+## Outputs
 
-```text
-Use $usecasehandoff to turn these notes into a professional services handoff with executive framing, cited metrics, workflow, delivery plan, risks, next steps, and artifacts.
+- Dated handoff package folder.
+- Evidence ledger.
+- Delivery plan.
+- Risk register.
+- Cover message.
+- Optional ZIP or routed upload only after confirmation.
+
+## Safety
+
+- Do not send, post, upload, or share package artifacts without explicit authorization.
+- Do not present uncited metrics as facts.
+- Separate customer-specific evidence from public/vendor documentation.
+- Use `scripts/create_handoff_package.py` for deterministic local scaffolding before connector writes.
+
+## Validation
+
+```bash
+python3 -m unittest discover -s usecasehandoff/tests -p 'test_*.py'
+python3 tools/validate_repo.py
 ```
-
-## Expected output
-
-A task-specific result that follows the skill's `SKILL.md` instructions, cites or references the evidence used, and calls out assumptions, blockers, and verification steps. For write-capable UiPath or Salesforce skills, expect explicit read-before-write behavior and confirmation where the skill requires it.
-
-## Source files
-
-- Skill instructions: [`../usecasehandoff/SKILL.md`](../usecasehandoff/SKILL.md)
-- Bundled references, templates, scripts, and assets live under [`../usecasehandoff/`](../usecasehandoff/) when present.

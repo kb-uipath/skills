@@ -20,6 +20,12 @@ REQUIRED_ADVISORS = [
     "The Outsider",
     "The Executor",
 ]
+REQUIRED_SESSION_FIELDS = (
+    "original_question",
+    "framed_question",
+    "chairman_verdict",
+    "advisors",
+)
 
 STANCE_CLASS = {
     "positive": "stance-positive",
@@ -35,12 +41,7 @@ def load_session(path: Path) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise SystemExit(f"Invalid JSON in {path}: {exc}") from exc
 
-    if not isinstance(payload, dict):
-        raise SystemExit("Session JSON must be an object.")
-
-    for field in ("original_question", "framed_question", "chairman_verdict", "advisors"):
-        if not payload.get(field):
-            raise SystemExit(f"Missing required field: {field}")
+    validate_session_schema(payload)
 
     payload["advisors"] = normalize_advisors(payload["advisors"])
     payload["peer_reviews"] = normalize_peer_reviews(payload.get("peer_reviews") or [])
@@ -54,6 +55,19 @@ def load_session(path: Path) -> dict[str, Any]:
         raise SystemExit("Missing advisor response(s): " + ", ".join(missing))
 
     return payload
+
+
+def validate_session_schema(payload: Any) -> None:
+    if not isinstance(payload, dict):
+        raise SystemExit("Session JSON must be an object.")
+
+    for field in REQUIRED_SESSION_FIELDS:
+        if not payload.get(field):
+            raise SystemExit(f"Missing required field: {field}")
+
+    for field in ("original_question", "framed_question", "chairman_verdict"):
+        if not isinstance(payload.get(field), str):
+            raise SystemExit(f"Field '{field}' must be a string.")
 
 
 def normalize_advisors(raw: Any) -> dict[str, str]:

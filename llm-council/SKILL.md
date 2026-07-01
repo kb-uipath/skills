@@ -11,7 +11,7 @@ Use this only when the user is asking for judgment under uncertainty and being w
 
 If the decision is too vague to evaluate, ask exactly one clarifying question, then proceed.
 
-Treat explicit invocations such as `$llm-council`, "council this", "run a council", or "use advisor subagents" as permission to use subagents for this workflow. If subagents are unavailable in the current environment, say so directly and ask whether the user wants a weaker single-agent council simulation. Do not pretend simulated perspectives are independent.
+Treat explicit invocations such as `$llm-council`, "council this", "run a council", or "use advisor subagents" as permission to use subagents for this workflow. If subagents are unavailable in the current environment, say so directly and offer a weaker single-agent council simulation. Do not pretend simulated perspectives are independent.
 
 ## Workflow
 
@@ -165,6 +165,8 @@ Expected JSON fields:
 ```
 
 `advisor_positions` is optional, but include it whenever possible because the HTML report uses it as the agreement/disagreement visual. Valid `stance` values are `positive`, `negative`, `mixed`, and `neutral`.
+
+The renderer validates required session fields and the five required advisor responses before writing artifacts. Treat validation failure as a workflow defect; repair the session payload instead of creating a partial report.
 
 After generating the files, surface the HTML report path to the user. If the environment supports opening local files and doing so is appropriate, open the HTML report.
 

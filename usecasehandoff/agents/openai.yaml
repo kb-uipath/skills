@@ -1,4 +1,4 @@
 interface:
   display_name: "Use Case Handoff"
   short_description: "Build cited delivery use case handoffs."
-  default_prompt: "Capture everything known about this use case, synthesize executive framing, cite the metrics, and produce an actionable delivery-team handoff package."
+  default_prompt: "Use $usecasehandoff to capture this use case, cite the evidence, and produce an actionable delivery-team handoff package."

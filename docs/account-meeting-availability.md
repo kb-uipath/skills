@@ -1,49 +1,41 @@
 # account-meeting-availability
 
-## Purpose
+Manage account meeting contact records for customer contacts and UiPath team members.
 
-Source, validate, store, edit, and review account meeting contacts for both customer contacts and
-UiPath team members from a CSV or direct user-provided contact details.
+## When To Use
 
-## When to use
+Use this skill when a user provides a contact CSV, asks to build or maintain an account contact book, wants missing customer emails flagged for sourcing, or needs meeting-attendee contact data prepared without sending messages.
 
-Source, validate, store, edit, and review account meeting contacts for both customer contacts and
-UiPath team members from a CSV or direct user-provided contact details. Use when the user provides
-or references an account/contact CSV, asks to add or edit customer or UiPath contacts, asks Codex to
-maintain an account contact book, fill missing email addresses, verify account contacts, prepare
-meeting attendees, or identify likely emails from Outlook Email/Calendar evidence without sending
-messages automatically.
+## Inputs
 
-## Required inputs
+- Account name or contact CSV.
+- Contact type: `customer` or `uipath`.
+- Contact name, role/title, and email when known.
+- Optional store path through `--store` or `CUSTOMER_EMAIL_STORE`.
+- Optional connector evidence from Outlook Calendar or Email when the user asks to source emails.
 
-- Account name and meeting purpose.
-- CSV path or direct contact details for customer and UiPath attendees.
-- Which contacts to add, verify, edit, or prepare.
-- Allowed evidence sources for email or attendee validation.
-
-## Prompt template
+## Prompt
 
 ```text
-Use $account-meeting-availability to <desired outcome>.
-
-Context:
-- Target/account/project: <name or path>
-- Source files or IDs: <paths, URLs, record IDs, job IDs, or screenshots>
-- Constraints: <deployment context, read-only/write intent, timeline, output format>
-- Acceptance criteria: <how to know the work is done>
+Use $account-meeting-availability to normalize this account contact CSV, flag missing or suspicious emails for review, and prepare an updated contact store. Do not send messages or modify calendars.
 ```
 
-## Example prompt
+## Outputs
 
-```text
-Use $account-meeting-availability to validate the contacts in ./contacts.csv for the Acme QBR, fill missing emails from Outlook evidence, and produce the final attendee list without sending messages.
+- Normalized CSV with canonical contact columns and review flags.
+- Contact store add/edit/list/import/export operations.
+- Clear review status for missing email addresses and customer rows that contain internal UiPath-domain addresses.
+
+## Safety
+
+- Do not send email, calendar invites, Slack, Teams, or CRM updates from this skill.
+- Treat customer contact data as sensitive personal data; only store the minimum fields in the CSV contract.
+- Use temp `--store` paths in tests and dry runs. Do not touch a real Codex home contact store unless the user explicitly requests it.
+- Mark ambiguous candidates or low-confidence sourced emails as `needs review=yes`.
+
+## Validation
+
+```bash
+python3 -m unittest discover -s account-meeting-availability/tests -p 'test_*.py'
+python3 tools/validate_repo.py
 ```
-
-## Expected output
-
-A task-specific result that follows the skill's `SKILL.md` instructions, cites or references the evidence used, and calls out assumptions, blockers, and verification steps. For write-capable UiPath or Salesforce skills, expect explicit read-before-write behavior and confirmation where the skill requires it.
-
-## Source files
-
-- Skill instructions: [`../account-meeting-availability/SKILL.md`](../account-meeting-availability/SKILL.md)
-- Bundled references, templates, scripts, and assets live under [`../account-meeting-availability/`](../account-meeting-availability/) when present.

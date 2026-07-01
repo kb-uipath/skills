@@ -41,7 +41,7 @@ Produce evidence-backed fill recommendations for one account row. The output mus
 4. Search unstructured/internal sources.
    - Slack: search the exact account name, common acronym, TAM/CSM, and product terms (`ACPS`, `Automation Suite`, `DU`, `Document Understanding`, `AI Units`, `Agentic`, `Autopilot`, `Test Suite`, `IXP`, `churn`, `renewal`) with an `after:` date or timestamp at/after the cutoff. If Slack returns `invalid_auth_token` or similar, state that no Slack evidence was used.
    - SharePoint: search exact account name and acronym with `recency_days` or inspect returned `updated_at` metadata. Fetch relevant account plans, handoff docs, CSP/CVR/EBR decks, TAC docs, migration docs, proposals, and files inside the account-specific TAM/ES site only when updated within the cutoff window.
-   - OneNote: inspect account-specific OneNote sections/backups first, then local OneNote backups under `/Users/keith.born/Library/Containers/com.microsoft.onenote.mac/Data/Library/Application Support/Microsoft User Data/OneNote/15.0/Backup/Keith @ UiPath` when available. Use only sections/pages/backups modified within the cutoff window.
+   - OneNote: inspect account-specific OneNote sections/backups when the user provides or discovers a path. Use only sections/pages/backups modified within the cutoff window.
    - Teams: search account-specific Teams channels/chats and nearby messages within the cutoff window if the connector is available. If not available, state that Teams evidence was not used.
    - Existing workbook tabs: check churn forecast, high-risk tabs, renewal tabs, and any notes/evidence column already present only if the workbook or tab source is updated within the cutoff window.
 

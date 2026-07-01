@@ -1,4 +1,3 @@
-import csv
 import importlib.util
 import json
 import subprocess
@@ -12,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "inventory_profiler.py"
 RENDER_SCRIPT = ROOT / "scripts" / "render_executive_docx.py"
 VERIFY_SCRIPT = ROOT / "scripts" / "verify_executive_docx.py"
+FIXTURE_CSV = ROOT / "tests" / "fixtures" / "inventory.csv"
 
 
 def load_module():
@@ -32,48 +32,7 @@ class InventoryProfilerTests(unittest.TestCase):
         cls.module = load_module()
 
     def write_inventory(self, path: Path) -> None:
-        rows = [
-            {
-                "Use Case Name": "Invoice Intake",
-                "Description": "Extract invoice fields from vendor emails",
-                "Status": "Production",
-                "Department": "Finance",
-                "Owner": "Alice Lee",
-                "Systems": "SAP; Outlook",
-                "Annual Volume": "12000",
-                "Handling Time Minutes": "5",
-                "Hours Saved": "1000",
-                "Priority": "1",
-            },
-            {
-                "Use Case Name": "Permit Review",
-                "Description": "Review permit packages and route exceptions",
-                "Status": "Pilot",
-                "Department": "Operations",
-                "Owner": "Bob Ray",
-                "Systems": "Legacy Portal",
-                "Annual Volume": "24000",
-                "Handling Time Minutes": "10",
-                "Hours Saved": "2000",
-                "Priority": "2",
-            },
-            {
-                "Use Case Name": "Invoice Intake",
-                "Description": "Validate invoice exception details",
-                "Status": "Idea",
-                "Department": "Finance",
-                "Owner": "Carol Ng",
-                "Systems": "SAP",
-                "Annual Volume": "6000",
-                "Handling Time Minutes": "8",
-                "Hours Saved": "500",
-                "Priority": "3",
-            },
-        ]
-        with path.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
-            writer.writeheader()
-            writer.writerows(rows)
+        path.write_text(FIXTURE_CSV.read_text(encoding="utf-8"), encoding="utf-8")
 
     def test_csv_profile_outputs_json_and_markdown_contract(self):
         with tempfile.TemporaryDirectory() as tmp:

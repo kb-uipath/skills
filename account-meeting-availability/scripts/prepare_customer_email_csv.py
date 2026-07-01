@@ -35,6 +35,7 @@ OUTPUT_HEADERS = [
 ]
 
 RECORD_TYPES = {"customer", "uipath"}
+UIPATH_EMAIL_RE = re.compile(r"@uipath\.com$", re.IGNORECASE)
 
 ALIASES = {
     "account": "account name",
@@ -95,6 +96,10 @@ def normalize_record_type(value: str | None, default: str = "customer") -> str:
     return normalized
 
 
+def is_internal_email(email: str) -> bool:
+    return bool(UIPATH_EMAIL_RE.search(email.strip()))
+
+
 def read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     with path.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
@@ -133,14 +138,21 @@ def normalize_rows(rows: list[dict[str, str]], header_map: dict[str, str]) -> li
         }
         normalized["record type"] = normalize_record_type(normalized.get("record type"))
         email = normalized.get("customer email address", "")
+        internal_customer_email = normalized["record type"] == "customer" and is_internal_email(email)
+        source_type = "provided-csv" if email else "none"
+        confidence = "provided" if email and not internal_customer_email else "none"
+        evidence = "Provided in input CSV." if email and not internal_customer_email else ""
+        if internal_customer_email:
+            confidence = "low"
+            evidence = "Provided address uses the UiPath domain for a customer record; verify the record type or replace with a customer email."
         normalized.update(
             {
                 "sourced customer email address": email,
-                "sourcing confidence": "provided" if email else "none",
-                "sourcing evidence": "Provided in input CSV." if email else "",
-                "source type": "provided-csv" if email else "none",
+                "sourcing confidence": confidence,
+                "sourcing evidence": evidence,
+                "source type": source_type,
                 "source date": "",
-                "needs review": "no" if email else "yes",
+                "needs review": "yes" if not email or internal_customer_email else "no",
             }
         )
         normalized_rows.append(normalized)

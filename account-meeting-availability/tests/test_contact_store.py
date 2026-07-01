@@ -128,6 +128,35 @@ class ContactStoreTests(unittest.TestCase):
             self.assertEqual(len(rows), 2)
             self.assertEqual(rows[1]["record type"], "uipath")
 
+    def test_write_rows_uses_atomic_temp_file_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Path(tmp) / "contacts.csv"
+            rows = [
+                {
+                    "account name": "Acme",
+                    "record type": "customer",
+                    "customer name": "Alice Lee",
+                    "customer role": "CFO",
+                    "customer email address": "alice@example.com",
+                }
+            ]
+
+            self.module.write_rows(store, rows)
+            self.module.write_rows(
+                store,
+                [
+                    {
+                        **rows[0],
+                        "customer role": "Chief Financial Officer",
+                    }
+                ],
+            )
+
+            with store.open(newline="", encoding="utf-8") as handle:
+                stored = list(csv.DictReader(handle))
+            self.assertEqual(stored[0]["customer role"], "Chief Financial Officer")
+            self.assertEqual(list(Path(tmp).glob(".contacts.*.csv")), [])
+
 
 if __name__ == "__main__":
     unittest.main()

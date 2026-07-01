@@ -90,60 +90,62 @@ For meeting availability, include both `customer` and `uipath` records attached 
 
 Show the backing contact store path:
 
+Run helper commands from the `account-meeting-availability/` skill directory, or replace `scripts/...` with the equivalent path in your checkout.
+
 ```bash
-python3 /Users/keith.born/.codex/skills/account-meeting-availability/scripts/contact_store.py path
+python3 scripts/contact_store.py path
 ```
 
 Add or update a contact from user-provided details:
 
 ```bash
-python3 /Users/keith.born/.codex/skills/account-meeting-availability/scripts/contact_store.py add --account "SSA" --record-type customer --name "Jane Doe" --role "Program lead" --email "jane.doe@example.gov"
+python3 scripts/contact_store.py add --account "SSA" --record-type customer --name "Jane Doe" --role "Program lead" --email "jane.doe@example.gov"
 ```
 
 Add a UiPath team member:
 
 ```bash
-python3 /Users/keith.born/.codex/skills/account-meeting-availability/scripts/contact_store.py add --account "SSA" --record-type uipath --name "Keith Born" --role "TAM" --email "keith.born@uipath.com"
+python3 scripts/contact_store.py add --account "SSA" --record-type uipath --name "UiPath Teammate" --role "TAM" --email "teammate@uipath.com"
 ```
 
 Edit exactly one matching contact:
 
 ```bash
-python3 /Users/keith.born/.codex/skills/account-meeting-availability/scripts/contact_store.py edit --match-name "Nicole Mervine" --email "new.address@example.gov"
+python3 scripts/contact_store.py edit --match-name "Customer Contact" --email "new.address@example.gov"
 ```
 
 List contacts without opening the CSV:
 
 ```bash
-python3 /Users/keith.born/.codex/skills/account-meeting-availability/scripts/contact_store.py list --account "SSA"
+python3 scripts/contact_store.py list --account "SSA"
 ```
 
 List only UiPath team members for an account:
 
 ```bash
-python3 /Users/keith.born/.codex/skills/account-meeting-availability/scripts/contact_store.py list --account "SSA" --record-type uipath
+python3 scripts/contact_store.py list --account "SSA" --record-type uipath
 ```
 
 Import contacts into the hidden store:
 
 ```bash
-python3 /Users/keith.born/.codex/skills/account-meeting-availability/scripts/contact_store.py import contacts.csv
+python3 scripts/contact_store.py import contacts.csv
 ```
 
 Export the contact store only when the user asks for a CSV artifact:
 
 ```bash
-python3 /Users/keith.born/.codex/skills/account-meeting-availability/scripts/contact_store.py export --output contacts-export.csv
+python3 scripts/contact_store.py export --output contacts-export.csv
 ```
 
 Validate and normalize a CSV:
 
 ```bash
-python3 /Users/keith.born/.codex/skills/account-meeting-availability/scripts/prepare_customer_email_csv.py input.csv --output normalized.csv
+python3 scripts/prepare_customer_email_csv.py input.csv --output normalized.csv
 ```
 
 Create a template CSV:
 
 ```bash
-python3 /Users/keith.born/.codex/skills/account-meeting-availability/scripts/prepare_customer_email_csv.py --template template.csv
+python3 scripts/prepare_customer_email_csv.py --template template.csv
 ```

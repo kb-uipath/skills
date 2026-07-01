@@ -67,6 +67,26 @@ class PrepareCustomerEmailCsvTests(unittest.TestCase):
                 ]
             )
 
+    def test_customer_rows_with_internal_domain_need_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source = tmp_path / "contacts.csv"
+            output = tmp_path / "normalized.csv"
+            source.write_text(
+                "Account,Type,Name,Title,Email\n"
+                "Acme,Customer,Customer Alias,Program Owner,alias@uipath.com\n",
+                encoding="utf-8",
+            )
+
+            result = self.module.main([str(source), "--output", str(output)])
+
+            self.assertEqual(result, 0)
+            with output.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(rows[0]["needs review"], "yes")
+            self.assertEqual(rows[0]["sourcing confidence"], "low")
+            self.assertIn("UiPath domain", rows[0]["sourcing evidence"])
+
 
 if __name__ == "__main__":
     unittest.main()

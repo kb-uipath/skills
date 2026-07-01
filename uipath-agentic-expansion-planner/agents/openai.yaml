@@ -1,4 +1,5 @@
 interface:
   display_name: "UiPath Agentic Expansion Planner"
   short_description: "Creates verified DOCX expansion briefs from inventories."
-  primary_color: "#FA4616"
+  brand_color: "#FA4616"
+  default_prompt: "Use $uipath-agentic-expansion-planner to profile this automation inventory and produce a verified DOCX expansion brief."

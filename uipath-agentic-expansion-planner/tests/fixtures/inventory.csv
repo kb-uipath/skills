@@ -1,0 +1,4 @@
+Use Case Name,Description,Status,Department,Owner,Systems,Annual Volume,Handling Time Minutes,Hours Saved,Priority
+Invoice Intake,Extract invoice fields from vendor emails,Production,Finance,Alice Lee,SAP; Outlook,12000,5,1000,1
+Permit Review,Review permit packages and route exceptions,Pilot,Operations,Bob Ray,Legacy Portal,24000,10,2000,2
+Invoice Intake,Validate invoice exception details,Idea,Finance,Carol Ng,SAP,6000,8,500,3

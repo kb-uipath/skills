@@ -1,6 +1,5 @@
 ---
 name: salesforce-meddpicc-update
-version: 1.1.0
 description: Update MEDDPICC qualification fields and Next Steps on UiPath Salesforce Opportunities through the UiPath Integration Service Salesforce connector. Use when the user provides or references a Salesforce Opportunity URL or ID and asks to update MEDDPICC, qualification, Metrics, Economic Buyer, Decision Criteria, Decision Process, Paper Process, Identified Pain, Champion, Competition, Compelling Event, or Next Steps. Requires read-before-write, schema describe validation, explicit user confirmation, append-with-date behavior for narrative fields, read-after-write verification, prompt-injection guardrail, fuzzy near-duplicate detection, force-duplicate override, and privacy-safe telemetry logging.
 ---
 
@@ -129,5 +128,4 @@ After verification, `buildTelemetryPayload()` emits a metadata-only run record c
 - `references/url-parsing.md`: ID extraction behavior and examples.
 - `references/quality-rubric.md`: MEDDPICC drafting quality rules.
 - `references/error-handling.md`: Common Salesforce and Integration Service failures.
-- `~/Documents/sf-meddpicc-telemetry/README.md`: Telemetry tooling, schema-drift cron, run-record schema.
-- `~/Documents/sf-meddpicc-telemetry/bin/log-run.js`: Run-record logger (invoked by Step 10).
+- Operator-provided telemetry tooling: if a local run-record logger is configured, invoke it only after verification and only with the redacted `buildTelemetryPayload()` output.

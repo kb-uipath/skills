@@ -1,49 +1,42 @@
 # llm-council
 
-## Purpose
+Run a structured five-advisor council for expensive-to-get-wrong decisions.
 
-Run a structured multi-perspective council for high-stakes decisions using five independent advisor
-subagents, anonymous peer review, and a chairman verdict with report artifacts.
+## When To Use
 
-## When to use
+Use this skill when the user explicitly invokes `$llm-council`, asks to "council this," or wants a decision stress-tested from multiple perspectives. Do not use it for simple factual lookups or tasks with one correct answer.
 
-Run a structured multi-perspective council for high-stakes decisions using five independent advisor
-subagents, anonymous peer review, and a chairman verdict with report artifacts. Use when the user
-explicitly invokes $llm-council, says "council this", asks to run a council or multi-agent advisor
-panel, or wants to stress-test a pivot, pricing, positioning, hiring, launch, strategy, or other
-expensive-to-get-wrong choice. Do not use for factual lookups, simple content generation, summaries,
-or tasks with one correct answer.
+## Inputs
 
-## Required inputs
+- Original decision question.
+- Constraints, facts, goals, risks, and options.
+- Any required output format.
+- Whether subagents are available; if not, the main agent must state the fallback and produce a single-agent structured council.
 
-- Decision statement and options under consideration.
-- Constraints, stakes, time horizon, and success criteria.
-- Known evidence or artifacts the council must consider.
-- Preferred output format for the chairman verdict.
-
-## Prompt template
+## Prompt
 
 ```text
-Use $llm-council to <desired outcome>.
-
-Context:
-- Target/account/project: <name or path>
-- Source files or IDs: <paths, URLs, record IDs, job IDs, or screenshots>
-- Constraints: <deployment context, read-only/write intent, timeline, output format>
-- Acceptance criteria: <how to know the work is done>
+Use $llm-council to stress-test this launch decision. Capture five advisor positions, anonymous peer-review themes, a chairman verdict, and report artifacts.
 ```
 
-## Example prompt
+## Outputs
 
-```text
-Use $llm-council to stress-test whether we should launch this productized services offer now or wait one quarter. Include constraints, risks, and a final chairman recommendation.
+- Five named advisor responses.
+- Agreement/disagreement summary.
+- Peer-review highlights.
+- Chairman synthesis.
+- HTML report and Markdown transcript when artifact rendering is requested.
+
+## Safety
+
+- Do not outsource confidential details to tools or agents that lack access approval.
+- Make uncertainty and dissent visible; a council report that hides disagreement is theater, not analysis.
+- If subagents are unavailable, say so and continue with a deterministic single-agent fallback.
+- Clean up temporary session JSON files unless the user asks to keep them.
+
+## Validation
+
+```bash
+python3 -m unittest discover -s llm-council/tests -p 'test_*.py'
+python3 tools/validate_repo.py
 ```
-
-## Expected output
-
-A task-specific result that follows the skill's `SKILL.md` instructions, cites or references the evidence used, and calls out assumptions, blockers, and verification steps. For write-capable UiPath or Salesforce skills, expect explicit read-before-write behavior and confirmation where the skill requires it.
-
-## Source files
-
-- Skill instructions: [`../llm-council/SKILL.md`](../llm-council/SKILL.md)
-- Bundled references, templates, scripts, and assets live under [`../llm-council/`](../llm-council/) when present.

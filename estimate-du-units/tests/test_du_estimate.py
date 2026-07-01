@@ -71,6 +71,50 @@ class DuEstimateTests(unittest.TestCase):
         self.assertIn("AI rate/page: 1.5", result.stdout)
         self.assertIn("Platform rate/page: 0.3", result.stdout)
 
+    def test_cli_supports_multiple_document_scenarios(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--case",
+                "invoices=12,000,2",
+                "--case",
+                "claims=5,000,4",
+                "--ai-rate",
+                "1",
+                "--platform-rate",
+                "0.2",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("| invoices | 12,000 | 2 | 24,000 | 4,800 |", result.stdout)
+        self.assertIn("| claims | 5,000 | 4 | 20,000 | 4,000 |", result.stdout)
+
+    def test_cli_allows_zero_du_when_du_does_not_apply(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--case",
+                "api-only=1000,0",
+                "--ai-rate",
+                "0",
+                "--platform-rate",
+                "0",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("| api-only | 1,000 | 0 | 0 | 0 |", result.stdout)
+        self.assertIn("AI rate/page: 0", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

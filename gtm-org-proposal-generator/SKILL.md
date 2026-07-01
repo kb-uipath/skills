@@ -50,6 +50,7 @@ Avoid naming UiPath product SKUs. Refer to capabilities only, such as UI/API Aut
    - Use formal, concise language suitable for C-suite, agency executive, or federal review.
    - Keep facts, estimates, and recommendations visibly separated.
    - Include source IDs next to budget values, strategy claims, admin-cost estimates, and impact estimates.
+   - When producing a Markdown proposal artifact, validate it with `scripts/validate_gtm_output.py` before sharing when practical.
    - Offer export formats only after delivering the core result.
 
 ## Evidence Rules
@@ -66,3 +67,4 @@ Avoid naming UiPath product SKUs. Refer to capabilities only, such as UI/API Aut
 
 - `references/source-and-estimation-rules.md`: source priority, citation requirements, budget normalization, admin-cost estimate tiers, and anti-fabrication rules.
 - `references/proposal-output-template.md`: required executive output shape for source ledgers, budget tables, use-case prioritization, and proposal cards.
+- `scripts/validate_gtm_output.py`: static output-contract check for required sections, source ledger shape, citation IDs, estimate tier labels, and unsafe overclaim phrases.

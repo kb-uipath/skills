@@ -33,6 +33,7 @@ Use `references/report-package-outline.md` when creating the final artifact set.
 
 7. Package artifacts.
    Create a dated artifact folder with markdown files, reference links, source citations, and a ZIP when useful. Include a `README.md` that tells the recipient what to read first and what each file is for.
+   Use `scripts/create_handoff_package.py` for deterministic local scaffolding before writing the final evidence ledger and delivery plan.
 
 8. Route or upload only when authorized.
    If the user asks to send, post, upload, or share the package, use the relevant connector or desktop workflow and verify the destination afterward. Follow confirmation policy for messages, uploads, sensitive data, permission changes, or deletions. Return the verified link or exact blocker.
@@ -49,6 +50,16 @@ For a full handoff, produce these sections:
 - Risks and gaps: missing facts, weak metrics, dependencies, policy concerns, and owner decisions required.
 - Reference links: local paths, SharePoint/Drive/Slack/Teams/mail/web links that the team can open or download.
 - Cover message: short stakeholder-ready message explaining what is attached and what action is needed.
+
+## Helper Script
+
+Create a deterministic local package scaffold without connector writes:
+
+```bash
+python3 scripts/create_handoff_package.py --title "Permit Intake Automation" --account "Fixture Agency" --output-dir outputs --date 2026-07-01
+```
+
+The scaffolder creates `README.md`, `evidence-ledger.md`, `delivery-plan.md`, `risk-register.md`, `cover-message.md`, and `manifest.json`. It refuses to overwrite an existing package unless `--force` is passed.
 
 ## Evidence Rules
 

@@ -144,7 +144,7 @@ def row_update_dates(data: dict[str, Any]) -> list[dict[str, str]]:
         if any(hint in key_l for hint in DATE_FIELD_HINTS):
             parsed = parse_dateish(value)
             if parsed:
-                dates.append({"field": key, "date": parsed.isoformat()})
+                dates.append({"field": key, "date": parsed.date().isoformat()})
     return dates
 
 

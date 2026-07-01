@@ -1,51 +1,45 @@
 # salesforce-meddpicc-update
 
-## Purpose
+Draft, confirm, write, and verify MEDDPICC and Next Steps updates on UiPath Salesforce Opportunities through Integration Service.
 
-Update MEDDPICC qualification fields and Next Steps on UiPath Salesforce Opportunities through the
-UiPath Integration Service Salesforce connector.
+## When To Use
 
-## When to use
+Use this skill when the user provides a Salesforce Opportunity URL or ID and asks to update MEDDPICC, qualification, or Next Steps fields.
 
-Update MEDDPICC qualification fields and Next Steps on UiPath Salesforce Opportunities through the
-UiPath Integration Service Salesforce connector. Use when the user provides or references a
-Salesforce Opportunity URL or ID and asks to update MEDDPICC, qualification, Metrics, Economic
-Buyer, Decision Criteria, Decision Process, Paper Process, Identified Pain, Champion, Competition,
-Compelling Event, or Next Steps. Requires read-before-write, schema describe validation, explicit
-user confirmation, append-with-date behavior for narrative fields, read-after-write verification,
-prompt-injection guardrail, fuzzy near-duplicate detection, force-duplicate override, and privacy-
-safe telemetry logging.
+## Inputs
 
-## Required inputs
+- Salesforce Opportunity URL or ID beginning with `006`.
+- User-provided MEDDPICC or Next Steps content.
+- UiPath Integration Service Salesforce connector access.
+- Salesforce connection ID and element instance ID resolved at runtime.
+- Opportunity read data, Opportunity describe response, and explicit user confirmation before write.
 
-- Salesforce Opportunity URL or ID.
-- Exact MEDDPICC or Next Steps fields to update.
-- Source text or notes to append.
-- Explicit confirmation before write operations.
-
-## Prompt template
+## Prompt
 
 ```text
-Use $salesforce-meddpicc-update to <desired outcome>.
-
-Context:
-- Target/account/project: <name or path>
-- Source files or IDs: <paths, URLs, record IDs, job IDs, or screenshots>
-- Constraints: <deployment context, read-only/write intent, timeline, output format>
-- Acceptance criteria: <how to know the work is done>
+Use $salesforce-meddpicc-update for this Opportunity URL. Parse the ID, draft MEDDPICC updates, show me the exact field-level write plan, and do not write until I explicitly approve.
 ```
 
-## Example prompt
+## Outputs
 
-```text
-Use $salesforce-meddpicc-update for this Opportunity URL. Update Metrics, Identified Pain, Champion, and Next Steps from these notes, confirm the proposed writeback first, then verify after saving.
+- Parsed Opportunity ID.
+- Draft field changes and skipped fields.
+- PATCH envelope after describe validation.
+- Read-after-write verification receipt.
+- Privacy-safe telemetry payload after verification.
+
+## Safety
+
+- No live write without explicit field-level user confirmation.
+- No Salesforce Lightning UI automation fallback for writes.
+- Stop on missing connection, stale read, schema drift, field security errors, invalid picklists, or malformed Opportunity IDs.
+- Telemetry must use `buildTelemetryPayload()` only; narrative content, names, emails, amounts, and Opportunity names must not be logged.
+- If telemetry fails after a successful PATCH, report the observability failure but do not roll back the Salesforce write.
+
+## Validation
+
+```bash
+node --test salesforce-meddpicc-update/tests/*.mjs
+node --check salesforce-meddpicc-update/scripts/meddpicc.mjs
+python3 tools/validate_repo.py
 ```
-
-## Expected output
-
-A task-specific result that follows the skill's `SKILL.md` instructions, cites or references the evidence used, and calls out assumptions, blockers, and verification steps. For write-capable UiPath or Salesforce skills, expect explicit read-before-write behavior and confirmation where the skill requires it.
-
-## Source files
-
-- Skill instructions: [`../salesforce-meddpicc-update/SKILL.md`](../salesforce-meddpicc-update/SKILL.md)
-- Bundled references, templates, scripts, and assets live under [`../salesforce-meddpicc-update/`](../salesforce-meddpicc-update/) when present.

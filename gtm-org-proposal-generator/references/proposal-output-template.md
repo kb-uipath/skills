@@ -19,7 +19,7 @@ Use this structure for the final executive deliverable unless the user requests 
 **Source Ledger**
 | ID | Source | Publisher | Date/FY | Facts Used |
 | --- | --- | --- | --- | --- |
-| S1 | [Title](url) | ... | ... | ... |
+| S1 | Title - URL | ... | ... | ... |
 ```
 
 Keep source titles concise. Include URLs in markdown links when available.

@@ -8,6 +8,7 @@ import {
   FIELD_MAP,
   MeddpiccError,
   buildPatch,
+  buildTelemetryPayload,
   classifyError,
   draft,
   duplicateStatus,
@@ -129,6 +130,63 @@ test("schema drift and non-updateable fields produce structured errors", () => {
     () => buildPatch({ draft: prepared, describe: blockedDescribe, connectionId: "conn-123", now: "2026-05-20T14:01:00.000Z" }),
     (error) => error.code === "FIELD_NOT_UPDATEABLE" && error.field === "Metrics__c",
   );
+});
+
+test("build-patch refuses to create a write envelope without connection id", () => {
+  const current = loadFixture("current-opportunity.json");
+  const describe = loadFixture("describe-opportunity.json");
+  const prepared = draft({
+    opportunityId: current.Id,
+    author: "Keith Born",
+    date: "2026-05-20",
+    current,
+    generatedAt: "2026-05-20T14:00:00.000Z",
+    content: { Metrics: "Reduce handling time by 30%." },
+  });
+
+  assert.throws(
+    () => buildPatch({ draft: prepared, describe, now: "2026-05-20T14:01:00.000Z" }),
+    (error) => error.code === "MISSING_CONNECTION_ID" && error.recoverable === true,
+  );
+});
+
+test("telemetry payload strips narrative and identity fields", () => {
+  const payload = {
+    now: "2026-05-20T14:02:00.000Z",
+    skillVersion: "1.1.0",
+    skillSha: "abc123",
+    runId: "run-1",
+    opportunityName: "Sensitive Opportunity",
+    contactEmail: "person@example.com",
+    amount: "$100,000",
+    verify: {
+      opportunity: { id: "006Pa00000TNhhtIAD", name: "Sensitive Opportunity" },
+      readBackStatus: "all_matched",
+      fieldsWritten: [{ field: "Metrics__c" }, { field: "NextStep" }],
+      fieldsSkipped: [{ field: "Economic_Buyer__c" }],
+      warnings: ["warning"],
+      discrepancies: [],
+    },
+  };
+
+  const telemetry = buildTelemetryPayload(payload);
+
+  assert.deepEqual(telemetry, {
+    oppId: "006Pa00000TNhhtIAD",
+    runTime: "2026-05-20T14:02:00.000Z",
+    fieldsTargeted: ["Metrics__c", "NextStep"],
+    skillVersion: "1.1.0",
+    skillSha: "abc123",
+    runId: "run-1",
+    readBackStatus: "all_matched",
+    fieldsWrittenCount: 2,
+    fieldsSkippedCount: 1,
+    warningsCount: 1,
+    discrepanciesCount: 0,
+  });
+  assert.equal("opportunityName" in telemetry, false);
+  assert.equal("contactEmail" in telemetry, false);
+  assert.equal("amount" in telemetry, false);
 });
 
 test("classify-error normalizes mocked Integration Service and Salesforce responses", () => {
