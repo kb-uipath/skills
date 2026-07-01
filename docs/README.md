@@ -2,6 +2,8 @@
 
 Each page describes when to use the skill, what inputs to provide, and a starter prompt you can paste into Codex.
 
+See [production-readiness-evaluation.md](./production-readiness-evaluation.md) for the current production-readiness scores and improvement deltas.
+
 | Skill | Category | Docs |
 | --- | --- | --- |
 | account-meeting-availability | Customer operations | [account-meeting-availability.md](./account-meeting-availability.md) |

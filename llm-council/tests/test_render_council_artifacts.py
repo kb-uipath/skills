@@ -103,6 +103,42 @@ class RenderCouncilArtifactsTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "peer_reviews"):
                 self.module.load_session(source)
 
+    def test_validate_only_does_not_write_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source = tmp_path / "session.json"
+            outdir = tmp_path / "out"
+            source.write_text(json.dumps(session_payload()), encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    str(source),
+                    "--output-dir",
+                    str(outdir),
+                    "--validate-only",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("advisors=5", result.stdout)
+            self.assertFalse(outdir.exists())
+
+    def test_validate_session_schema_requires_string_core_fields(self):
+        with self.assertRaisesRegex(SystemExit, "must be a string"):
+            self.module.validate_session_schema(
+                {
+                    "original_question": ["not", "string"],
+                    "framed_question": "Frame",
+                    "chairman_verdict": "Verdict",
+                    "advisors": {"The Contrarian": "Response"},
+                }
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

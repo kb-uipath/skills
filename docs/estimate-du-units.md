@@ -25,11 +25,13 @@ Use $estimate-du-units to estimate annual DU consumption for this automation. Ve
 - Markdown scenario table with transactions, pages, AI Units, and Platform Units.
 - Assumptions and gaps that need customer validation.
 - Zero-DU explanation when the automation is API-only or otherwise outside DU consumption.
+- CLI rejection for negative transactions, pages, or rates.
 
 ## Safety
 
 - Do not present rates as current unless official sources were verified during the run.
 - Label inferred volume, pages, and rates as assumptions.
+- Reject negative volumes or rates instead of silently producing nonsensical estimates.
 - Keep customer-facing language clear that the output is a planning estimate, not a quote or entitlement statement.
 
 ## Validation

@@ -36,6 +36,24 @@ OUTPUT_HEADERS = [
 
 RECORD_TYPES = {"customer", "uipath"}
 UIPATH_EMAIL_RE = re.compile(r"@uipath\.com$", re.IGNORECASE)
+AUTOMATED_OR_LIST_LOCAL_PARTS = {
+    "admin",
+    "alerts",
+    "bounce",
+    "contact",
+    "donotreply",
+    "help",
+    "info",
+    "listserv",
+    "mailbox",
+    "marketing",
+    "noreply",
+    "no-reply",
+    "notifications",
+    "support",
+    "team",
+}
+FORMULA_PREFIX_RE = re.compile(r"^[\t\r\n ]*[=+\-@]")
 
 ALIASES = {
     "account": "account name",
@@ -100,6 +118,18 @@ def is_internal_email(email: str) -> bool:
     return bool(UIPATH_EMAIL_RE.search(email.strip()))
 
 
+def is_automated_or_distribution_email(email: str) -> bool:
+    local_part = email.strip().split("@", 1)[0].casefold()
+    compact = re.sub(r"[^a-z0-9]+", "", local_part)
+    return local_part in AUTOMATED_OR_LIST_LOCAL_PARTS or compact in AUTOMATED_OR_LIST_LOCAL_PARTS
+
+
+def safe_csv_value(value: str) -> str:
+    if FORMULA_PREFIX_RE.match(value):
+        return "'" + value
+    return value
+
+
 def read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     with path.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
@@ -139,12 +169,16 @@ def normalize_rows(rows: list[dict[str, str]], header_map: dict[str, str]) -> li
         normalized["record type"] = normalize_record_type(normalized.get("record type"))
         email = normalized.get("customer email address", "")
         internal_customer_email = normalized["record type"] == "customer" and is_internal_email(email)
+        automated_or_distribution = bool(email) and is_automated_or_distribution_email(email)
         source_type = "provided-csv" if email else "none"
-        confidence = "provided" if email and not internal_customer_email else "none"
-        evidence = "Provided in input CSV." if email and not internal_customer_email else ""
+        confidence = "provided" if email and not internal_customer_email and not automated_or_distribution else "none"
+        evidence = "Provided in input CSV." if email and not internal_customer_email and not automated_or_distribution else ""
         if internal_customer_email:
             confidence = "low"
             evidence = "Provided address uses the UiPath domain for a customer record; verify the record type or replace with a customer email."
+        elif automated_or_distribution:
+            confidence = "low"
+            evidence = "Provided address appears to be automated or a distribution address; verify a person-specific recipient."
         normalized.update(
             {
                 "sourced customer email address": email,
@@ -152,7 +186,7 @@ def normalize_rows(rows: list[dict[str, str]], header_map: dict[str, str]) -> li
                 "sourcing evidence": evidence,
                 "source type": source_type,
                 "source date": "",
-                "needs review": "yes" if not email or internal_customer_email else "no",
+                "needs review": "yes" if not email or internal_customer_email or automated_or_distribution else "no",
             }
         )
         normalized_rows.append(normalized)
@@ -164,7 +198,10 @@ def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=headers, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(
+            {key: safe_csv_value(str(value or "")) for key, value in row.items()}
+            for row in rows
+        )
 
 
 def write_template(path: Path) -> None:

@@ -20,6 +20,8 @@ Produce evidence-backed fill recommendations for one account row. The output mus
 2. Run the structured-source pass first.
    - Call `load_workspace_dependencies` if needed.
    - Run `scripts/research_row_sources.py` with the workbook path plus either `--row` or `--account`.
+   - Use `--sources-only` for deterministic fixture runs or when the default local source paths are not available.
+   - Use `--include-stale` only for discovery; stale records remain leads and must not be used directly to fill target cells.
    - Use the script output as a candidate evidence map for workbook tabs, migration master, TAC account tracking, PubSec Gov SFDC, Wingman Active Organizations, and org license sheets.
    - Treat local file modified dates as a weak freshness signal only. Prefer SharePoint/SFDC/Slack/Teams document or message timestamps when available.
 

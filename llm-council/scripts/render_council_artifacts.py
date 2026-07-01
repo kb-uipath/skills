@@ -379,7 +379,7 @@ def render_markdown(payload: dict[str, Any], timestamp: str) -> str:
     return "\n".join(chunks)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("session_json", help="Path to council session JSON.")
     parser.add_argument(
@@ -392,16 +392,26 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional timestamp slug for deterministic filenames.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Validate the session JSON and exit without writing report artifacts.",
+    )
+    return parser.parse_args(argv)
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     session_path = Path(args.session_json).expanduser().resolve()
+    payload = load_session(session_path)
+    if args.validate_only:
+        print(f"OK: {session_path}")
+        print(f"advisors={len(REQUIRED_ADVISORS)}")
+        print(f"peer_reviews={len(payload.get('peer_reviews') or [])}")
+        return 0
+
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    payload = load_session(session_path)
     timestamp = slug_timestamp(args.timestamp or payload.get("timestamp"))
 
     html_path = output_dir / f"council-report-{timestamp}.html"

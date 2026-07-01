@@ -67,4 +67,4 @@ Avoid naming UiPath product SKUs. Refer to capabilities only, such as UI/API Aut
 
 - `references/source-and-estimation-rules.md`: source priority, citation requirements, budget normalization, admin-cost estimate tiers, and anti-fabrication rules.
 - `references/proposal-output-template.md`: required executive output shape for source ledgers, budget tables, use-case prioritization, and proposal cards.
-- `scripts/validate_gtm_output.py`: static output-contract check for required sections, source ledger shape, citation IDs, estimate tier labels, and unsafe overclaim phrases.
+- `scripts/validate_gtm_output.py`: static output-contract check for required sections, source ledger shape, citation IDs, estimate tier labels, uncited money or percentage claims, and unsafe overclaim phrases.

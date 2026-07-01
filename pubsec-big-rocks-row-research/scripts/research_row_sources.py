@@ -467,6 +467,9 @@ def render_markdown(result: dict[str, Any]) -> str:
         f"Recency cutoff: {result['recency']['cutoff_date']}",
         f"As of: {result['recency']['as_of_date']}",
         "",
+        "**Do Not Fill Guidance**",
+        "- Do not fill workbook cells from stale, missing, or undated evidence. Treat matches as leads until upstream source timestamps and field meaning are verified.",
+        "",
         "**Blank / Placeholder Target Fields**",
     ]
     for blank in row["blank_target_fields"]:
@@ -538,6 +541,7 @@ def main() -> None:
     parser.add_argument("--row", type=int, help="Target worksheet row")
     parser.add_argument("--account", help="Target account name")
     parser.add_argument("--source", action="append", default=[], help="Additional local .xlsx source path; can repeat")
+    parser.add_argument("--sources-only", action="store_true", help="Scan only --source files and skip built-in local default source paths")
     parser.add_argument("--months", type=int, default=3, help="Calendar-month recency window; default is the past 3 months")
     parser.add_argument("--max-age-days", type=int, help="Optional day-based recency window override")
     parser.add_argument("--as-of-date", help="Run date for cutoff calculation, YYYY-MM-DD. Defaults to today.")
@@ -555,7 +559,8 @@ def main() -> None:
     target_row = load_main_row(workbook, args.sheet, args.row, args.account)
     account = str(target_row["account"] or args.account or "")
 
-    source_paths = [Path(path).expanduser() for path in DEFAULT_SOURCES + args.source]
+    configured_sources = args.source if args.sources_only else DEFAULT_SOURCES + args.source
+    source_paths = [Path(path).expanduser() for path in configured_sources]
     missing = [str(path) for path in source_paths if not path.exists()]
     records = []
     excluded: list[dict[str, Any]] = []

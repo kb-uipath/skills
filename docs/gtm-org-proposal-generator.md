@@ -28,6 +28,7 @@ Use $gtm-org-proposal-generator for Fixture Agency in public sector on Automatio
 - Prioritized use cases.
 - Executive proposal cards with estimate tier labels.
 - Assumptions and validation questions.
+- Static validation for required sections, source IDs, cited money/percentage claims, estimate tiers, and overclaim language.
 
 ## Safety
 
@@ -35,6 +36,7 @@ Use $gtm-org-proposal-generator for Fixture Agency in public sector on Automatio
 - Browse for current laws, budgets, filings, and UiPath capability availability because those details drift.
 - Never fabricate budget lines, savings, licensing availability, or deployment eligibility.
 - Label impact estimates as `Documented`, `Derived`, `Benchmarked`, or `Assumption`.
+- Treat uncited money or percentage claims as validation failures.
 
 ## Validation
 

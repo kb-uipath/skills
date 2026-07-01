@@ -30,6 +30,7 @@ description: Estimate annual UiPath Document Understanding AI Unit or Platform U
    - For each document type, capture source, page count, page-count evidence, attachments, cover sheets, blank pages, split packets, retries, rejects, duplicate scans, and reprocessing.
    - Count pages processed, not cases, batches, or work items.
    - Use low/base/high page counts when packets can vary.
+   - Reject negative transactions, pages, or rates; zero pages or zero rates are allowed only when explaining a no-DU scenario.
 
 4. Establish annual volume.
    - Source priority: customer production logs, source-system reports, repository counts, official/regulatory workload data, SME estimate, scenario band.

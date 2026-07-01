@@ -96,6 +96,7 @@ class ResearchRowSourcesTests(unittest.TestCase):
                     str(stale_source),
                     "--source",
                     str(missing_source),
+                    "--sources-only",
                     "--as-of-date",
                     "2026-07-01",
                     "--format",
@@ -141,8 +142,48 @@ class ResearchRowSourcesTests(unittest.TestCase):
 
         self.assertIn("**Blank / Placeholder Target Fields**", markdown)
         self.assertIn("K8 Bot/License Utilization", markdown)
+        self.assertIn("**Do Not Fill Guidance**", markdown)
         self.assertIn("continue SharePoint/Slack/OneNote searches", markdown)
         self.assertIn("**Excluded As Stale Or Undated**", markdown)
+
+    def test_include_stale_keeps_stale_matches_as_discovery_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            workbook = tmp_path / "big-rocks.xlsx"
+            stale_source = tmp_path / "source-stale.xlsx"
+            self.write_main_workbook(workbook)
+            self.write_source_workbook(stale_source, last_updated="2025-01-01")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--workbook",
+                    str(workbook),
+                    "--account",
+                    "Department of Fixtures",
+                    "--source",
+                    str(stale_source),
+                    "--sources-only",
+                    "--include-stale",
+                    "--as-of-date",
+                    "2026-07-01",
+                    "--format",
+                    "json",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["source_matches"][0]["matched_name"], "Department of Fixtures")
+            self.assertEqual(
+                payload["source_matches"][0]["stale_row_update_dates"][0]["date"],
+                "2025-01-01",
+            )
+            self.assertEqual(payload["missing_source_files"], [])
 
 
 if __name__ == "__main__":

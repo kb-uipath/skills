@@ -23,6 +23,13 @@ def decimal_arg(value: str) -> Decimal:
         raise argparse.ArgumentTypeError(f"invalid decimal: {value}") from exc
 
 
+def nonnegative_decimal_arg(value: str) -> Decimal:
+    parsed = decimal_arg(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"value cannot be negative: {value}")
+    return parsed
+
+
 def parse_case(value: str) -> tuple[str, Decimal, Decimal]:
     try:
         label, rest = value.split("=", 1)
@@ -36,7 +43,9 @@ def parse_case(value: str) -> tuple[str, Decimal, Decimal]:
     if not label:
         raise argparse.ArgumentTypeError("case label cannot be empty")
 
-    return label, decimal_arg(transactions.strip()), decimal_arg(pages.strip())
+    transactions_value = nonnegative_decimal_arg(transactions.strip())
+    pages_value = nonnegative_decimal_arg(pages.strip())
+    return label, transactions_value, pages_value
 
 
 def fmt(value: Decimal, places: str = "0.1") -> str:
@@ -57,17 +66,17 @@ def main() -> int:
         required=True,
         help="Scenario as label=transactions,pages. Repeat for low/base/high.",
     )
-    parser.add_argument("--ai-rate", type=decimal_arg, default=Decimal("1"))
-    parser.add_argument("--platform-rate", type=decimal_arg, default=Decimal("0.2"))
+    parser.add_argument("--ai-rate", type=nonnegative_decimal_arg, default=Decimal("1"))
+    parser.add_argument("--platform-rate", type=nonnegative_decimal_arg, default=Decimal("0.2"))
     parser.add_argument(
         "--extra-ai-rate",
-        type=decimal_arg,
+        type=nonnegative_decimal_arg,
         default=Decimal("0"),
         help="Additional AI Units per page, e.g. for verified add-ons.",
     )
     parser.add_argument(
         "--extra-platform-rate",
-        type=decimal_arg,
+        type=nonnegative_decimal_arg,
         default=Decimal("0"),
         help="Additional Platform Units per page, e.g. for verified add-ons.",
     )

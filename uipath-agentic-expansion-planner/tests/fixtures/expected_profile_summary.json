@@ -1,0 +1,14 @@
+{
+  "total_rows": 3,
+  "sheet_count": 1,
+  "use_case_name_field": "Use Case Name",
+  "annual_volume_field": "Annual Volume",
+  "status_counts": {
+    "production": 1,
+    "pipeline": 1,
+    "idea": 1
+  },
+  "duplicate_name": "invoice intake",
+  "annual_volume_sum": 42000.0,
+  "first_representative_name": "Invoice Intake"
+}

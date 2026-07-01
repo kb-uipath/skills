@@ -27,6 +27,7 @@ Use $uipath-agentic-expansion-planner on this inventory. Profile the data, ident
 - Markdown draft for the executive brief.
 - Rendered `.docx` executive brief as the final artifact when file output is possible.
 - Structural verification summary for the DOCX.
+- Golden inventory profile expectations for regression tests.
 
 ## Safety
 
@@ -34,6 +35,7 @@ Use $uipath-agentic-expansion-planner on this inventory. Profile the data, ident
 - Mark weak value claims as `validation required`.
 - Keep deployment context as a hard constraint on capability recommendations.
 - If `openpyxl` or `python-docx` is unavailable, explain the fallback: CSV-only profiling or Markdown-only draft until dependencies are installed.
+- Treat DOCX verification failure as a blocking defect, not a cosmetic warning.
 - The final deliverable contract for this skill is a rendered DOCX when file output is allowed.
 
 ## Validation

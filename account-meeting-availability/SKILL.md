@@ -85,6 +85,7 @@ For meeting availability, include both `customer` and `uipath` records attached 
 - Do not create Outlook drafts with sourced recipients unless the user explicitly asks after reviewing the candidates.
 - Do not expose unrelated mailbox content. Quote or summarize only the minimal evidence needed to justify the candidate.
 - Do not infer a customer email from naming convention alone unless the output clearly marks it as low confidence and needing review.
+- When exporting CSV, preserve reviewability and guard spreadsheet formula prefixes so names, accounts, or roles cannot execute as spreadsheet formulas.
 
 ## Useful Commands
 

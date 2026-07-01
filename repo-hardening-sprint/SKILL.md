@@ -77,3 +77,4 @@ Report:
 - Commit/push details only if those actions actually succeeded.
 
 Use `references/review-report-template.md` for org-shareable hardening summaries when the user wants a written report artifact.
+Use `references/readiness-regression-checklist.md` when hardening reusable skills or org-shared automation assets and updating readiness scores.

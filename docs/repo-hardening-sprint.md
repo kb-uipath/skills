@@ -27,6 +27,7 @@ Use $repo-hardening-sprint on this repository. Identify the highest-risk cleanup
 - Public contracts preserved.
 - Residual risks and follow-ups.
 - Optional review report based on `references/review-report-template.md`.
+- Readiness regression checklist for reusable skills and org-shared automation assets.
 
 ## Safety
 
@@ -34,6 +35,7 @@ Use $repo-hardening-sprint on this repository. Identify the highest-risk cleanup
 - Do not perform destructive git operations unless explicitly requested.
 - Keep broad rewrites, dependency upgrades, and generated artifact churn out of scope unless needed for the stated goal.
 - For this skills repo, use `make validate` when available.
+- Update `docs/production-readiness-evaluation.md` after material skill hardening changes.
 
 ## Validation
 

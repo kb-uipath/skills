@@ -20,6 +20,10 @@ Stop instead of writing when:
 
 Do not fall back to Salesforce Lightning UI automation for writes.
 
+## Required Permissions
+
+The operator must have UiPath Integration Service access to the Salesforce connector, permission to resolve enabled `uipath-salesforce-sfdc` connections, permission to call the connection's HTTP-request element instance, Salesforce read access to the target Opportunity, Opportunity `describe` access, and update access for every writable target field. Missing object, field-level, connector, or connection permissions are hard stops.
+
 ## Workflow
 
 1. Parse the Opportunity ID:
@@ -57,6 +61,7 @@ Do not fall back to Salesforce Lightning UI automation for writes.
    ```bash
    node scripts/meddpicc.mjs receipt --input payload.json
    ```
+   Treat this receipt as a confirmation artifact only. It is not proof of a write, and it must not include raw connector IDs, access tokens, request bodies, customer emails, or unredacted telemetry.
 
 6. Describe Opportunity immediately before composing the write:
    - `GET /services/data/v60.0/sobjects/Opportunity/describe`

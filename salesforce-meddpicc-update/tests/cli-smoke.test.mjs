@@ -19,6 +19,15 @@ function run(command, payload) {
   return JSON.parse(result.stdout);
 }
 
+function runFail(command, payload) {
+  const result = spawnSync(process.execPath, [script, command], {
+    input: JSON.stringify(payload),
+    encoding: "utf8",
+  });
+  assert.notEqual(result.status, 0);
+  return JSON.parse(result.stderr).error;
+}
+
 test("CLI smoke covers all public subcommands", () => {
   const current = loadFixture("current-opportunity.json");
   const describe = loadFixture("describe-opportunity.json");
@@ -56,4 +65,40 @@ test("CLI smoke covers all public subcommands", () => {
 
   const classified = run("classify-error", loadFixture("connection-missing.json"));
   assert.equal(classified.code, "CONNECTION_MISSING");
+
+  const telemetry = run("build-telemetry", {
+    now: "2026-05-20T14:02:00.000Z",
+    skillVersion: "1.1.0",
+    skillSha: "abc123",
+    runId: "run-1",
+    verify: verified,
+    opportunityName: "Do Not Leak",
+  });
+  assert.equal(telemetry.oppId, current.Id);
+  assert.deepEqual(telemetry.fieldsTargeted, ["NextStep"]);
+  assert.equal("opportunityName" in telemetry, false);
+});
+
+test("CLI emits structured errors for invalid commands and stale write payloads", () => {
+  const current = loadFixture("current-opportunity.json");
+  const describe = loadFixture("describe-opportunity.json");
+  const prepared = run("draft", {
+    opportunityId: current.Id,
+    author: "Keith Born",
+    date: "2026-05-20",
+    current,
+    generatedAt: "2026-05-20T14:00:00.000Z",
+    content: { NextStep: "Confirm procurement owner." },
+  });
+
+  const missingConnection = runFail("build-patch", {
+    draft: prepared,
+    describe,
+    now: "2026-05-20T14:01:00.000Z",
+  });
+  assert.equal(missingConnection.code, "MISSING_CONNECTION_ID");
+  assert.equal(missingConnection.recoverable, true);
+
+  const unknown = runFail("not-a-command", {});
+  assert.equal(unknown.code, "UNKNOWN_COMMAND");
 });

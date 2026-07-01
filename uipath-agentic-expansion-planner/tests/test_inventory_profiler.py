@@ -12,6 +12,7 @@ SCRIPT = ROOT / "scripts" / "inventory_profiler.py"
 RENDER_SCRIPT = ROOT / "scripts" / "render_executive_docx.py"
 VERIFY_SCRIPT = ROOT / "scripts" / "verify_executive_docx.py"
 FIXTURE_CSV = ROOT / "tests" / "fixtures" / "inventory.csv"
+EXPECTED_PROFILE = ROOT / "tests" / "fixtures" / "expected_profile_summary.json"
 
 
 def load_module():
@@ -62,23 +63,24 @@ class InventoryProfilerTests(unittest.TestCase):
             self.assertTrue(markdown_path.exists())
 
             profile = json.loads(profile_path.read_text(encoding="utf-8"))
-            self.assertEqual(profile["metadata"]["total_rows"], 3)
-            self.assertEqual(profile["metadata"]["sheet_count"], 1)
+            expected = json.loads(EXPECTED_PROFILE.read_text(encoding="utf-8"))
+            self.assertEqual(profile["metadata"]["total_rows"], expected["total_rows"])
+            self.assertEqual(profile["metadata"]["sheet_count"], expected["sheet_count"])
             self.assertEqual(
                 profile["core_field_mapping"]["use_case_name"],
-                "Use Case Name",
+                expected["use_case_name_field"],
             )
-            self.assertEqual(profile["core_field_mapping"]["annual_volume"], "Annual Volume")
+            self.assertEqual(profile["core_field_mapping"]["annual_volume"], expected["annual_volume_field"])
             self.assertEqual(
                 profile["status_summary"]["normalized_status_counts"],
-                {"production": 1, "pipeline": 1, "idea": 1},
+                expected["status_counts"],
             )
             self.assertEqual(
                 profile["data_quality"]["duplicate_name_groups"][0]["normalized_name"],
-                "invoice intake",
+                expected["duplicate_name"],
             )
-            self.assertEqual(profile["numeric_profiles"]["Annual Volume"]["sum"], 42000.0)
-            self.assertEqual(profile["representative_rows"][0]["Use Case Name"], "Invoice Intake")
+            self.assertEqual(profile["numeric_profiles"]["Annual Volume"]["sum"], expected["annual_volume_sum"])
+            self.assertEqual(profile["representative_rows"][0]["Use Case Name"], expected["first_representative_name"])
 
             markdown = markdown_path.read_text(encoding="utf-8")
             self.assertIn("# Inventory profile", markdown)
@@ -192,6 +194,27 @@ class InventoryProfilerTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(verify.returncode, 0, verify.stderr)
+
+    @unittest.skipUnless(has_python_docx(), "python-docx is not installed")
+    def test_verify_docx_fails_when_required_sections_are_missing(self):
+        from docx import Document
+
+        with tempfile.TemporaryDirectory() as tmp:
+            docx = Path(tmp) / "bad.docx"
+            document = Document()
+            document.add_heading("Bad Brief", level=1)
+            document.add_paragraph("Missing required structure.")
+            document.save(docx)
+
+            verify = subprocess.run(
+                [sys.executable, str(VERIFY_SCRIPT), str(docx)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(verify.returncode, 1)
+            self.assertIn("Missing required headings", verify.stderr)
 
 
 if __name__ == "__main__":

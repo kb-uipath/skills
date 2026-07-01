@@ -30,6 +30,7 @@ REQUIRED_HEADERS = [
 ]
 
 RECORD_TYPES = {"customer", "uipath"}
+FORMULA_PREFIX_RE = re.compile(r"^[\t\r\n ]*[=+\-@]")
 
 ALIASES = {
     "account": "account name",
@@ -87,6 +88,16 @@ def normalize_header(value: str) -> str:
 
 def normalize_value(value: str | None) -> str:
     return (value or "").strip()
+
+
+def safe_csv_value(value: str) -> str:
+    if FORMULA_PREFIX_RE.match(value):
+        return "'" + value
+    return value
+
+
+def safe_csv_row(row: dict[str, str]) -> dict[str, str]:
+    return {header: safe_csv_value(normalize_value(row.get(header))) for header in CANONICAL_HEADERS}
 
 
 def normalize_record_type(value: str | None, default: str = "customer") -> str:
@@ -152,7 +163,7 @@ def write_rows(path: Path, rows: list[dict[str, str]]) -> None:
             writer = csv.DictWriter(handle, fieldnames=CANONICAL_HEADERS)
             writer.writeheader()
             for row in rows:
-                writer.writerow(normalize_row(row))
+                writer.writerow(safe_csv_row(normalize_row(row)))
         shutil.move(tmp_name, path)
     finally:
         if os.path.exists(tmp_name):
@@ -166,9 +177,16 @@ def read_import_csv(path: Path) -> list[dict[str, str]]:
             raise ValueError("Import CSV has no header row")
 
         header_map: dict[str, str] = {}
+        seen: dict[str, str] = {}
         for header in reader.fieldnames:
             normalized = normalize_header(header)
-            if normalized in CANONICAL_HEADERS and normalized not in header_map:
+            if normalized in CANONICAL_HEADERS:
+                if normalized in seen:
+                    raise ValueError(
+                        f"Duplicate logical header for '{normalized}': "
+                        f"'{seen[normalized]}' and '{header}'"
+                    )
+                seen[normalized] = header
                 header_map[normalized] = header
 
         missing = [header for header in REQUIRED_HEADERS if header not in header_map]
@@ -226,7 +244,7 @@ def print_rows(rows: list[dict[str, str]], output_format: str) -> None:
     if output_format == "csv":
         writer = csv.DictWriter(sys.stdout, fieldnames=CANONICAL_HEADERS)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(safe_csv_row(row) for row in rows)
         return
 
     if not rows:

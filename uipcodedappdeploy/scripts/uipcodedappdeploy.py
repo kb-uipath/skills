@@ -266,6 +266,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Actually edit files and run commands; without this, dry-run only",
     )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Plan commands without probing uip or resolving folder names. Requires --folder-key for non-GUID folders.",
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.project_root).expanduser().resolve()
@@ -284,14 +289,21 @@ def main(argv: list[str] | None = None) -> int:
             "--my-workspace has no codedapp equivalent. Pass --folder or --folder-key "
             "for the personal workspace folder."
         )
+    if args.offline and args.execute:
+        raise SystemExit("--offline cannot be combined with --execute.")
+    if args.offline and args.folder and not GUID_RE.match(args.folder):
+        raise SystemExit("Offline mode cannot resolve folder names. Pass --folder-key.")
 
     dry_run = not args.execute
     if dry_run:
         print("Dry-run mode. Re-run with --execute to modify and deploy.")
+    if args.offline:
+        print("Offline planning mode. Skipping uip probing and folder lookup.")
 
     env = os.environ.copy()
 
-    _run(["uip", "--version"], cwd=root, env=env, dry_run=False)
+    if not args.offline:
+        _run(["uip", "--version"], cwd=root, env=env, dry_run=False)
 
     if not args.skip_tests:
         _run(["uv", "run", "python", "-m", "pytest", "-q"], cwd=root, env=env, dry_run=dry_run)

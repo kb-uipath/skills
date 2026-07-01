@@ -26,6 +26,7 @@ Use $llm-council to stress-test this launch decision. Capture five advisor posit
 - Peer-review highlights.
 - Chairman synthesis.
 - HTML report and Markdown transcript when artifact rendering is requested.
+- Validate-only result for session JSON when artifact creation is not desired.
 
 ## Safety
 
@@ -33,6 +34,7 @@ Use $llm-council to stress-test this launch decision. Capture five advisor posit
 - Make uncertainty and dissent visible; a council report that hides disagreement is theater, not analysis.
 - If subagents are unavailable, say so and continue with a deterministic single-agent fallback.
 - Clean up temporary session JSON files unless the user asks to keep them.
+- Use renderer `--validate-only` to verify session shape without creating artifacts.
 
 ## Validation
 

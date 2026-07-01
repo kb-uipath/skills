@@ -48,6 +48,8 @@ make validate
 
 The gate checks skill metadata, docs coverage, relative Markdown links, local absolute path leaks, Python syntax, Python unit tests, Node syntax/tests, and whitespace errors.
 
+Current readiness scores are tracked in [docs/production-readiness-evaluation.md](./docs/production-readiness-evaluation.md).
+
 ## Skill index
 
 ### Consumption planning

@@ -115,6 +115,47 @@ class DuEstimateTests(unittest.TestCase):
         self.assertIn("| api-only | 1,000 | 0 | 0 | 0 |", result.stdout)
         self.assertIn("AI rate/page: 0", result.stdout)
 
+    def test_negative_volumes_and_rates_are_rejected(self):
+        with self.assertRaises(argparse.ArgumentTypeError):
+            self.module.parse_case("bad=-1,2")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--case",
+                "base=100,1",
+                "--ai-rate",
+                "-1",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("value cannot be negative", result.stderr)
+
+    def test_decimal_pages_and_rates_are_supported(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--case",
+                "mixed=100.5,1.5",
+                "--ai-rate",
+                "0.5",
+                "--platform-rate",
+                "0.25",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("| mixed | 100.5 | 1.5 | 75.4 | 37.7 |", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -87,6 +87,27 @@ class PrepareCustomerEmailCsvTests(unittest.TestCase):
             self.assertEqual(rows[0]["sourcing confidence"], "low")
             self.assertIn("UiPath domain", rows[0]["sourcing evidence"])
 
+    def test_distribution_addresses_and_formula_values_are_flagged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source = tmp_path / "contacts.csv"
+            output = tmp_path / "normalized.csv"
+            source.write_text(
+                "Account,Type,Name,Title,Email\n"
+                "=Bad Account,Customer,Support Desk,Helpdesk,support@example.gov\n",
+                encoding="utf-8",
+            )
+
+            result = self.module.main([str(source), "--output", str(output)])
+
+            self.assertEqual(result, 0)
+            with output.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(rows[0]["account name"], "'=Bad Account")
+            self.assertEqual(rows[0]["needs review"], "yes")
+            self.assertEqual(rows[0]["sourcing confidence"], "low")
+            self.assertIn("distribution", rows[0]["sourcing evidence"])
+
 
 if __name__ == "__main__":
     unittest.main()

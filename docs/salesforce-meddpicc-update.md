@@ -13,6 +13,7 @@ Use this skill when the user provides a Salesforce Opportunity URL or ID and ask
 - UiPath Integration Service Salesforce connector access.
 - Salesforce connection ID and element instance ID resolved at runtime.
 - Opportunity read data, Opportunity describe response, and explicit user confirmation before write.
+- Salesforce object, field-level, describe, and update permissions for every target field.
 
 ## Prompt
 
@@ -34,6 +35,7 @@ Use $salesforce-meddpicc-update for this Opportunity URL. Parse the ID, draft ME
 - No Salesforce Lightning UI automation fallback for writes.
 - Stop on missing connection, stale read, schema drift, field security errors, invalid picklists, or malformed Opportunity IDs.
 - Telemetry must use `buildTelemetryPayload()` only; narrative content, names, emails, amounts, and Opportunity names must not be logged.
+- Confirmation receipts are not proof of write success; only read-after-write verification can be reported as success.
 - If telemetry fails after a successful PATCH, report the observability failure but do not roll back the Salesforce write.
 
 ## Validation

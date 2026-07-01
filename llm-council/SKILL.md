@@ -168,6 +168,8 @@ Expected JSON fields:
 
 The renderer validates required session fields and the five required advisor responses before writing artifacts. Treat validation failure as a workflow defect; repair the session payload instead of creating a partial report.
 
+Use `--validate-only` when checking a saved session payload in CI or before handoff without creating HTML or Markdown artifacts.
+
 After generating the files, surface the HTML report path to the user. If the environment supports opening local files and doing so is appropriate, open the HTML report.
 
 ## Output Style

@@ -13,6 +13,7 @@ Use this skill when Codex needs to increment a coded app project version, valida
 - Folder name or folder key for deploy.
 - Version bump part or explicit version.
 - Whether to run dry-run planning or `--execute`.
+- Whether offline planning is required because the environment must not probe `uip`.
 
 ## Prompt
 
@@ -23,6 +24,7 @@ Use $uipcodedappdeploy for this coded app project. Plan the version bump and pac
 ## Outputs
 
 - Dry-run command plan by default.
+- Offline command plan when `--offline` is passed.
 - Version bump in `pyproject.toml` only when `--execute` is passed.
 - `uip codedapp pack`, `publish`, and `deploy` command sequence.
 - Folder key resolution when a folder name is provided.
@@ -30,6 +32,7 @@ Use $uipcodedappdeploy for this coded app project. Plan the version bump and pac
 ## Safety
 
 - Dry-run is the default and must not edit files or deploy.
+- `--offline` must not probe `uip`, resolve folder names, edit files, or deploy.
 - `--execute` is required for file writes and live CLI commands.
 - Do not use `--folder` and `--folder-key` together.
 - Do not deploy to a personal workspace without an explicit folder or folder key.

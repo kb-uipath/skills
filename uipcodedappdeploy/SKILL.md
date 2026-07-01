@@ -77,5 +77,6 @@ Useful options:
 - `--org-id`, `--org-name`, and `--tenant-id` pass explicit context to coded app commands when needed.
 - `--reuse-client` passes `--reuse-client` to `uip codedapp pack`.
 - `--skip-tests` or `--skip-app-build` should only be used when the user explicitly accepts that risk.
+- `--offline` produces a command plan without probing `uip` or resolving folder names. Use it for fixture tests, docs examples, and environments without UiPath CLI access. It cannot be combined with `--execute` and requires `--folder-key` for non-GUID folders.
 
 The script defaults to dry-run mode. It only edits `pyproject.toml`, runs `uv lock`, and runs coded app pack/publish/deploy when `--execute` is passed.

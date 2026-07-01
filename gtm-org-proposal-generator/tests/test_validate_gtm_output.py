@@ -92,6 +92,26 @@ class ValidateGtmOutputTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("unsupported overclaim", result.stderr)
 
+    def test_uncited_money_and_percent_claims_fail(self):
+        errors = self.module.validate_text(
+            VALID_OUTPUT.replace(
+                "| Licensing | $10,000,000 | Documented | [S1] |",
+                "| Licensing | $10,000,000 | Documented |  |",
+            )
+            + "\nExpected cycle-time reduction is 30%.\n"
+        )
+
+        self.assertTrue(
+            any(error.startswith("uncited money or percentage claim") for error in errors)
+        )
+
+    def test_citations_must_be_defined_in_source_ledger(self):
+        output = VALID_OUTPUT.replace("Evidence: [S1]", "Evidence: [S2]")
+
+        errors = self.module.validate_text(output)
+
+        self.assertIn("citation(s) missing from source ledger: [S2]", errors)
+
 
 if __name__ == "__main__":
     unittest.main()

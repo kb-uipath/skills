@@ -18,6 +18,10 @@ REQUIRED_HEADINGS = (
     "## Assumptions and Validation Needed",
 )
 CITATION_RE = re.compile(r"\[S\d+\]")
+MONEY_OR_PERCENT_RE = re.compile(
+    r"(\$[\d,]+(?:\.\d+)?(?:\s*(?:million|billion|k|m|bn))?|\b\d+(?:\.\d+)?%)",
+    re.IGNORECASE,
+)
 ESTIMATE_TIERS = ("Documented", "Derived", "Benchmarked", "Assumption")
 UNSAFE_CLAIMS = (
     "guaranteed roi",
@@ -42,6 +46,14 @@ def validate_text(text: str) -> list[str]:
     if not citations:
         errors.append("at least one source citation like [S1] is required")
 
+    source_section = section_text(text, "## Source Ledger")
+    source_ids = set(CITATION_RE.findall(source_section))
+    if citations and not source_ids:
+        errors.append("source ledger must define cited source IDs")
+    missing_source_ids = sorted(set(citations) - source_ids)
+    if missing_source_ids:
+        errors.append("citation(s) missing from source ledger: " + ", ".join(missing_source_ids))
+
     if not any(tier in text for tier in ESTIMATE_TIERS):
         errors.append("at least one estimate tier label is required")
 
@@ -54,7 +66,19 @@ def validate_text(text: str) -> list[str]:
     if proposal_section and "Validation required" not in proposal_section:
         errors.append("proposal cards must include a Validation required line or field")
 
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if MONEY_OR_PERCENT_RE.search(line) and not CITATION_RE.search(line):
+            errors.append(f"uncited money or percentage claim on line {line_number}")
+
     return errors
+
+
+def section_text(text: str, heading: str) -> str:
+    if heading not in text:
+        return ""
+    tail = text.split(heading, 1)[1]
+    next_heading = re.search(r"\n##\s+", tail)
+    return tail[: next_heading.start()] if next_heading else tail
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

@@ -28,6 +28,7 @@ Use $usecasehandoff to package this automation use case for a delivery team. Bui
 - Risk register.
 - Cover message.
 - Optional ZIP or routed upload only after confirmation.
+- Validation result for an existing handoff package.
 
 ## Safety
 
@@ -35,6 +36,7 @@ Use $usecasehandoff to package this automation use case for a delivery team. Bui
 - Do not present uncited metrics as facts.
 - Separate customer-specific evidence from public/vendor documentation.
 - Use `scripts/create_handoff_package.py` for deterministic local scaffolding before connector writes.
+- Use `scripts/create_handoff_package.py --validate <package-dir>` before routing a package to any external destination.
 
 ## Validation
 

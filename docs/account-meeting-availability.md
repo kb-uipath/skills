@@ -25,6 +25,7 @@ Use $account-meeting-availability to normalize this account contact CSV, flag mi
 - Normalized CSV with canonical contact columns and review flags.
 - Contact store add/edit/list/import/export operations.
 - Clear review status for missing email addresses and customer rows that contain internal UiPath-domain addresses.
+- CSV output that prefixes spreadsheet-formula-like values so exported files are safer to open.
 
 ## Safety
 
@@ -32,6 +33,7 @@ Use $account-meeting-availability to normalize this account contact CSV, flag mi
 - Treat customer contact data as sensitive personal data; only store the minimum fields in the CSV contract.
 - Use temp `--store` paths in tests and dry runs. Do not touch a real Codex home contact store unless the user explicitly requests it.
 - Mark ambiguous candidates or low-confidence sourced emails as `needs review=yes`.
+- Mark automated, no-reply, support, listserv, and distribution-style addresses as review-required unless the user explicitly wants a shared mailbox or list.
 
 ## Validation
 

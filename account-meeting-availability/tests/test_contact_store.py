@@ -157,6 +157,44 @@ class ContactStoreTests(unittest.TestCase):
             self.assertEqual(stored[0]["customer role"], "Chief Financial Officer")
             self.assertEqual(list(Path(tmp).glob(".contacts.*.csv")), [])
 
+    def test_export_and_import_guard_against_csv_injection_and_duplicate_headers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            store = tmp_path / "contacts.csv"
+            exported = tmp_path / "export.csv"
+
+            code, stdout, stderr = self.run_cli(
+                store,
+                "add",
+                "--account",
+                "=Malicious",
+                "--name",
+                "@Alice",
+                "--role",
+                "+CFO",
+                "--email",
+                "alice@example.com",
+            )
+            self.assertEqual(code, 0, stderr)
+
+            code, stdout, stderr = self.run_cli(store, "export", "--output", str(exported))
+            self.assertEqual(code, 0, stderr)
+            with exported.open(newline="", encoding="utf-8") as handle:
+                row = next(csv.DictReader(handle))
+            self.assertEqual(row["account name"], "'=Malicious")
+            self.assertEqual(row["customer name"], "'@Alice")
+            self.assertEqual(row["customer role"], "'+CFO")
+
+            duplicate = tmp_path / "duplicate.csv"
+            duplicate.write_text(
+                "Account,Account Name,Name,Role,Email\n"
+                "Acme,Acme,Alice,CFO,alice@example.com\n",
+                encoding="utf-8",
+            )
+            code, stdout, stderr = self.run_cli(store, "import", str(duplicate))
+            self.assertEqual(code, 1)
+            self.assertIn("Duplicate logical header", stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -145,6 +145,61 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             self.assertEqual(captures[0]["cmd"], ["uip", "or", "folders", "get", "Shared", "--output", "json", "--tenant", "alpha"])
             self.assertIn(GUID, calls[-1]["cmd"])
 
+    def test_offline_planning_skips_uip_probe_and_requires_folder_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            calls, captures, original_run, original_capture_json = self.patched_module()
+            try:
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    code = self.module.main(
+                        [
+                            "--project-root",
+                            str(root),
+                            "--folder-key",
+                            GUID,
+                            "--skip-tests",
+                            "--skip-app-build",
+                            "--offline",
+                        ]
+                    )
+            finally:
+                self.restore_module(original_run, original_capture_json)
+
+            self.assertEqual(code, 0)
+            self.assertIn("Offline planning mode", stdout.getvalue())
+            self.assertEqual(captures, [])
+            self.assertNotIn(["uip", "--version"], [call["cmd"] for call in calls])
+            self.assertTrue(all(call["dry_run"] for call in calls))
+
+            with self.assertRaisesRegex(SystemExit, "Offline mode cannot resolve folder names"):
+                self.module.main(
+                    [
+                        "--project-root",
+                        str(root),
+                        "--folder",
+                        "Shared",
+                        "--skip-tests",
+                        "--skip-app-build",
+                        "--offline",
+                    ]
+                )
+
+            with self.assertRaisesRegex(SystemExit, "--offline cannot be combined with --execute"):
+                self.module.main(
+                    [
+                        "--project-root",
+                        str(root),
+                        "--folder-key",
+                        GUID,
+                        "--skip-tests",
+                        "--skip-app-build",
+                        "--offline",
+                        "--execute",
+                    ]
+                )
+
     def test_rejects_conflicting_folder_inputs_and_workspace_without_folder(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

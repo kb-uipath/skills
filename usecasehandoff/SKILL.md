@@ -61,6 +61,12 @@ python3 scripts/create_handoff_package.py --title "Permit Intake Automation" --a
 
 The scaffolder creates `README.md`, `evidence-ledger.md`, `delivery-plan.md`, `risk-register.md`, `cover-message.md`, and `manifest.json`. It refuses to overwrite an existing package unless `--force` is passed.
 
+Validate a package before routing or uploading it:
+
+```bash
+python3 scripts/create_handoff_package.py --validate outputs/2026-07-01-permit-intake-automation
+```
+
 ## Evidence Rules
 
 - Never present a metric as fact without a source or an explicit estimate label.
