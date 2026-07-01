@@ -6,7 +6,7 @@ The skills are copied as top-level directories so they can be installed or synce
 
 ## What is included
 
-- 17 top-level personal Codex skills from `~/.codex/skills`.
+- 8 top-level personal Codex skills from `~/.codex/skills`.
 - Per-skill `SKILL.md` files plus bundled references, scripts, assets, and templates.
 - Generated documentation in `docs/` with use cases, required inputs, and prompt examples.
 - Hidden backups, `.DS_Store` files, local zip artifacts, and upstream `UiPath/skills` exports are intentionally excluded.
@@ -32,7 +32,7 @@ rsync -a --exclude docs --exclude .git --exclude README.md --exclude SECURITY.md
 
 Invoke a skill by name in a Codex prompt, usually with a `$` prefix, then provide the concrete inputs listed in the matching doc page.
 
-Upstream `UiPath/skills` exports are not vendored here. Some retained personal skills may still mention upstream skill names as external handoff targets; install those separately if you need that full UiPath build surface.
+Upstream `UiPath/skills` exports and UiPath product build/ops helper skills are not vendored here.
 
 ```text
 Use $repo-hardening-sprint on this repository. Identify the highest-impact cleanup, implement safe fixes, run the relevant checks, and summarize remaining risks before commit.
@@ -75,7 +75,6 @@ Use $repo-hardening-sprint on this repository. Identify the highest-impact clean
 | Skill | What it does | When to use it | Docs |
 | --- | --- | --- | --- |
 | [gtm-org-proposal-generator](./gtm-org-proposal-generator/SKILL.md) | Build executive-level UiPath automation proposal cards from public organizational research. | Build executive-level UiPath automation proposal cards from public organizational research. Use when Codex is asked to research an organization, agency, department, public company, healthcare system, university, or other institution; analyze budgets, strategic goals, administrative burden, or cost drivers; identify automation use cases; and produce cited GTM, sales, C-suite, public sector, or federal proposal content aligned to a specified industry vertical and UiPath deployment type. | [docs](./docs/gtm-org-proposal-generator.md) |
-| [uipath-agentic-expansion-planner](./uipath-agentic-expansion-planner/SKILL.md) | analyze detailed customer automation or use-case inventories to produce evidence-backed uipath act 2 expansion plans, agentic automation portfolios, top 5 high-impact recommendations, top 3 low-friction poc candidates, and a final verified executive .docx Word brief every run. | analyze detailed customer automation or use-case inventories to produce evidence-backed uipath act 2 expansion plans, agentic automation portfolios, top 5 high-impact recommendations, top 3 low-friction poc candidates, and a final verified executive .docx Word brief every run. use when the user provides or references a customer inventory spreadsheet, asks for agentic expansion ideas, asks to prioritize uipath opportunities, or needs a customer-ready proposal grounded in inventory data, public strategy evidence, deployment-aware validation, and Word-ready executive packaging. | [docs](./docs/uipath-agentic-expansion-planner.md) |
 
 ### Public-sector account research
 
@@ -88,36 +87,6 @@ Use $repo-hardening-sprint on this repository. Identify the highest-impact clean
 | Skill | What it does | When to use it | Docs |
 | --- | --- | --- | --- |
 | [salesforce-meddpicc-update](./salesforce-meddpicc-update/SKILL.md) | Update MEDDPICC qualification fields and Next Steps on UiPath Salesforce Opportunities through the UiPath Integration Service Salesforce connector. | Update MEDDPICC qualification fields and Next Steps on UiPath Salesforce Opportunities through the UiPath Integration Service Salesforce connector. Use when the user provides or references a Salesforce Opportunity URL or ID and asks to update MEDDPICC, qualification, Metrics, Economic Buyer, Decision Criteria, Decision Process, Paper Process, Identified Pain, Champion, Competition, Compelling Event, or Next Steps. Requires read-before-write, schema describe validation, explicit user confirmation, append-with-date behavior for narrative fields, read-after-write verification, prompt-injection guardrail, fuzzy near-duplicate detection, force-duplicate override, and privacy-safe telemetry logging. | [docs](./docs/salesforce-meddpicc-update.md) |
-
-### UiPath build
-
-| Skill | What it does | When to use it | Docs |
-| --- | --- | --- | --- |
-| [uipath-rpa-legacy](./uipath-rpa-legacy/SKILL.md) | Always invoke when `project.json` has `targetFramework: Legacy` or the user mentions legacy XAML / .NET 4.6.1. UiPath legacy RPA (.NET Framework 4.6.1, XAML) via `uip rpa-legacy`. | Always invoke when `project.json` has `targetFramework: Legacy` or the user mentions legacy XAML / .NET 4.6.1. UiPath legacy RPA (.NET Framework 4.6.1, XAML) via `uip rpa-legacy`. For Windows/cross-platform->uipath-rpa. | [docs](./docs/uipath-rpa-legacy.md) |
-
-### UiPath deploy
-
-| Skill | What it does | When to use it | Docs |
-| --- | --- | --- | --- |
-| [uipcodedappdeploy](./uipcodedappdeploy/SKILL.md) | Deploy UiPath coded app projects with the native UiPath CLI. | Deploy UiPath coded app projects with the native UiPath CLI. Use when Codex needs to increment a coded app package version, validate the project, build the app dist, pack it, publish it, and deploy it to UiPath Automation Cloud alpha using `uip codedapp pack`, `uip codedapp publish`, and `uip codedapp deploy`. | [docs](./docs/uipcodedappdeploy.md) |
-
-### UiPath design
-
-| Skill | What it does | When to use it | Docs |
-| --- | --- | --- | --- |
-| [uipath-solution-design](./uipath-solution-design/SKILL.md) | Always invoke for `sdd.md`, `pdd.md`, or PDD/SDD documents. UiPath PDD->SDD: analyze PDDs (PDF/docx/md), pick scope (single product or multi-project Solution: RPA/Flow/Case/Agents/Apps/API Workflows), write implementation-ready SDD. | Always invoke for `sdd.md`, `pdd.md`, or PDD/SDD documents. UiPath PDD->SDD: analyze PDDs (PDF/docx/md), pick scope (single product or multi-project Solution: RPA/Flow/Case/Agents/Apps/API Workflows), write implementation-ready SDD. For task plans->uipath-planner. For project setup->uipath-platform. | [docs](./docs/uipath-solution-design.md) |
-
-### UiPath platform
-
-| Skill | What it does | When to use it | Docs |
-| --- | --- | --- | --- |
-| [uipath-llm-configuration-byo-connections](./uipath-llm-configuration-byo-connections/SKILL.md) | UiPath BYO LLM product configurations in the LLM Gateway via `uip llm-configuration byo-connections` - list, get, create, update, delete, list-product-configs. Register tenant-owned OpenAI / Azure OpenAI / AWS Bedrock / Anthropic / Google Vertex / Mistral keys against UiPath products (agents, agenthub, jarvis, IXP, agent builder). Wraps product-level llm-configurations endpoints. | UiPath BYO LLM product configurations in the LLM Gateway via `uip llm-configuration byo-connections` - list, get, create, update, delete, list-product-configs. Register tenant-owned OpenAI / Azure OpenAI / AWS Bedrock / Anthropic / Google Vertex / Mistral keys against UiPath products (agents, agenthub, jarvis, IXP, agent builder). Wraps product-level llm-configurations endpoints. For tenant-wide AI governance (allowed providers, blocked models)->uipath-governance. | [docs](./docs/uipath-llm-configuration-byo-connections.md) |
-
-### UiPath troubleshooting
-
-| Skill | What it does | When to use it | Docs |
-| --- | --- | --- | --- |
-| [uipath-diagnostics](./uipath-diagnostics/SKILL.md) | UiPath cross-platform diagnostics - failed or stuck Orchestrator jobs, faulted queue items, publish errors, selector failures, healing agent issues, permission problems. | UiPath cross-platform diagnostics - failed or stuck Orchestrator jobs, faulted queue items, publish errors, selector failures, healing agent issues, permission problems. For .flow run diagnosis->uipath-maestro-flow. For .bpmn run diagnosis->uipath-maestro-bpmn. For .xaml/.cs workflow debug->uipath-rpa. For platform ops->uipath-platform. | [docs](./docs/uipath-diagnostics.md) |
 
 ## Public repository safety notes
 

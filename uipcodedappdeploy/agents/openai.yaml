@@ -1,4 +1,0 @@
-interface:
-  display_name: "UiPath Coded App Deploy"
-  short_description: "Pack, publish, and deploy UiPath coded apps"
-  default_prompt: "Use $uipcodedappdeploy to increment the coded app version and deploy this UiPath coded app project to alpha."
