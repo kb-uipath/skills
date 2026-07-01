@@ -4,6 +4,18 @@ Each page describes when to use the skill, what inputs to provide, and a starter
 
 See [production-readiness-evaluation.md](./production-readiness-evaluation.md) for the current production-readiness scores and improvement deltas.
 
+## Latest Readiness Snapshot
+
+All 10 remaining skills are at or above the Org Baseline threshold of 8/10. The current top three are:
+
+| Rank | Skill | Score | Latest hardening signal |
+| ---: | --- | ---: | --- |
+| 1 | salesforce-meddpicc-update | 9.0 | Mature no-write safety, fixture coverage, redacted receipts, and connector permission docs. |
+| 2 | uipath-agentic-expansion-planner | 8.9 | On-brand DOCX renderer, Markdown brief quality validator, and brand-style verification. |
+| 3 | account-meeting-availability | 8.6 | CSV privacy handling, isolated store tests, and robust contact normalization. |
+
+Run `make validate` from the repo root before sharing changes. Use a Python runtime with `python-docx` installed for full DOCX renderer coverage.
+
 | Skill | Category | Docs |
 | --- | --- | --- |
 | account-meeting-availability | Customer operations | [account-meeting-availability.md](./account-meeting-availability.md) |

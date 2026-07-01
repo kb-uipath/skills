@@ -31,4 +31,4 @@ This evaluation grades each remaining skill on a 1-10 scale from conceptual brai
 
 ## Summary
 
-All remaining skills now meet or exceed the Org Baseline threshold of 8/10. The largest gains came from previously prompt-heavy or weakly-tested skills: `gtm-org-proposal-generator`, `usecasehandoff`, `pubsec-big-rocks-row-research`, and `llm-council`. No skill is graded as fully certified 10/10 because live-system certification, monitored rollout, and production telemetry are intentionally outside this no-live-write hardening pass.
+All remaining skills now meet or exceed the Org Baseline threshold of 8/10. The most recent material improvement moved `uipath-agentic-expansion-planner` to 8.9 by adding an executive-brief quality validator, UiPath-derived DOCX styling, and brand-style verification. The largest overall gains still came from previously prompt-heavy or weakly-tested skills: `gtm-org-proposal-generator`, `usecasehandoff`, `pubsec-big-rocks-row-research`, and `llm-council`. No skill is graded as fully certified 10/10 because live-system certification, monitored rollout, and production telemetry are intentionally outside this no-live-write hardening pass.

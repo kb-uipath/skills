@@ -47,6 +47,6 @@ Use $uipath-agentic-expansion-planner on this inventory. Profile the data, ident
 ```bash
 python3 -m unittest discover -s uipath-agentic-expansion-planner/tests -p 'test_*.py'
 python3 uipath-agentic-expansion-planner/scripts/validate_executive_brief.py <brief.md>
-python3 uipath-agentic-expansion-planner/scripts/verify_executive_docx.py <brief.docx> --require-brand-style
+python3 uipath-agentic-expansion-planner/scripts/verify_executive_docx.py <brief.docx> --require-output-dir --require-brand-style
 python3 tools/validate_repo.py
 ```

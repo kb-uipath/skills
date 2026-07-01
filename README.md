@@ -9,7 +9,20 @@ The skills are copied as top-level directories so they can be installed or synce
 - 10 top-level Codex skills.
 - Per-skill `SKILL.md` files plus bundled references, scripts, assets, and templates.
 - Skill-specific documentation in `docs/` with inputs, prompts, outputs, safety notes, and validation commands.
+- Repo-level validation through `make validate`, `tools/validate_repo.py`, Python unit tests, Node tests, syntax checks, and whitespace checks.
 - Hidden backups, `.DS_Store` files, local zip artifacts, and upstream `UiPath/skills` exports are intentionally excluded.
+
+## Latest validated state
+
+As of the latest merged `main`, all 10 remaining skills meet the Org Baseline readiness bar of 8/10 or higher. The top readiness scores are:
+
+| Rank | Skill | Score | Notes |
+| ---: | --- | ---: | --- |
+| 1 | `salesforce-meddpicc-update` | 9.0 | Mature fixture coverage, write safety, receipt redaction, and connector-permission docs. |
+| 2 | `uipath-agentic-expansion-planner` | 8.9 | Adds Markdown brief quality gates and UiPath brand-style DOCX verification. |
+| 3 | `account-meeting-availability` | 8.6 | Hardened CSV normalization, privacy handling, and isolated contact-store tests. |
+
+See [docs/production-readiness-evaluation.md](./docs/production-readiness-evaluation.md) for the full sorted table, baseline scores, deltas, evidence, and remaining blockers.
 
 ## Install
 
@@ -22,11 +35,18 @@ mkdir -p ~/.codex/skills
 cp -R <skill-name> ~/.codex/skills/
 ```
 
-To sync every skill:
+To sync every skill without copying repo scaffolding into the Codex skills folder:
 
 ```bash
-rsync -a --exclude docs --exclude .git --exclude README.md --exclude SECURITY.md ./ ~/.codex/skills/
+mkdir -p ~/.codex/skills
+for skill in */SKILL.md; do
+  skill_dir="${skill%/SKILL.md}"
+  mkdir -p ~/.codex/skills/"$skill_dir"
+  rsync -a --delete "$skill_dir"/ ~/.codex/skills/"$skill_dir"/
+done
 ```
+
+Restart Codex after installing or syncing skills so the updated skill metadata is loaded.
 
 ## Use
 
@@ -48,7 +68,11 @@ make validate
 
 The gate checks skill metadata, docs coverage, relative Markdown links, local absolute path leaks, Python syntax, Python unit tests, Node syntax/tests, and whitespace errors.
 
-Current readiness scores are tracked in [docs/production-readiness-evaluation.md](./docs/production-readiness-evaluation.md).
+For full DOCX renderer and brand-style test coverage, run `make validate` with a Python interpreter that has `python-docx` installed:
+
+```bash
+make validate PYTHON=/path/to/python-with-python-docx
+```
 
 ## Skill index
 
