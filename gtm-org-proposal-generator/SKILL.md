@@ -13,6 +13,8 @@ Use only public authoritative sources unless the user explicitly changes scope. 
 
 Avoid naming UiPath product SKUs. Refer to capabilities only, such as UI/API Automation, Autopilot, Agent Builder, Maestro, Apps, Test Manager, Test Cloud, Document Understanding, Action Center, Communications Mining, and IXP, after validating availability for the requested deployment type against current `docs.uipath.com`.
 
+The machine-readable handoff is the canonical JSON contract `gtm-org-proposal-generator/v1`. Generate that contract first, validate it, and then render deterministic Markdown from it. Legacy free-form Markdown is not an acceptable runtime contract and the validator fails closed with migration guidance.
+
 ## Required Workflow
 
 1. Confirm the inputs.
@@ -23,6 +25,7 @@ Avoid naming UiPath product SKUs. Refer to capabilities only, such as UI/API Aut
 
 2. Build a public source ledger.
    - Read `references/source-and-estimation-rules.md` before researching.
+   - Read `references/versioned-contract.md` before producing any reusable artifact.
    - Prefer official budget documents, annual reports, audited financials, SEC filings, strategic plans, performance plans, inspector general reports, and procurement or staffing documents.
    - Capture source title, publisher, publication date or fiscal year, URL, accessed date, and the facts each source supports.
    - Use web browsing for current public sources and for current UiPath documentation. Public budgets, reports, laws, filings, and product documentation are time-sensitive.
@@ -37,7 +40,7 @@ Avoid naming UiPath product SKUs. Refer to capabilities only, such as UI/API Aut
 4. Identify and prioritize use cases.
    - Connect use cases to high-budget areas, administrative burden, labor shortages, backlog, compliance pressure, citizen or customer service friction, document volume, claims or case processing, testing burden, audit needs, or strategic goals.
    - Prefer use cases where UiPath can plausibly reduce cycle time, manual handling, exception work, testing effort, intake triage, or document processing cost.
-   - Produce the top 10 use cases only when the evidence supports 10. If fewer are defensible, provide fewer and explain the evidence gap.
+   - Produce the top 10 use cases only when the evidence supports 10. If fewer are defensible, provide fewer complete cards and explain the evidence gap in the contract.
 
 5. Validate UiPath capabilities.
    - Check current `docs.uipath.com` sources before finalizing any capability in a proposal card.
@@ -47,10 +50,12 @@ Avoid naming UiPath product SKUs. Refer to capabilities only, such as UI/API Aut
 
 6. Generate the executive deliverable.
    - Read `references/proposal-output-template.md` before composing the final response.
+   - Create a canonical JSON contract with `contract_version: "gtm-org-proposal-generator/v1"`.
+   - Validate the contract with `scripts/validate_gtm_output.py`; render Markdown from the validated JSON with `--render`.
    - Use formal, concise language suitable for C-suite, agency executive, or federal review.
    - Keep facts, estimates, and recommendations visibly separated.
    - Include source IDs next to budget values, strategy claims, admin-cost estimates, and impact estimates.
-   - When producing a Markdown proposal artifact, validate it with `scripts/validate_gtm_output.py` before sharing when practical.
+   - When producing a proposal artifact, validate the JSON contract and render deterministic Markdown before sharing when practical.
    - Offer export formats only after delivering the core result.
 
 ## Evidence Rules
@@ -65,6 +70,7 @@ Avoid naming UiPath product SKUs. Refer to capabilities only, such as UI/API Aut
 
 ## References
 
+- `references/versioned-contract.md`: canonical JSON contract, deterministic renderer expectations, fail-closed legacy behavior, and completeness rules.
 - `references/source-and-estimation-rules.md`: source priority, citation requirements, budget normalization, admin-cost estimate tiers, and anti-fabrication rules.
 - `references/proposal-output-template.md`: required executive output shape for source ledgers, budget tables, use-case prioritization, and proposal cards.
-- `scripts/validate_gtm_output.py`: static output-contract check for required sections, source ledger shape, citation IDs, estimate tier labels, uncited money or percentage claims, and unsafe overclaim phrases.
+- `scripts/validate_gtm_output.py`: canonical JSON validator and deterministic Markdown renderer for sources, claims, math, tiers, capability dates, deployment fit, proposal cards, and evidence gaps.

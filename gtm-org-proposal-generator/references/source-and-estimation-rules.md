@@ -11,9 +11,9 @@ Use the highest-quality public sources available for each fact.
 
 ## Citation Ledger
 
-Create a source ledger before the final proposal.
+Create a source ledger before the final proposal. In machine-readable artifacts, this ledger lives in the canonical `gtm-org-proposal-generator/v1` JSON contract.
 
-Use stable source IDs: `S1`, `S2`, `S3`.
+Use stable source IDs: `S1`, `S2`, `S3`. Rendered Markdown displays them as `[S1]`, `[S2]`, `[S3]`.
 
 Capture:
 
@@ -26,6 +26,8 @@ Capture:
 - Facts supported
 
 Every material number, strategic objective, program ranking, administrative-cost estimate, and impact estimate must point to one or more source IDs.
+
+UiPath capability evidence belongs in the capability ledger. Every capability used in a proposal card must reference current `docs.uipath.com` source evidence, a checked date, the requested deployment type, and an availability status of `available` or `requires-confirmation`.
 
 ## Budget Normalization
 
@@ -65,6 +67,8 @@ Prioritize use cases using a simple weighted view:
 
 Do not overfit use cases to every large budget line. A large program with no administrative process evidence may rank lower than a smaller program with clear backlog, paperwork, testing, audit, claims, or service friction.
 
+Produce 1 to 10 prioritized use cases only when each one is complete. If fewer than 10 are supportable, document the evidence gap instead of padding the list.
+
 ## Anti-Fabrication Rules
 
 - Do not invent the top 20 when fewer are supported.
@@ -73,3 +77,4 @@ Do not overfit use cases to every large budget line. A large program with no adm
 - Do not imply UiPath capability availability without checking current `docs.uipath.com`.
 - Do not present savings as guaranteed. Use `estimated impact`, `planning range`, or `potential annual value`.
 - Do not include customer-confidential or internal-only sources unless the user explicitly expands scope beyond this skill's default.
+- Do not validate or preserve legacy free-form Markdown as the contract of record. Convert it to the versioned JSON contract first.
