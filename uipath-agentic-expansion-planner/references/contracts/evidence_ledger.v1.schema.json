@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/uipath-agentic-expansion-planner/evidence-ledger/v1",
+  "title": "UiPath Agentic Expansion Evidence Ledger v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "ledger_id",
+    "customer",
+    "inventory_profile",
+    "inventory_evidence",
+    "public_sources",
+    "assumptions"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "ledger_id": { "type": "string", "pattern": "^LEDGER-[A-Z0-9][A-Z0-9._-]*$" },
+    "customer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sector", "deployment", "entitlements"],
+      "properties": {
+        "name": { "$ref": "#/$defs/nonEmptyString" },
+        "sector": { "$ref": "#/$defs/nonEmptyString" },
+        "deployment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model",
+            "constraints",
+            "genai_policy",
+            "data_classification",
+            "human_approval_required"
+          ],
+          "properties": {
+            "model": {
+              "enum": [
+                "automation_cloud",
+                "automation_cloud_public_sector",
+                "automation_suite",
+                "on_premises",
+                "hybrid",
+                "unknown"
+              ]
+            },
+            "constraints": { "$ref": "#/$defs/uniqueStringArray" },
+            "genai_policy": { "enum": ["allowed", "restricted", "prohibited", "unknown"] },
+            "data_classification": {
+              "enum": ["public", "internal", "confidential", "restricted", "mixed", "unknown"]
+            },
+            "human_approval_required": { "type": "boolean" }
+          }
+        },
+        "entitlements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["capability", "status", "evidence_refs"],
+            "properties": {
+              "capability": { "$ref": "#/$defs/nonEmptyString" },
+              "status": { "enum": ["confirmed", "not_entitled", "unknown"] },
+              "evidence_refs": { "$ref": "#/$defs/uniqueStringArray" }
+            }
+          }
+        }
+      }
+    },
+    "inventory_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_name", "as_of_date", "inventory_ids"],
+      "properties": {
+        "source_name": { "$ref": "#/$defs/nonEmptyString" },
+        "as_of_date": { "$ref": "#/$defs/isoDate" },
+        "inventory_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/inventoryId" }
+        }
+      }
+    },
+    "inventory_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/inventoryEvidence" }
+    },
+    "public_sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/publicSource" }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/assumption" }
+    }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "uniqueStringArray": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/nonEmptyString" }
+    },
+    "isoDate": { "type": "string", "format": "date" },
+    "inventoryId": { "type": "string", "pattern": "^INV-[A-Z0-9][A-Z0-9._-]*$" },
+    "inventoryEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inventory_id",
+        "name",
+        "description",
+        "status",
+        "department",
+        "owner",
+        "systems",
+        "source",
+        "facts",
+        "metrics"
+      ],
+      "properties": {
+        "inventory_id": { "$ref": "#/$defs/inventoryId" },
+        "name": { "$ref": "#/$defs/nonEmptyString" },
+        "description": { "$ref": "#/$defs/nonEmptyString" },
+        "status": { "enum": ["production", "pipeline", "idea", "unknown", "other", "excluded"] },
+        "department": { "$ref": "#/$defs/nonEmptyString" },
+        "owner": { "type": "string" },
+        "systems": { "$ref": "#/$defs/uniqueStringArray" },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sheet", "row_number"],
+          "properties": {
+            "sheet": { "$ref": "#/$defs/nonEmptyString" },
+            "row_number": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "facts": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value", "unit"],
+            "properties": {
+              "name": { "$ref": "#/$defs/nonEmptyString" },
+              "value": { "type": "number", "minimum": 0 },
+              "unit": { "$ref": "#/$defs/nonEmptyString" }
+            }
+          }
+        }
+      }
+    },
+    "publicSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "title",
+        "publisher",
+        "url",
+        "published_date",
+        "accessed_date",
+        "official",
+        "evidence_summary"
+      ],
+      "properties": {
+        "source_id": { "type": "string", "pattern": "^SRC-[A-Z0-9][A-Z0-9._-]*$" },
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "publisher": { "$ref": "#/$defs/nonEmptyString" },
+        "url": { "type": "string", "format": "uri" },
+        "published_date": { "$ref": "#/$defs/isoDate" },
+        "accessed_date": { "$ref": "#/$defs/isoDate" },
+        "official": { "type": "boolean" },
+        "evidence_summary": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "assumption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assumption_id", "statement", "category", "status"],
+      "properties": {
+        "assumption_id": { "type": "string", "pattern": "^ASM-[A-Z0-9][A-Z0-9._-]*$" },
+        "statement": { "$ref": "#/$defs/nonEmptyString" },
+        "category": { "enum": ["value", "deployment", "entitlement", "feasibility", "other"] },
+        "status": { "enum": ["unvalidated", "validated", "rejected"] },
+        "value": { "type": "number", "minimum": 0 },
+        "unit": { "$ref": "#/$defs/nonEmptyString" }
+      },
+      "dependentRequired": {
+        "value": ["unit"],
+        "unit": ["value"]
+      }
+    }
+  }
+}

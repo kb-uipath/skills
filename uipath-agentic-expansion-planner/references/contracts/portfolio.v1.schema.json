@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/uipath-agentic-expansion-planner/portfolio/v1",
+  "title": "UiPath Agentic Expansion Portfolio v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "portfolio_id",
+    "customer_name",
+    "ledger_id",
+    "as_of_date",
+    "score_model_version",
+    "ranking_limits",
+    "opportunities",
+    "rankings"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "portfolio_id": { "type": "string", "pattern": "^PORTFOLIO-[A-Z0-9][A-Z0-9._-]*$" },
+    "customer_name": { "$ref": "#/$defs/nonEmptyString" },
+    "ledger_id": { "type": "string", "pattern": "^LEDGER-[A-Z0-9][A-Z0-9._-]*$" },
+    "as_of_date": { "type": "string", "format": "date" },
+    "score_model_version": { "const": "1.0" },
+    "ranking_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["high_impact", "low_friction_poc"],
+      "properties": {
+        "high_impact": { "type": "integer", "minimum": 1 },
+        "low_friction_poc": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "opportunities": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/opportunity" }
+    },
+    "rankings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["high_impact", "low_friction_poc"],
+      "properties": {
+        "high_impact": { "$ref": "#/$defs/opportunityIds" },
+        "low_friction_poc": { "$ref": "#/$defs/opportunityIds" }
+      }
+    }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "stringArray": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/nonEmptyString" }
+    },
+    "opportunityIds": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^OPP-[A-Z0-9][A-Z0-9._-]*$" }
+    },
+    "evidenceRefs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inventory_ids", "public_source_ids", "assumption_ids"],
+      "properties": {
+        "inventory_ids": { "$ref": "#/$defs/stringArray" },
+        "public_source_ids": { "$ref": "#/$defs/stringArray" },
+        "assumption_ids": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "criteriaScores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategic_alignment",
+        "inventory_evidence",
+        "agentic_suitability",
+        "value_potential",
+        "feasibility",
+        "enterprise_scalability",
+        "governance_readiness",
+        "time_to_pilot"
+      ],
+      "properties": {
+        "strategic_alignment": { "$ref": "#/$defs/criterion" },
+        "inventory_evidence": { "$ref": "#/$defs/criterion" },
+        "agentic_suitability": { "$ref": "#/$defs/criterion" },
+        "value_potential": { "$ref": "#/$defs/criterion" },
+        "feasibility": { "$ref": "#/$defs/criterion" },
+        "enterprise_scalability": { "$ref": "#/$defs/criterion" },
+        "governance_readiness": { "$ref": "#/$defs/criterion" },
+        "time_to_pilot": { "$ref": "#/$defs/criterion" }
+      }
+    },
+    "criterion": { "type": "integer", "minimum": 0, "maximum": 5 },
+    "opportunity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "opportunity_id",
+        "name",
+        "category",
+        "confidence",
+        "why_now",
+        "decision_ask",
+        "business_problem",
+        "agentic_enhancement",
+        "evidence_refs",
+        "criteria_scores",
+        "scores",
+        "capability_fit",
+        "deployment",
+        "value_case",
+        "value_levers",
+        "feasibility",
+        "governance",
+        "validation_questions",
+        "pilot"
+      ],
+      "properties": {
+        "opportunity_id": { "type": "string", "pattern": "^OPP-[A-Z0-9][A-Z0-9._-]*$" },
+        "name": { "$ref": "#/$defs/nonEmptyString" },
+        "category": { "enum": ["scale_now", "validate_next", "pilot_first", "monitor", "reject"] },
+        "confidence": { "enum": ["high", "medium", "low"] },
+        "why_now": { "$ref": "#/$defs/nonEmptyString" },
+        "decision_ask": { "$ref": "#/$defs/nonEmptyString" },
+        "business_problem": { "$ref": "#/$defs/nonEmptyString" },
+        "agentic_enhancement": { "$ref": "#/$defs/nonEmptyString" },
+        "evidence_refs": { "$ref": "#/$defs/evidenceRefs" },
+        "criteria_scores": { "$ref": "#/$defs/criteriaScores" },
+        "scores": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["high_impact", "poc"],
+          "properties": {
+            "high_impact": { "type": "number", "minimum": 0, "maximum": 100 },
+            "poc": { "type": "number", "minimum": 0, "maximum": 100 }
+          }
+        },
+        "capability_fit": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["capability", "claim", "entitlement_evidence_refs"],
+            "properties": {
+              "capability": { "$ref": "#/$defs/nonEmptyString" },
+              "claim": { "enum": ["likely_fit", "confirmed_entitlement"] },
+              "entitlement_evidence_refs": { "$ref": "#/$defs/stringArray" }
+            }
+          }
+        },
+        "deployment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "constraints_addressed", "controls", "notes"],
+          "properties": {
+            "status": { "enum": ["compatible", "requires_validation", "incompatible"] },
+            "constraints_addressed": { "$ref": "#/$defs/stringArray" },
+            "controls": { "$ref": "#/$defs/stringArray" },
+            "notes": { "$ref": "#/$defs/nonEmptyString" }
+          }
+        },
+        "value_case": { "$ref": "#/$defs/valueCase" },
+        "value_levers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "feasibility": { "$ref": "#/$defs/nonEmptyString" },
+        "governance": { "$ref": "#/$defs/nonEmptyString" },
+        "validation_questions": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "pilot": { "$ref": "#/$defs/pilot" }
+      }
+    },
+    "valueCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "label", "basis"],
+      "properties": {
+        "method": { "enum": ["qualitative", "calculated"] },
+        "label": { "enum": ["low", "medium", "high", "not_sized"] },
+        "basis": { "$ref": "#/$defs/nonEmptyString" },
+        "formula_id": { "enum": ["volume_minutes_rate_v1", "hours_rate_v1"] },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value", "unit", "evidence_ref"],
+            "properties": {
+              "name": { "$ref": "#/$defs/nonEmptyString" },
+              "value": { "type": "number", "minimum": 0 },
+              "unit": { "$ref": "#/$defs/nonEmptyString" },
+              "evidence_ref": { "$ref": "#/$defs/nonEmptyString" }
+            }
+          }
+        },
+        "annual_hours": { "type": "number", "minimum": 0 },
+        "annual_value": { "type": "number", "minimum": 0 },
+        "currency": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "pilot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objective",
+        "narrow_scope",
+        "owner",
+        "agent_role",
+        "human_role",
+        "success_metrics",
+        "data_needed",
+        "exit_criteria",
+        "first_step",
+        "timeline_days"
+      ],
+      "properties": {
+        "objective": { "$ref": "#/$defs/nonEmptyString" },
+        "narrow_scope": { "$ref": "#/$defs/nonEmptyString" },
+        "owner": { "$ref": "#/$defs/nonEmptyString" },
+        "agent_role": { "$ref": "#/$defs/nonEmptyString" },
+        "human_role": { "$ref": "#/$defs/nonEmptyString" },
+        "success_metrics": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "data_needed": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "exit_criteria": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "first_step": { "$ref": "#/$defs/nonEmptyString" },
+        "timeline_days": { "type": "integer", "minimum": 1, "maximum": 180 }
+      }
+    }
+  }
+}

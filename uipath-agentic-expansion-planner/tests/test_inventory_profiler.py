@@ -113,6 +113,21 @@ class InventoryProfilerTests(unittest.TestCase):
             else:
                 self.assertEqual(result.returncode, 1)
 
+    def test_profile_rejects_inventory_id_collisions(self):
+        row = {
+            "Use Case Name": "Example",
+            "Description": "Synthetic collision row",
+            "Status": "Idea",
+            "Department": "Operations",
+            "__row_number": 2,
+        }
+        sheets = {
+            "Sheet A": [{**row, "__sheet": "Sheet A"}],
+            "Sheet-A": [{**row, "__sheet": "Sheet-A"}],
+        }
+        with self.assertRaisesRegex(ValueError, "inventory ID collision"):
+            self.module.build_profile(Path("inventory.xlsx"), sheets)
+
     @unittest.skipUnless(has_python_docx(), "python-docx is not installed")
     def test_render_and_verify_docx_when_python_docx_is_available(self):
         with tempfile.TemporaryDirectory() as tmp:

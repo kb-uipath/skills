@@ -4,7 +4,10 @@ Use these rules when `uipath-agentic-expansion-planner` produces its final Word 
 
 ## Document Shape
 
-Create a concise Markdown briefing first, validate it with `scripts/validate_executive_brief.py`, then render it with `scripts/render_executive_docx.py` and verify it with `scripts/verify_executive_docx.py`. Portrait orientation is mandatory unless the user explicitly asks for landscape.
+Create a concise Markdown briefing from validated schema `1.0` evidence and portfolio artifacts,
+cross-check it with `scripts/validate_executive_brief.py`, then render it with
+`scripts/render_executive_docx.py` and verify it with `scripts/verify_executive_docx.py`. Portrait
+orientation is mandatory unless the user explicitly asks for landscape.
 
 Recommended sections:
 
@@ -33,7 +36,8 @@ Do not paste the full research narrative into Word. The brief should be executiv
 - Prefer direct headings over clever titles.
 - Keep proposal cards direct but GTM-usable: recommendation, why now, inventory evidence, agentic enhancement, capability fit, value levers, feasibility, governance, and validation questions.
 - Put assumptions next to estimates, not in a buried footnote.
-- Use ranges instead of point estimates.
+- Prefer ranges or qualitative sizing. When a supported deterministic formula produces a point
+  estimate, label it as a planning estimate and show the assumption IDs that require validation.
 - Preserve confidence ratings and downgrade reasons.
 - Put dirty-data caveats plainly in the main body when they affect priority or value.
 - Move URLs and long source details to the source ledger or appendix.
@@ -59,8 +63,14 @@ Avoid wide, overloaded tables in Word. If a table becomes cramped, shorten cell 
 Run the quality gate first:
 
 ```bash
-python3 scripts/validate_executive_brief.py <brief.md>
+python3 scripts/validate_executive_brief.py <brief.md> \
+  --evidence-ledger <evidence_ledger.json> \
+  --portfolio <portfolio.json> \
+  --inventory-profile <inventory_profile.json>
 ```
+
+Without the JSON arguments, this command performs legacy structural checks only. It does not
+certify names, scores, evidence IDs, dates, deployment constraints, value math, or entitlements.
 
 Use:
 

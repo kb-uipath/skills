@@ -1,0 +1,122 @@
+{
+  "schema_version": "1.0",
+  "portfolio_id": "PORTFOLIO-ONPREM-001",
+  "customer_name": "Cedar County Records Office",
+  "ledger_id": "LEDGER-ONPREM-001",
+  "as_of_date": "2026-07-10",
+  "score_model_version": "1.0",
+  "ranking_limits": {
+    "high_impact": 1,
+    "low_friction_poc": 1
+  },
+  "opportunities": [
+    {
+      "opportunity_id": "OPP-CASE-REVIEW",
+      "name": "Case file review assistance",
+      "category": "validate_next",
+      "confidence": "medium",
+      "why_now": "Production classification and pilot drafting signals align with the county priority for complete records and reviewable decisions.",
+      "decision_ask": "Authorize an on-prem architecture validation and a human-reviewed historical-case pilot.",
+      "business_problem": "Records and Program Integrity staff assemble file context across a file share and mainframe before drafting the next action.",
+      "agentic_enhancement": "Classify file contents, summarize missing evidence, and draft a next-action recommendation without autonomous system writes.",
+      "evidence_refs": {
+        "inventory_ids": [
+          "INV-INVENTORY-R00002",
+          "INV-INVENTORY-R00003"
+        ],
+        "public_source_ids": [
+          "SRC-RECORDS-PLAN"
+        ],
+        "assumption_ids": [
+          "ASM-RPA-ENTITLEMENT"
+        ]
+      },
+      "criteria_scores": {
+        "strategic_alignment": 4,
+        "inventory_evidence": 5,
+        "agentic_suitability": 4,
+        "value_potential": 4,
+        "feasibility": 2,
+        "enterprise_scalability": 3,
+        "governance_readiness": 4,
+        "time_to_pilot": 2
+      },
+      "scores": {
+        "high_impact": 76.0,
+        "poc": 64.0
+      },
+      "capability_fit": [
+        {
+          "capability": "Robots",
+          "claim": "confirmed_entitlement",
+          "entitlement_evidence_refs": [
+            "ASM-RPA-ENTITLEMENT"
+          ]
+        },
+        {
+          "capability": "Agentic orchestration",
+          "claim": "likely_fit",
+          "entitlement_evidence_refs": []
+        }
+      ],
+      "deployment": {
+        "status": "requires_validation",
+        "constraints_addressed": [
+          "No public internet egress",
+          "Customer-managed model endpoint",
+          "Human approval before system write"
+        ],
+        "controls": [
+          "Block public internet egress",
+          "Use a customer-managed model endpoint",
+          "Require human approval before every mainframe write"
+        ],
+        "notes": "Capability availability and model hosting must be proven in the on-premises environment before design approval."
+      },
+      "value_case": {
+        "method": "qualitative",
+        "label": "high",
+        "basis": "Documented volume and repeated review work indicate material capacity and quality potential; handling time is not available."
+      },
+      "value_levers": [
+        "Review capacity",
+        "File completeness",
+        "Decision auditability"
+      ],
+      "feasibility": "Begin with offline historical files and read-only mainframe context after architecture validation.",
+      "governance": "Keep restricted records on-premises, log source citations, and require reviewer approval before any system write.",
+      "validation_questions": [
+        "Which customer-managed model endpoint is approved for restricted case data?",
+        "Can the pilot run without public internet egress and without autonomous writes?"
+      ],
+      "pilot": {
+        "objective": "Measure summary completeness and reviewer acceptance on closed historical cases.",
+        "narrow_scope": "One records category, historical files only, and no mainframe write-back.",
+        "owner": "Records operations manager",
+        "agent_role": "Classify documents, identify missing evidence, and draft a cited case summary.",
+        "human_role": "Review every summary and make all case decisions and system updates.",
+        "success_metrics": [
+          "Summary acceptance rate",
+          "Missing-record detection recall"
+        ],
+        "data_needed": [
+          "Fifty closed case files",
+          "Approved records policy corpus"
+        ],
+        "exit_criteria": [
+          "At least 90 percent reviewer acceptance with zero public egress or autonomous writes"
+        ],
+        "first_step": "Complete an architecture review for model hosting, logs, and data movement.",
+        "timeline_days": 60
+      }
+    }
+  ],
+  "rankings": {
+    "high_impact": [
+      "OPP-CASE-REVIEW"
+    ],
+    "low_friction_poc": [
+      "OPP-CASE-REVIEW"
+    ]
+  }
+}

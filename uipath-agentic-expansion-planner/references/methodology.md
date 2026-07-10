@@ -11,14 +11,14 @@ Do not brainstorm generic AI use cases. Use the customer's inventory as operatio
 1. Intake and quality gate.
 2. Inventory profiling.
 3. Normalization and exclusions.
-4. Public strategy ledger.
+4. Versioned evidence ledger.
 5. Strategy-to-inventory crosswalk.
 6. Candidate generation.
 7. Agentic suitability test.
-8. Scoring and prioritization.
+8. Deterministic scoring and portfolio validation.
 9. Conservative value sizing.
 10. UiPath capability and deployment validation.
-11. Executive packaging, Markdown quality validation, required DOCX rendering, and deterministic structural/brand verification.
+11. Deterministic Markdown rendering, strict claim cross-checking, required DOCX rendering, and structural/brand verification.
 
 ## 1. Intake and quality gate
 
@@ -50,6 +50,10 @@ Use the script output to understand:
 - Frequent process terms.
 - Duplicate or suspicious rows.
 
+Use `inventory_items[].inventory_id` as the durable routing key for downstream evidence. The ID
+is derived from sheet and physical row number. If the source structure changes, regenerate the
+profile and migrate references explicitly.
+
 If the script fails because the file structure is unusual, inspect the file manually and summarize the limitation.
 
 ## 3. Normalize and exclude weak rows
@@ -66,7 +70,7 @@ Default treatment:
 
 Do not erase ambiguity. Preserve caveats when fields are missing or status is unclear.
 
-## 4. Build public strategy ledger
+## 4. Build the versioned evidence ledger
 
 Research the customer using current web sources unless the user explicitly says not to browse. Prioritize official and recent sources:
 
@@ -75,13 +79,21 @@ Research the customer using current web sources unless the user explicitly says 
 3. Reputable news, analyst commentary, procurement notices, and secondary sources.
 4. Generic industry trends only as weak supporting evidence.
 
-The ledger must include:
+Create schema `1.0` `evidence_ledger.json` using `references/data_contracts.md`. The ledger must
+include:
 
 - Public priority.
 - Source name and date.
 - Evidence summary.
 - Why it matters operationally.
 - Potential automation relevance.
+- Stable `SRC-*` source IDs, publication dates, and access dates.
+- Every used inventory row as an `INV-*` record matching the generated profile.
+- Every planning assumption as an `ASM-*` record with validation status.
+- Deployment model, constraints, data classification, GenAI policy, and human-approval rules.
+- Entitlements as `confirmed`, `not_entitled`, or `unknown`, with evidence for confirmed claims.
+
+Unversioned or unsupported ledgers are unsafe. Migrate them; do not bypass validation.
 
 Use citations for all public facts.
 
@@ -146,12 +158,31 @@ A use case is weak for agentic expansion when it is:
 
 ## 8. Score and prioritize
 
-Use `references/scoring_model.md`. Produce two rankings by default:
+Use `references/scoring_model.md` and schema `1.0` `portfolio.json`. Analysts assign criterion
+inputs from 0 to 5; the script owns arithmetic, rounding, tie-breaking, and ranking. Produce two
+rankings by default:
 
 - Top 5 high-impact recommendations.
 - Top 3 low-friction POC candidates.
 
 High-impact candidates optimize for strategic value, scale, and enterprise relevance. POC candidates optimize for bounded scope, feasibility, governance safety, and fast validation.
+
+Run:
+
+```bash
+python3 scripts/score_portfolio.py \
+  --evidence-ledger evidence_ledger.json \
+  --portfolio portfolio_draft.json \
+  --output portfolio.json
+
+python3 scripts/validate_portfolio.py \
+  --evidence-ledger evidence_ledger.json \
+  --portfolio portfolio.json \
+  --inventory-profile inventory_profile.json
+```
+
+Validation failures block rendering. Fix stale scores, dangling IDs, excluded evidence,
+deployment gaps, value math, or entitlement claims at the source.
 
 ## 9. Value sizing
 
@@ -165,6 +196,8 @@ Rules:
 - If no labor rate is supplied, do not invent a precise savings figure unless the user explicitly approves a placeholder.
 - Present value as a planning range, not guaranteed savings.
 - If assumptions are weak, use qualitative sizing: low, medium, high.
+- For calculated sizing, use only a supported formula ID and cite every numeric input with an
+  inventory or assumption ID. Unsupported arithmetic fails closed.
 
 Value levers can include:
 
@@ -204,6 +237,10 @@ Validate deployment context:
 - System access and integration constraints.
 - Model governance and prompt/data controls.
 
+Every active opportunity must address every ledger deployment constraint. A
+`confirmed_entitlement` claim must match confirmed ledger evidence; otherwise use `likely_fit`
+and include a validation question.
+
 ## 11. Executive packaging
 
 Use `references/output_templates.md` and `references/brand_and_brief_quality.md`. Keep executive outputs concise, defensible, and aligned to UiPath voice: direct, human, practical, and customer-need-first.
@@ -223,7 +260,17 @@ Every final output should include:
 
 Do not include raw chain-of-thought or excessive research narrative. Show evidence, assumptions, and decisions. Markdown, chat summaries, slide outlines, spreadsheets, and other formats can support the work, but they are not the final deliverable. If the analysis draft is long, create a separate concise Word-source Markdown before rendering instead of dumping raw research into the `.docx`.
 
-Before rendering, validate that the brief:
+Before rendering, create the brief deterministically:
+
+```bash
+python3 scripts/render_portfolio_markdown.py \
+  --evidence-ledger evidence_ledger.json \
+  --portfolio portfolio.json \
+  --inventory-profile inventory_profile.json \
+  --output brief.md
+```
+
+Then validate that the brief:
 
 - Leads with why the customer should care now.
 - States the decision ask, workshop ask, or pilot next step.
@@ -238,7 +285,7 @@ For every run:
 1. Create a concise Markdown brief using `references/output_templates.md`.
 2. Shape the Word version as the default AZ DES-style executive portfolio brief. If the analysis draft is long, shorten supporting prose before rendering rather than dropping required sections.
 3. Load `references/brand_and_brief_quality.md` and `references/executive_docx.md`, then follow the document-shape, tone, table, and brand-safe styling rules.
-4. Run `scripts/validate_executive_brief.py <brief.md>` before rendering. Fix the Markdown if it fails.
+4. Run `scripts/validate_executive_brief.py <brief.md> --evidence-ledger <evidence_ledger.json> --portfolio <portfolio.json> --inventory-profile <inventory_profile.json>` before rendering. Fix the source artifact if it fails. Omitting JSON performs structural-only legacy validation and does not certify claims.
 5. Render with `scripts/render_executive_docx.py` in portrait orientation unless the user explicitly requests landscape.
 6. Verify the output with `scripts/verify_executive_docx.py <brief.docx> --require-output-dir --require-brand-style`. Fix the Markdown or rerender if verification fails.
 7. Visually inspect with the Documents skill renderer or another local preview path when available.

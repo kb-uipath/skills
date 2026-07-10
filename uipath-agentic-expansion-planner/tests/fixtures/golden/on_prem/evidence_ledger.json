@@ -1,0 +1,114 @@
+{
+  "schema_version": "1.0",
+  "ledger_id": "LEDGER-ONPREM-001",
+  "customer": {
+    "name": "Cedar County Records Office",
+    "sector": "County government",
+    "deployment": {
+      "model": "on_premises",
+      "constraints": [
+        "No public internet egress",
+        "Customer-managed model endpoint",
+        "Human approval before system write"
+      ],
+      "genai_policy": "restricted",
+      "data_classification": "restricted",
+      "human_approval_required": true
+    },
+    "entitlements": [
+      {
+        "capability": "Robots",
+        "status": "confirmed",
+        "evidence_refs": [
+          "ASM-RPA-ENTITLEMENT"
+        ]
+      },
+      {
+        "capability": "Agentic orchestration",
+        "status": "unknown",
+        "evidence_refs": []
+      }
+    ]
+  },
+  "inventory_profile": {
+    "source_name": "inventory.csv",
+    "as_of_date": "2026-07-01",
+    "inventory_ids": [
+      "INV-INVENTORY-R00002",
+      "INV-INVENTORY-R00003"
+    ]
+  },
+  "inventory_evidence": [
+    {
+      "inventory_id": "INV-INVENTORY-R00002",
+      "name": "Case File Classification",
+      "description": "Classify incoming case files and identify missing records.",
+      "status": "production",
+      "department": "Records",
+      "owner": "Morgan Lee",
+      "systems": [
+        "File Share",
+        "Mainframe"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 2
+      },
+      "facts": [
+        "A production classification process handles 8,000 case files per year."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 8000,
+          "unit": "cases/year"
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00003",
+      "name": "Case Decision Drafting",
+      "description": "Draft a case summary and next-action recommendation.",
+      "status": "pipeline",
+      "department": "Program Integrity",
+      "owner": "Riley Shah",
+      "systems": [
+        "Mainframe"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 3
+      },
+      "facts": [
+        "A pilot-stage decision-drafting process reports 5,000 cases per year."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 5000,
+          "unit": "cases/year"
+        }
+      ]
+    }
+  ],
+  "public_sources": [
+    {
+      "source_id": "SRC-RECORDS-PLAN",
+      "title": "Records Access and Integrity Plan",
+      "publisher": "Cedar County Records Office",
+      "url": "https://example.com/synthetic/cedar-county/records-integrity-plan",
+      "published_date": "2026-02-20",
+      "accessed_date": "2026-07-09",
+      "official": true,
+      "evidence_summary": "The plan prioritizes timely case access, complete records, and reviewable decisions."
+    }
+  ],
+  "assumptions": [
+    {
+      "assumption_id": "ASM-RPA-ENTITLEMENT",
+      "statement": "The account team confirmed unattended robot entitlement for this planning exercise.",
+      "category": "entitlement",
+      "status": "validated"
+    }
+  ]
+}

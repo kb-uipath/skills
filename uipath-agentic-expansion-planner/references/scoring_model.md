@@ -15,7 +15,8 @@ Score each criterion from 0 to 5.
 | 1 | Speculative or low value |
 | 0 | Not recommended or actively contradicted |
 
-Use judgment. Do not pretend the score is mathematically precise.
+Criterion assignment still requires analyst judgment. The arithmetic is deterministic under
+score model `1.0`; do not hand-edit calculated scores or rankings.
 
 ## Default weighted criteria
 
@@ -35,6 +36,10 @@ Weighted score calculation:
 `weighted score = sum(score_0_to_5 * weight) / 5`
 
 This yields a 0 to 100 score.
+
+Use `scripts/score_portfolio.py` for the calculation. It rounds to two decimal places and breaks
+ties by ascending `OPP-*` ID. `scripts/validate_portfolio.py` recomputes both score sets and fails
+when stored values or rankings are stale.
 
 ## High-impact recommendation ranking
 
@@ -117,3 +122,6 @@ For each ranked recommendation, include:
 - Feasibility notes.
 - Governance notes.
 - Validation questions.
+- `OPP-*` opportunity ID.
+- Referenced `INV-*`, `SRC-*`, and `ASM-*` IDs.
+- Both deterministic score outputs: `high_impact` and `poc`.

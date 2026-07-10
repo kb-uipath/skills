@@ -1,0 +1,178 @@
+{
+  "schema_version": "1.0",
+  "ledger_id": "LEDGER-NOISY-001",
+  "customer": {
+    "name": "Lakeview Finance Authority",
+    "sector": "Public finance",
+    "deployment": {
+      "model": "automation_cloud",
+      "constraints": [
+        "PII fields must be redacted"
+      ],
+      "genai_policy": "restricted",
+      "data_classification": "mixed",
+      "human_approval_required": true
+    },
+    "entitlements": [
+      {
+        "capability": "Integration Service",
+        "status": "confirmed",
+        "evidence_refs": [
+          "ASM-INTEGRATION-ENTITLEMENT"
+        ]
+      },
+      {
+        "capability": "Action Center",
+        "status": "unknown",
+        "evidence_refs": []
+      }
+    ]
+  },
+  "inventory_profile": {
+    "source_name": "inventory.csv",
+    "as_of_date": "2026-06-28",
+    "inventory_ids": [
+      "INV-INVENTORY-R00002",
+      "INV-INVENTORY-R00003",
+      "INV-INVENTORY-R00004",
+      "INV-INVENTORY-R00005"
+    ]
+  },
+  "inventory_evidence": [
+    {
+      "inventory_id": "INV-INVENTORY-R00002",
+      "name": "Invoice Exception Triage",
+      "description": "Review invoice exceptions and prepare a resolution packet.",
+      "status": "production",
+      "department": "Finance",
+      "owner": "Dana Chen",
+      "systems": [
+        "SAP",
+        "Outlook"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 2
+      },
+      "facts": [
+        "The production row reports 12,000 invoice exceptions per year."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 12000,
+          "unit": "cases/year"
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00003",
+      "name": "Invoice Exception Triage",
+      "description": "Old duplicate record retained for history.",
+      "status": "excluded",
+      "department": "Finance",
+      "owner": "",
+      "systems": [
+        "SAP"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 3
+      },
+      "facts": [
+        "This archived duplicate cannot support current value or scale claims."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 12000,
+          "unit": "cases/year"
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00004",
+      "name": "Vendor Email Routing",
+      "description": "Classify vendor emails and route incomplete submissions.",
+      "status": "pipeline",
+      "department": "Finance",
+      "owner": "",
+      "systems": [
+        "Outlook"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 4
+      },
+      "facts": [
+        "The pilot row reports 9,000 vendor emails per year but does not name an owner."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 9000,
+          "unit": "cases/year"
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00005",
+      "name": "Miscellaneous Request",
+      "description": "Unclear request with no stable process.",
+      "status": "other",
+      "department": "Shared Services",
+      "owner": "",
+      "systems": [],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 5
+      },
+      "facts": [
+        "The row has no owner, system, volume, or defined process boundary."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 0,
+          "unit": "cases/year"
+        }
+      ]
+    }
+  ],
+  "public_sources": [
+    {
+      "source_id": "SRC-FINANCE-MODERNIZATION",
+      "title": "Finance Modernization Operating Plan",
+      "publisher": "Lakeview Finance Authority",
+      "url": "https://example.com/synthetic/lakeview/finance-modernization-plan",
+      "published_date": "2026-03-01",
+      "accessed_date": "2026-07-08",
+      "official": true,
+      "evidence_summary": "The plan prioritizes faster exception resolution, auditability, and vendor response."
+    }
+  ],
+  "assumptions": [
+    {
+      "assumption_id": "ASM-MINUTES-SAVED",
+      "statement": "Assisted triage can avoid six minutes per invoice exception.",
+      "category": "value",
+      "status": "unvalidated",
+      "value": 6,
+      "unit": "minutes/case"
+    },
+    {
+      "assumption_id": "ASM-LOADED-RATE",
+      "statement": "A planning labor rate of 60 USD per hour is acceptable for sizing only.",
+      "category": "value",
+      "status": "unvalidated",
+      "value": 60,
+      "unit": "USD/hour"
+    },
+    {
+      "assumption_id": "ASM-INTEGRATION-ENTITLEMENT",
+      "statement": "The account team confirmed current Integration Service entitlement for this planning exercise.",
+      "category": "entitlement",
+      "status": "validated"
+    }
+  ]
+}
