@@ -144,12 +144,16 @@ Use `scripts/render_council_artifacts.py` to create both files from a JSON paylo
 tmpdir="$(mktemp -d)"
 session_json="$tmpdir/council-session.json"
 # Write the session JSON to "$session_json", then render:
-python3 <skill-dir>/scripts/render_council_artifacts.py "$session_json" --output-dir .
+python3 <skill-dir>/scripts/render_council_artifacts.py \
+  "$session_json" --output-dir . --sensitivity internal
 rm "$session_json"
 rmdir "$tmpdir"
 ```
 
 The renderer refuses to overwrite existing `council-report-[timestamp].html` or `council-transcript-[timestamp].md` files unless `--overwrite` is supplied. Use `--overwrite` only after confirming the artifact collision is intentional.
+
+The published machine schema is `references/session-schema-v1.json`. New output directories use
+mode `0700`, and report/transcript files are staged atomically at mode `0600` on POSIX systems.
 
 Strict JSON contract `llm-council.session.v1`:
 
@@ -171,6 +175,14 @@ Strict JSON contract `llm-council.session.v1`:
   "metadata": {
     "preparer": "codex",
     "preparer_seed": "decision-slug-YYYYMMDD",
+    "run_id": "council-decision-slug-YYYYMMDD",
+    "model_ids": ["recorded-model-id-or-honest-not-exposed-marker"],
+    "advisor_agent_ids": ["advisor-1", "advisor-2", "advisor-3", "advisor-4", "advisor-5"],
+    "reviewer_agent_ids": ["reviewer-1", "reviewer-2", "reviewer-3", "reviewer-4", "reviewer-5"],
+    "input_hashes": {
+      "original_question": "sha256:8476dbad3b19b146859c63a5b08f157fd0273e1796d7b8d7f3ecfd31f4d3044f",
+      "framed_question": "sha256:a41d8badb301c151511451febe9c5cd7df3a2e01cf0caaff29b8edc85a911ddf"
+    },
     "created_at": "2026-07-10T12:00:00Z",
     "sensitivity": "internal",
     "permissions": ["local workspace only"],
@@ -206,7 +218,7 @@ Strict JSON contract `llm-council.session.v1`:
 
 `advisor_positions` is optional, but include it whenever possible because the HTML report uses it as the agreement/disagreement visual. Valid `stance` values are `positive`, `negative`, `mixed`, and `neutral`.
 
-The renderer validates the schema version, exactly five required advisor responses, exactly five peer reviews, a bijective `Response A` through `Response E` mapping, decision criteria, disconfirming evidence, review date, confidence, sensitivity, permissions, and retention before writing artifacts. It adds SHA-256 content hashes to rendered metadata. Treat validation failure as a workflow defect; repair the session payload instead of creating a partial report.
+The renderer validates the schema version, exactly five required advisor responses, exactly five peer reviews, disjoint five-ID advisor/reviewer execution evidence, matching question hashes, a bijective `Response A` through `Response E` mapping, decision criteria, disconfirming evidence, review date, confidence, sensitivity, permissions, and retention before writing artifacts. It adds SHA-256 content hashes to rendered metadata. For `single_agent_fallback`, both agent-ID arrays must be empty and `fallback_reason` must explain why independence is unavailable. Treat validation failure as a workflow defect; repair the session payload instead of creating a partial report.
 
 Use `--validate-only` when checking a saved session payload in CI or before handoff without creating HTML or Markdown artifacts.
 
@@ -219,8 +231,10 @@ In the chat response, lead with the recommendation and the one next step. Link t
 ## Critical Rules
 
 - Run advisor subagents in parallel.
-- Run reviewer subagents in parallel.
+- Run five distinct reviewer subagents in parallel after all initial advisor responses finish.
 - Anonymize before peer review.
+- Record real advisor/reviewer agent IDs and model provenance when exposed; record a literal
+  not-exposed marker instead of inventing model IDs.
 - Use the strict `llm-council.session.v1` contract.
 - Fail closed on legacy payloads; migrate them instead of rendering partial artifacts.
 - Preserve truthful fallback disclosure when only a single agent is available.

@@ -81,6 +81,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("markdown", type=Path, help="Markdown brief to validate")
     parser.add_argument("--min-summary-words", type=int, default=45)
     parser.add_argument("--max-summary-words", type=int, default=170)
+    parser.add_argument(
+        "--max-total-words",
+        type=int,
+        default=3500,
+        help="Maximum executive-brief length before rendering",
+    )
     parser.add_argument("--min-recommendations", type=int, default=5)
     parser.add_argument("--min-pocs", type=int, default=3)
     parser.add_argument(
@@ -192,6 +198,15 @@ def validate(text: str, args: argparse.Namespace) -> list[str]:
     entries = heading_entries(lines)
     heading_names = {normalize_heading(title) for _level, title, _start in entries}
 
+    total_word_count = len(re.findall(r"\b[\w-]+\b", text))
+    if args.max_total_words < 1:
+        failures.append("--max-total-words must be a positive integer.")
+    elif total_word_count > args.max_total_words:
+        failures.append(
+            f"Executive brief must contain no more than {args.max_total_words} words; "
+            f"found {total_word_count}."
+        )
+
     for section in REQUIRED_SECTIONS:
         if normalize_heading(section) not in heading_names:
             failures.append(f"Missing required section: {section}")
@@ -239,6 +254,10 @@ def validate(text: str, args: argparse.Namespace) -> list[str]:
 
     if "Inventory evidence" not in text or "Public Strategy Alignment" not in text:
         failures.append("Brief must connect inventory evidence to public strategy alignment.")
+
+    prioritized = section_text(lines, entries, "Prioritized Portfolio")
+    if prioritized and "scoring basis" not in prioritized.casefold():
+        failures.append("Prioritized Portfolio must show the scoring basis, not only total scores.")
 
     return failures
 

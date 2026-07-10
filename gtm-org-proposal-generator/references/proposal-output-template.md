@@ -58,14 +58,15 @@ Confidence rules:
 
 Create one complete card for each prioritized use case, up to 10 total. Fewer than 10 cards are allowed when the evidence-backed set is smaller, but `evidence_gaps` must explain the limitation.
 
-Each card must include business challenge, proposed solution, relevant UiPath capabilities, estimated impact, impact math, estimate tier, confidence, sources, and validation required.
+Each card must include business challenge, proposed solution, relevant UiPath capabilities, estimated impact, impact math, estimate tier, confidence, sources, validation required, pilot owner, target decision date, and measurable pilot exit criteria.
 
 ## Executive Close
 
-- Best-fit automation themes
-- Largest value pools
-- Highest-confidence first moves
-- Major evidence gaps or assumptions
-- Suggested next validation steps, such as process discovery, SME interview, volume pull, or pilot scoping
+- Literal decision ask
+- Overlap-aware portfolio value range and aggregation method
+- Machine-checkable `portfolio_math` for multi-card ranges, including every card rank and lower/upper adjustment factors
+- Double-counting caveat
+- Executive owner and decision date
+- Owned, dated next steps such as process discovery, SME interview, volume pull, or pilot scoping
 
 Do not ask whether the user wants the result. Deliver the core result, then list available export options such as markdown, spreadsheet, brief, or presentation outline.

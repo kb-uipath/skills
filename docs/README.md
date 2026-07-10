@@ -18,9 +18,9 @@ All 10 remaining skills meet the package-quality Org Baseline, but no live-write
 
 | Rank | Skill | Package | Functional | Certification |
 | ---: | --- | ---: | ---: | --- |
-| 1 | uipath-agentic-expansion-planner | 9.3 | 8.9 | Offline workflow validated |
-| 2 | estimate-du-units | 9.2 | 8.8 | Offline workflow validated |
-| 3 | usecasehandoff | 9.1 | 8.8 | Offline workflow validated |
+| 1 | uipath-agentic-expansion-planner | 9.5 | 9.2 | Offline workflow validated |
+| 2 | llm-council | 9.4 | 9.1 | Offline workflow validated |
+| 3 | usecasehandoff | 9.3 | 9.1 | Offline workflow validated |
 
 Run `make validate` from the repo root before sharing changes. Use a Python runtime with `python-docx` installed for full DOCX renderer coverage.
 

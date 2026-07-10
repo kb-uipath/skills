@@ -41,9 +41,11 @@ Use this structure for the concise Word-source Markdown. Keep it executive-skimm
 
 ## Prioritized Portfolio
 
-| Rank | Opportunity | Category | Score | Confidence | Why it matters |
+| Rank | Opportunity | Category | Score | Confidence | Scoring basis / why now |
 |---:|---|---|---:|---|---|
-| 1 | [name] | [Scale now / Validate next / Pilot first] | [0-100] | [High/Medium/Low] | [summary] |
+| 1 | [name] | [Scale now / Validate next / Pilot first] | [0-100] | [High/Medium/Low] | [strongest and limiting criteria, then decision relevance] |
+
+If scores tie, state that stable `OPP-*` ID order resolves the tie. Do not imply false precision.
 
 ## Top 5 High-Impact Recommendations
 

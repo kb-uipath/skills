@@ -80,7 +80,7 @@
       "pilot": {
         "objective": "Measure whether assisted triage improves routing accuracy without autonomous decisions.",
         "narrow_scope": "One Benefits inbox, one message category, and read-only recommendations.",
-        "owner": "Benefits owner to be assigned",
+        "owner": "Benefits operations director",
         "agent_role": "Summarize email intent and recommend a destination queue.",
         "human_role": "Approve every recommendation and label errors for review.",
         "success_metrics": [

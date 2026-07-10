@@ -57,6 +57,10 @@ For claim-certified output, first confirm that schema `1.0` evidence and portfol
 assumptions cite `ASM-*`, and stored scores, value math, deployment controls, and entitlement
 language match the validated portfolio.
 
+The executive source must remain at or below 3,500 words by default, show the criterion-level
+basis for ranked scores, and use accountable pilot owners rather than placeholders. Repeated raw
+inventory narrative belongs in a separate analysis artifact, not the executive brief.
+
 Before rendering the Word file, run:
 
 ```bash

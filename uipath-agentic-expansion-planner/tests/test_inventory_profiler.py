@@ -35,6 +35,24 @@ class InventoryProfilerTests(unittest.TestCase):
     def write_inventory(self, path: Path) -> None:
         path.write_text(FIXTURE_CSV.read_text(encoding="utf-8"), encoding="utf-8")
 
+    def test_parse_number_supports_planning_shorthand(self):
+        cases = {
+            "~24k calls": 24_000.0,
+            "1.25 million records": 1_250_000.0,
+            "2B transactions": 2_000_000_000.0,
+            "(3.5 thousand)": -3_500.0,
+            "18.5%": 18.5,
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(self.module.parse_number(raw), expected)
+
+    def test_average_handling_minutes_maps_to_handling_time(self):
+        guesses = self.module.guess_columns(
+            ["Use Case", "Average Handling Minutes", "Annual Transactions"]
+        )
+        self.assertEqual(guesses["handling_time"]["best"], "Average Handling Minutes")
+
     def test_csv_profile_outputs_json_and_markdown_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

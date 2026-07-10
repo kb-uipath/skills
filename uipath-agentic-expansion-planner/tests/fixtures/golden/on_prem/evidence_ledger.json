@@ -99,7 +99,7 @@
       "url": "https://example.com/synthetic/cedar-county/records-integrity-plan",
       "published_date": "2026-02-20",
       "accessed_date": "2026-07-09",
-      "official": true,
+      "official": false,
       "evidence_summary": "The plan prioritizes timely case access, complete records, and reviewable decisions."
     }
   ],

@@ -37,7 +37,8 @@ Run `scripts/inventory_profiler.py` for uploaded `.xlsx`, `.xlsm`, `.csv`, or `.
 Read both generated outputs:
 
 - `inventory_profile.md` for analyst-readable current-state summary.
-- `inventory_profile.json` for structured details, detected columns, and top metric rows.
+- `inventory_profile.json` for structured details, detected columns, top metric rows, and
+  row-level normalized fields used by the ledger cross-check.
 
 Use the script output to understand:
 
@@ -53,6 +54,11 @@ Use the script output to understand:
 Use `inventory_items[].inventory_id` as the durable routing key for downstream evidence. The ID
 is derived from sheet and physical row number. If the source structure changes, regenerate the
 profile and migrate references explicitly.
+
+The profiler recognizes common quantity suffixes (`k`, `million`, `billion`) and handling-time
+aliases such as `Average Handling Minutes`. Review ambiguous mappings before building the ledger.
+Strict validation reconciles each used row's name, description, status, department, owner,
+systems, source position, and detected metrics with the generated profile.
 
 If the script fails because the file structure is unusual, inspect the file manually and summarize the limitation.
 
@@ -94,6 +100,10 @@ include:
 - Entitlements as `confirmed`, `not_entitled`, or `unknown`, with evidence for confirmed claims.
 
 Unversioned or unsupported ledgers are unsafe. Migrate them; do not bypass validation.
+
+Official sources must use real public HTTPS hosts. Reserved test hosts and `.invalid`, local,
+private, or credential-bearing URLs cannot be marked official. Synthetic fixtures must use
+`official: false`.
 
 Use citations for all public facts.
 
@@ -237,9 +247,10 @@ Validate deployment context:
 - System access and integration constraints.
 - Model governance and prompt/data controls.
 
-Every active opportunity must address every ledger deployment constraint. A
-`confirmed_entitlement` claim must match confirmed ledger evidence; otherwise use `likely_fit`
-and include a validation question.
+Each active opportunity must list the deployment constraints that materially apply to it, and the
+active portfolio must collectively cover every ledger constraint. This avoids copying irrelevant
+controls into every card without losing coverage. A `confirmed_entitlement` claim must match
+confirmed ledger evidence; otherwise use `likely_fit` and include a validation question.
 
 ## 11. Executive packaging
 
@@ -276,6 +287,10 @@ Then validate that the brief:
 - States the decision ask, workshop ask, or pilot next step.
 - Connects inventory evidence to public strategy evidence.
 - Uses specific process names, owners, value levers, and validation questions.
+- Names an accountable pilot owner; placeholder assignments are not actionable.
+- Shows criterion-level scoring strengths and limitations, plus the stable ID tie-break rule when
+  equal scores occur.
+- Remains at or below the default 3,500-word executive ceiling.
 - Avoids hype, generic agentic brainstorming, unofficial brand assets, and product-first language.
 
 ### Word executive brief rendering

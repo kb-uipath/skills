@@ -36,6 +36,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--portfolio", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--inventory-profile", type=Path, default=None)
+    parser.add_argument(
+        "--max-words",
+        type=int,
+        default=3500,
+        help="Fail instead of writing a brief above this executive-length ceiling",
+    )
     parser.add_argument("--force", action="store_true", help="Replace an existing Markdown output")
     return parser.parse_args()
 
@@ -52,7 +58,9 @@ def sentence(value: Any) -> str:
     text = clean(value)
     if not text:
         return ""
-    return text if text.endswith((".", "?", "!")) else text + "."
+    if text.endswith(("?", "!")):
+        return text
+    return text.rstrip(" .;:") + "."
 
 
 def join_items(values: Iterable[Any]) -> str:
@@ -104,6 +112,27 @@ def value_label(value_case: dict[str, Any]) -> str:
     return f"{value_case['label'].title()}: {value_case['basis']}"
 
 
+def score_rationale(opportunity: dict[str, Any]) -> str:
+    labels = {
+        "strategic_alignment": "strategic alignment",
+        "inventory_evidence": "inventory evidence",
+        "agentic_suitability": "agentic suitability",
+        "value_potential": "value potential",
+        "feasibility": "feasibility",
+        "enterprise_scalability": "scalability",
+        "governance_readiness": "governance readiness",
+        "time_to_pilot": "time to pilot",
+    }
+    scores = opportunity["criteria_scores"]
+    ordered = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+    strongest = ", ".join(f"{labels[key]} {value}/5" for key, value in ordered[:2])
+    limiting = ", ".join(
+        f"{labels[key]} {value}/5"
+        for key, value in sorted(scores.items(), key=lambda item: (item[1], item[0]))[:2]
+    )
+    return f"Strongest: {strongest}; limiting: {limiting}"
+
+
 def render(ledger: dict[str, Any], portfolio: dict[str, Any]) -> str:
     customer = ledger["customer"]
     deployment = customer["deployment"]
@@ -119,6 +148,11 @@ def render(ledger: dict[str, Any], portfolio: dict[str, Any]) -> str:
     departments = sorted({item["department"] for item in inventory if item["department"]})
     systems = sorted({system for item in inventory for system in item["systems"]})
     constraints = deployment["constraints"] or ["No deployment constraints were supplied"]
+    referenced_inventory_ids = {
+        inventory_id
+        for item_id in dict.fromkeys(high_ids + poc_ids)
+        for inventory_id in opportunities[item_id]["evidence_refs"]["inventory_ids"]
+    }
 
     summary = (
         f"{customer['name']} has enough documented signal to make a bounded agentic expansion "
@@ -188,7 +222,7 @@ def render(ledger: dict[str, Any], portfolio: dict[str, Any]) -> str:
     lines.extend(["", "## Prioritized Portfolio", ""])
     lines.extend(
         table(
-            ["Rank", "Opportunity", "Category", "Score", "Confidence", "Why it matters"],
+            ["Rank", "Opportunity", "Category", "Score", "Confidence", "Scoring basis / why now"],
             [
                 [
                     rank,
@@ -196,12 +230,20 @@ def render(ledger: dict[str, Any], portfolio: dict[str, Any]) -> str:
                     opportunities[item_id]["category"].replace("_", " ").title(),
                     format_score(opportunities[item_id]["scores"]["high_impact"]),
                     opportunities[item_id]["confidence"].title(),
-                    opportunities[item_id]["why_now"],
+                    f"{score_rationale(opportunities[item_id])}. "
+                    f"{sentence(opportunities[item_id]['why_now'])}",
                 ]
                 for rank, item_id in enumerate(high_ids, start=1)
             ],
         )
     )
+    if len({opportunities[item_id]["scores"]["high_impact"] for item_id in high_ids}) < len(high_ids):
+        lines.extend(
+            [
+                "",
+                "Tie-break rule: equal high-impact scores are ordered by stable opportunity ID.",
+            ]
+        )
 
     lines.extend(["", "## Top 5 High-Impact Recommendations", ""])
     for item_id in high_ids:
@@ -310,8 +352,10 @@ def render(ledger: dict[str, Any], portfolio: dict[str, Any]) -> str:
     )
     lines.extend(["", "## Facts, Assumptions, and Validation Questions", "", "### Facts", ""])
     for item in inventory:
+        if item["inventory_id"] not in referenced_inventory_ids:
+            continue
         lines.append(
-            f"- {item['inventory_id']} {item['name']}: {join_items(item['facts'])} "
+            f"- {item['inventory_id']} {item['name']}: {join_items(item['facts'][:2])} "
             f"(status: {item['status']}; department: {item['department']})."
         )
     lines.extend(["", "### Assumptions", ""])
@@ -399,8 +443,20 @@ def main() -> int:
         print(f"FAIL: output already exists: {args.output}; pass --force to replace it", file=sys.stderr)
         return 1
 
+    if args.max_words < 1:
+        print("FAIL: --max-words must be a positive integer", file=sys.stderr)
+        return 1
+    markdown = render(ledger, portfolio)
+    word_count = len(re.findall(r"\b[\w-]+\b", markdown))
+    if word_count > args.max_words:
+        print(
+            f"FAIL: rendered brief contains {word_count} words; maximum is {args.max_words}. "
+            "Tighten portfolio narrative fields before rendering.",
+            file=sys.stderr,
+        )
+        return 1
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(render(ledger, portfolio), encoding="utf-8")
+    args.output.write_text(markdown, encoding="utf-8")
     print(f"OK: wrote deterministic Markdown to {args.output}")
     return 0
 

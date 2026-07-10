@@ -147,7 +147,7 @@
       "url": "https://example.com/synthetic/lakeview/finance-modernization-plan",
       "published_date": "2026-03-01",
       "accessed_date": "2026-07-08",
-      "official": true,
+      "official": false,
       "evidence_summary": "The plan prioritizes faster exception resolution, auditability, and vendor response."
     }
   ],

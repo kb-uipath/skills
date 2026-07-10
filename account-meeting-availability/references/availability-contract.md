@@ -15,6 +15,7 @@ Every request must declare the exact schema name and version, a stable request I
 Participant IDs and emails must be unique. Each participant declares:
 
 - whether attendance is required
+- an optional human-readable `display_name` copied to the result; it defaults to the participant ID
 - a practical email address
 - an installed IANA time zone
 - non-overnight local working hours and weekdays
@@ -43,7 +44,8 @@ This conservative rule prevents uncertain Outlook evidence from being treated as
 5. Reject candidates overlapping any blocking interval for a required participant.
 6. Score each remaining candidate by the number of optional participants available and within working hours.
 7. Sort by optional availability descending, then UTC start ascending.
-8. Return at most `max_results`, with ranks starting at 1 and local times rendered for every participant.
+8. Return at most `max_results`, with ranks starting at 1, local times rendered for every participant, and privacy-safe reason records for unavailable optional participants.
+9. Return a privacy-safe participant label map and up to 100 excluded-slot details with required blockers and deterministic reason counts. Never emit participant email addresses.
 
 The result has no generated timestamp, random ID, locale-sensitive value, or current-time dependency. Identical input produces identical JSON data. `source.retrieved_at` is copied from the evidence snapshot.
 
@@ -67,6 +69,7 @@ Do not silently broaden working hours, ignore a status, drop a required particip
 - Participants: 100 maximum.
 - Busy intervals: 1,000 per participant maximum.
 - Result count: 100 maximum.
+- Excluded-slot details: first 100; `excluded_slots_truncated` states when more were omitted.
 - Slot duration and increment: 5 to 1,440 minutes.
 - Working hours must start and end on the same local day.
 - IANA time zone data must be installed in the Python runtime environment.

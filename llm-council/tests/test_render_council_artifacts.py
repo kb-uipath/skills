@@ -1,5 +1,7 @@
 import importlib.util
+import hashlib
 import json
+import stat
 import subprocess
 import sys
 import tempfile
@@ -9,6 +11,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "render_council_artifacts.py"
+SCHEMA = ROOT / "references" / "session-schema-v1.json"
+
+
+def digest(value: str) -> str:
+    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def load_module():
@@ -27,10 +34,12 @@ def session_payload() -> dict:
         "The Outsider": "A buyer would compare this to doing nothing.",
         "The Executor": "Ship only after owner, budget, and metric are clear.",
     }
+    original_question = "Should we launch <now>?"
+    framed_question = "Decide whether the launch should proceed this quarter."
     return {
         "schema_version": "llm-council.session.v1",
-        "original_question": "Should we launch <now>?",
-        "framed_question": "Decide whether the launch should proceed this quarter.",
+        "original_question": original_question,
+        "framed_question": framed_question,
         "chairman_verdict": "Proceed only with a narrow launch gate.",
         "decision_criteria": ["Revenue impact outweighs delivery risk."],
         "disconfirming_evidence": ["The pilot lacks a named owner or success metric."],
@@ -44,6 +53,14 @@ def session_payload() -> dict:
         "metadata": {
             "preparer": "codex",
             "preparer_seed": "fixture-seed",
+            "run_id": "council-fixture-001",
+            "model_ids": ["fixture-model"],
+            "advisor_agent_ids": [f"advisor-{index}" for index in range(1, 6)],
+            "reviewer_agent_ids": [f"reviewer-{index}" for index in range(1, 6)],
+            "input_hashes": {
+                "original_question": digest(original_question),
+                "framed_question": digest(framed_question),
+            },
             "created_at": "2026-07-10T12:00:00Z",
             "sensitivity": "internal",
             "permissions": ["local workspace only"],
@@ -112,6 +129,8 @@ class RenderCouncilArtifactsTests(unittest.TestCase):
             self.assertIn("The Contrarian", markdown)
             self.assertIn("## Decision Criteria", markdown)
             self.assertIn("## Anonymization Mapping", markdown)
+            self.assertEqual(stat.S_IMODE(html_path.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(markdown_path.stat().st_mode), 0o600)
 
     def test_load_session_rejects_missing_required_advisor(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -190,6 +209,26 @@ class RenderCouncilArtifactsTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "bijectively"):
                 self.module.load_session(source)
 
+    def test_load_session_rejects_tampered_input_hash_and_agent_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = session_payload()
+            payload["framed_question"] += " Tampered."
+            payload["metadata"]["reviewer_agent_ids"] = payload["metadata"][
+                "advisor_agent_ids"
+            ]
+            source = Path(tmp) / "session.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(SystemExit, "disjoint"):
+                self.module.load_session(source)
+
+            payload["metadata"]["reviewer_agent_ids"] = [
+                f"reviewer-{index}" for index in range(1, 6)
+            ]
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "input_hashes do not match"):
+                self.module.load_session(source)
+
     def test_cli_prepare_template_is_seeded_and_strict(self):
         first = subprocess.run(
             [
@@ -229,6 +268,8 @@ class RenderCouncilArtifactsTests(unittest.TestCase):
             second_payload["anonymization_mapping"],
         )
         self.assertEqual(set(first_payload["anonymization_mapping"]), {f"Response {letter}" for letter in "ABCDE"})
+        self.assertIn("run_id", first_payload["metadata"])
+        self.assertIn("input_hashes", first_payload["metadata"])
 
     def test_cli_refuses_collision_without_overwrite(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -258,6 +299,8 @@ class RenderCouncilArtifactsTests(unittest.TestCase):
         payload = session_payload()
         payload["execution_mode"] = "single_agent_fallback"
         payload["fallback_reason"] = "Subagent tools were unavailable in this environment."
+        payload["metadata"]["advisor_agent_ids"] = []
+        payload["metadata"]["reviewer_agent_ids"] = []
         loaded = dict(payload)
         loaded["advisors"] = dict(payload["advisors"])
         loaded["peer_reviews"] = list(payload["peer_reviews"])
@@ -272,6 +315,53 @@ class RenderCouncilArtifactsTests(unittest.TestCase):
 
         self.assertIn("Single-agent fallback", html)
         self.assertIn("Single-agent fallback reason", markdown)
+
+    def test_rendering_is_deterministic_and_sensitivity_override_is_hashed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "session.json"
+            source.write_text(json.dumps(session_payload()), encoding="utf-8")
+            outputs = []
+            for name in ("first", "second"):
+                outdir = root / name
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SCRIPT),
+                        str(source),
+                        "--output-dir",
+                        str(outdir),
+                        "--timestamp",
+                        "stable",
+                        "--sensitivity",
+                        "confidential",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                outputs.append(
+                    (
+                        (outdir / "council-report-stable.html").read_bytes(),
+                        (outdir / "council-transcript-stable.md").read_bytes(),
+                    )
+                )
+            self.assertEqual(outputs[0], outputs[1])
+            self.assertIn(b"confidential", outputs[0][0])
+
+    def test_published_schema_requires_operational_metadata(self):
+        schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+        metadata_required = set(schema["$defs"]["metadata"]["required"])
+        self.assertTrue(
+            {
+                "run_id",
+                "model_ids",
+                "advisor_agent_ids",
+                "reviewer_agent_ids",
+                "input_hashes",
+            }.issubset(metadata_required)
+        )
 
 
 if __name__ == "__main__":

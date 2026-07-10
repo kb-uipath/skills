@@ -144,9 +144,9 @@ Use case: Permit Intake Automation
 
 Use case: Permit Intake Automation
 
-| Source | Type | Date | Link or path | Claims supported | Owner |
-| --- | --- | --- | --- | --- | --- |
-| Intake workshop notes | meeting notes | 2026-06-30 | docs/intake-workshop-notes.md | E1 | Delivery Lead |
+| Source | Type | Date | Link or path | SHA-256 | Claims supported | Owner |
+| --- | --- | --- | --- | --- | --- | --- |
+| Intake workshop notes | public fixture | 2026-06-30 | https://docs.uipath.com/fixture-intake | N/A | E1 | Delivery Lead |
 """,
             "cover-message.md": """# Cover Message
 
@@ -304,6 +304,44 @@ Next action: Delivery Lead schedules sprint planning on 2026-07-08.
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("ready level", result.stdout)
+
+    def test_ready_validation_checks_local_reference_existence_and_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = self.create_ready_package(tmp)
+            source = root / "intake-workshop-notes.txt"
+            source.write_text("Synthetic workshop evidence\n", encoding="utf-8")
+            digest = self.module.file_hash(source)
+            (package / "references.md").write_text(
+                """# References
+
+Use case: Permit Intake Automation
+
+| Source | Type | Date | Link or path | SHA-256 | Claims supported | Owner |
+| --- | --- | --- | --- | --- | --- | --- |
+| Intake workshop notes | local evidence | 2026-06-30 | ../intake-workshop-notes.txt | {digest} | E1 | Delivery Lead |
+""".format(digest=digest),
+                encoding="utf-8",
+            )
+            self.mark_ready(package)
+
+            self.assertEqual(self.module.validate_package(package), [])
+
+            source.unlink()
+            self.assertTrue(
+                any(
+                    "referenced local source does not exist" in error
+                    for error in self.module.validate_package(package)
+                )
+            )
+
+            source.write_text("Tampered workshop evidence\n", encoding="utf-8")
+            self.assertTrue(
+                any(
+                    "local source SHA-256 mismatch" in error
+                    for error in self.module.validate_package(package)
+                )
+            )
 
     def test_ready_validation_rejects_completion_defects(self):
         cases = {

@@ -5,7 +5,7 @@ The machine-readable planning path uses two strict JSON artifacts:
 - `evidence_ledger.json`, governed by [`contracts/evidence_ledger.v1.schema.json`](contracts/evidence_ledger.v1.schema.json).
 - `portfolio.json`, governed by [`contracts/portfolio.v1.schema.json`](contracts/portfolio.v1.schema.json).
 
-Both artifacts require `schema_version: "1.0"`. Unknown fields, unsupported versions, dangling IDs, stale scores, invalid value calculations, deployment gaps, and unsupported entitlement claims fail validation. The Python runtime uses the same contract rules without requiring a JSON Schema package.
+Both artifacts require `schema_version: "1.0"`. Unknown fields, unsupported versions, dangling IDs, stale scores, invalid value calculations, deployment gaps, placeholder pilot owners, unsafe official-source URLs, and unsupported entitlement claims fail validation. The Python runtime uses the same contract rules without requiring a JSON Schema package.
 
 ## Evidence ledger v1
 
@@ -17,9 +17,19 @@ Use one stable ID namespace per customer analysis:
 
 The ledger also records deployment model, data classification, GenAI policy, human-approval requirements, and entitlement status. A `confirmed` entitlement requires a public source or validated assumption reference. `unknown` is the safe default.
 
+When an inventory profile is supplied, validation reconciles each ledger row against the generated
+profile for name, normalized description, status, department, owner, systems, physical source row,
+and detected metric values. Official public sources require HTTPS and a public, non-reserved host;
+synthetic fixture URLs must not be marked official.
+
 ## Portfolio v1
 
 Each `OPP-*` opportunity must cite inventory IDs and public source IDs. Assumption IDs are required whenever an assumption affects value, feasibility, deployment, or entitlement reasoning. Criteria scores are integers from 0 to 5; the scripts calculate both high-impact and POC scores with scoring model `1.0`.
+
+An active opportunity must name an accountable pilot person or role. Placeholder values such as
+`TBD` and `unassigned` fail. Each opportunity lists only materially applicable deployment
+constraints, while the active portfolio must collectively address every ledger constraint.
+Narrative fields have bounded word counts so deterministic rendering remains executive-usable.
 
 Calculated value supports only these deterministic formulas:
 

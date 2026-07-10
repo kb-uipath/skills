@@ -55,6 +55,10 @@ The machine-readable handoff is the canonical JSON contract `gtm-org-proposal-ge
    - Use formal, concise language suitable for C-suite, agency executive, or federal review.
    - Keep facts, estimates, and recommendations visibly separated.
    - Include source IDs next to budget values, strategy claims, admin-cost estimates, and impact estimates.
+   - Require each capability to cite the exact UiPath documentation URL recorded in its source row.
+   - Require displayed impact to match `impact_math.resulting_range`; inconsistent executive claims fail validation.
+   - Give every card a pilot owner, target decision date, and measurable pilot exit criteria.
+   - End with an executive decision ask, overlap-aware portfolio value range, named owner/date, and owned next steps. Single-card ranges must match the card; multi-card ranges require recomputable `portfolio_math`.
    - When producing a proposal artifact, validate the JSON contract and render deterministic Markdown before sharing when practical.
    - Offer export formats only after delivering the core result.
 
@@ -73,4 +77,4 @@ The machine-readable handoff is the canonical JSON contract `gtm-org-proposal-ge
 - `references/versioned-contract.md`: canonical JSON contract, deterministic renderer expectations, fail-closed legacy behavior, and completeness rules.
 - `references/source-and-estimation-rules.md`: source priority, citation requirements, budget normalization, admin-cost estimate tiers, and anti-fabrication rules.
 - `references/proposal-output-template.md`: required executive output shape for source ledgers, budget tables, use-case prioritization, and proposal cards.
-- `scripts/validate_gtm_output.py`: canonical JSON validator and deterministic Markdown renderer for sources, claims, math, tiers, capability dates, deployment fit, proposal cards, and evidence gaps.
+- `scripts/validate_gtm_output.py`: canonical JSON validator and deterministic Markdown renderer for sources, claims, aligned card and aggregate impact math, capability evidence, proposal cards, executive close, and evidence gaps.

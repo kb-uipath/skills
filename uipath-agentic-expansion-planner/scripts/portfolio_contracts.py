@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import math
 import re
@@ -69,6 +70,25 @@ ID_PATTERNS = {
 
 EVIDENCE_REF_KEYS = ("inventory_ids", "public_source_ids", "assumption_ids")
 
+PLACEHOLDER_ASSIGNMENTS = {
+    "(unassigned)",
+    "unassigned",
+    "not assigned",
+    "to be assigned",
+    "tbd",
+    "tbc",
+    "unknown",
+    "none",
+    "n/a",
+    "na",
+}
+
+RESERVED_OFFICIAL_HOSTS = {
+    "example.com",
+    "example.net",
+    "example.org",
+}
+
 
 class ContractLoadError(ValueError):
     """Raised when a contract artifact cannot be loaded safely."""
@@ -124,6 +144,77 @@ def _string(value: Any, path: str, errors: list[str], *, allow_empty: bool = Fal
         errors.append(f"{path} must be {suffix}")
         return False
     return True
+
+
+def _bounded_string(
+    value: Any,
+    path: str,
+    errors: list[str],
+    *,
+    max_words: int,
+) -> bool:
+    if not _string(value, path, errors):
+        return False
+    word_count = len(re.findall(r"\b[\w-]+\b", value))
+    if word_count > max_words:
+        errors.append(
+            f"{path} must contain no more than {max_words} words; found {word_count}"
+        )
+        return False
+    return True
+
+
+def _is_placeholder_assignment(value: Any) -> bool:
+    if not isinstance(value, str):
+        return True
+    normalized = re.sub(r"\s+", " ", value.strip().casefold())
+    return normalized in PLACEHOLDER_ASSIGNMENTS or bool(
+        re.search(
+            r"\b(?:tbd|tbc|unassigned|unknown|pending assignment|not yet assigned|"
+            r"(?:owner|lead|sponsor) (?:needed|to be assigned))\b",
+            normalized,
+        )
+    )
+
+
+def _public_url_failure(url: str, *, official: bool) -> Optional[str]:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
+        return "must be an absolute public HTTP(S) URL"
+    if parsed.username or parsed.password:
+        return "must not contain embedded credentials"
+    host = parsed.hostname.casefold().rstrip(".")
+    if (
+        host == "localhost"
+        or host.endswith((".localhost", ".local", ".internal", ".invalid"))
+    ):
+        return "must use a publicly resolvable host"
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None and not address.is_global:
+        return "must not use a private, loopback, link-local, or reserved IP address"
+    if official:
+        if parsed.scheme != "https":
+            return "must use HTTPS when official is true"
+        if (
+            host in RESERVED_OFFICIAL_HOSTS
+            or host in {"test", "example"}
+            or host.endswith((".example", ".test"))
+        ):
+            return "cannot use a reserved test/example host when official is true"
+    return None
+
+
+def _systems_from_profile(value: Any) -> set[str]:
+    if not isinstance(value, str) or not value.strip():
+        return set()
+    return {
+        item.strip().casefold()
+        for item in re.split(r"[;,|]", value)
+        if item.strip()
+    }
 
 
 def _string_list(value: Any, path: str, errors: list[str], *, min_items: int = 0) -> bool:
@@ -286,6 +377,62 @@ def _validate_inventory_profile(
             errors.append(
                 f"inventory name mismatch for {item_id}: profile={profile_item.get('name')!r}, "
                 f"ledger={ledger_item.get('name')!r}"
+            )
+        profile_description = str(profile_item.get("description", "")).rstrip(" .")
+        ledger_description = str(ledger_item.get("description", "")).rstrip(" .")
+        if "description" in profile_item and profile_description != ledger_description:
+            errors.append(
+                f"inventory description mismatch for {item_id}: "
+                f"profile={profile_item.get('description')!r}, "
+                f"ledger={ledger_item.get('description')!r}"
+            )
+        for field in ("status", "department", "owner"):
+            if field in profile_item and profile_item.get(field) != ledger_item.get(field):
+                errors.append(
+                    f"inventory {field} mismatch for {item_id}: "
+                    f"profile={profile_item.get(field)!r}, ledger={ledger_item.get(field)!r}"
+                )
+        profile_systems = _systems_from_profile(profile_item.get("systems"))
+        ledger_systems = {
+            item.strip().casefold()
+            for item in ledger_item.get("systems", [])
+            if isinstance(item, str) and item.strip()
+        }
+        if profile_systems != ledger_systems:
+            errors.append(
+                f"inventory systems mismatch for {item_id}: "
+                f"profile={sorted(profile_systems)!r}, ledger={sorted(ledger_systems)!r}"
+            )
+        source = ledger_item.get("source", {})
+        if profile_item.get("sheet") != source.get("sheet"):
+            errors.append(f"inventory source sheet mismatch for {item_id}")
+        if profile_item.get("row_number") != source.get("row_number"):
+            errors.append(f"inventory source row mismatch for {item_id}")
+        profile_metrics = {
+            metric.get("name"): metric.get("value")
+            for metric in profile_item.get("metrics", [])
+            if isinstance(metric, dict) and isinstance(metric.get("name"), str)
+        }
+        ledger_metrics = {
+            metric.get("name"): metric.get("value")
+            for metric in ledger_item.get("metrics", [])
+            if isinstance(metric, dict) and isinstance(metric.get("name"), str)
+        }
+        for metric_name, profile_value in profile_metrics.items():
+            ledger_value = ledger_metrics.get(metric_name)
+            if (
+                isinstance(profile_value, (int, float))
+                and not isinstance(profile_value, bool)
+                and isinstance(ledger_value, (int, float))
+                and not isinstance(ledger_value, bool)
+                and math.isclose(
+                    float(profile_value), float(ledger_value), rel_tol=0, abs_tol=1e-9
+                )
+            ):
+                continue
+            errors.append(
+                f"inventory metric mismatch for {item_id}.{metric_name}: "
+                f"profile={profile_value!r}, ledger={ledger_value!r}"
             )
     metadata = profile.get("metadata")
     if not isinstance(metadata, dict):
@@ -481,9 +628,11 @@ def validate_evidence_ledger(
             for field in ("title", "publisher", "evidence_summary"):
                 _string(source.get(field), f"{path}.{field}", errors)
             if _string(source.get("url"), f"{path}.url", errors):
-                parsed = urlparse(source["url"])
-                if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                    errors.append(f"{path}.url must be an absolute public HTTP(S) URL")
+                failure = _public_url_failure(
+                    source["url"], official=source.get("official") is True
+                )
+                if failure:
+                    errors.append(f"{path}.url {failure}")
             published = _date(source.get("published_date"), f"{path}.published_date", errors)
             accessed = _date(source.get("accessed_date"), f"{path}.accessed_date", errors)
             if published and accessed and published > accessed:
@@ -836,6 +985,8 @@ def validate_portfolio(
     }
     deployment = customer.get("deployment", {})
     constraints = set(deployment.get("constraints", []))
+    active_addressed_constraints: set[str] = set()
+    active_opportunity_count = 0
 
     opportunities = portfolio.get("opportunities")
     opportunity_ids = _unique_ids(
@@ -883,9 +1034,24 @@ def validate_portfolio(
                 "feasibility",
                 "governance",
             ):
-                _string(opportunity.get(field), f"{path}.{field}", errors)
+                max_words = {
+                    "why_now": 60,
+                    "decision_ask": 45,
+                    "business_problem": 80,
+                    "agentic_enhancement": 90,
+                    "feasibility": 60,
+                    "governance": 60,
+                }[field]
+                _bounded_string(
+                    opportunity.get(field),
+                    f"{path}.{field}",
+                    errors,
+                    max_words=max_words,
+                )
             category = opportunity.get("category")
             category_is_active = isinstance(category, str) and category in ACTIVE_CATEGORIES
+            if category_is_active:
+                active_opportunity_count += 1
             _enum(
                 category,
                 ACTIVE_CATEGORIES | {"reject"},
@@ -1051,10 +1217,13 @@ def validate_portfolio(
                             f"{path}.deployment.constraints_addressed contains unknown constraint(s): "
                             + ", ".join(unknown_constraints)
                         )
-                    if category_is_active and set(addressed) != constraints:
+                    if category_is_active and constraints and not addressed:
                         errors.append(
-                            f"{path}.deployment.constraints_addressed must cover every ledger constraint"
+                            f"{path}.deployment.constraints_addressed must include each constraint "
+                            "that materially applies to this opportunity"
                         )
+                    if category_is_active:
+                        active_addressed_constraints.update(set(addressed) & constraints)
                 controls = opportunity_deployment.get("controls", [])
                 if deployment.get("human_approval_required") and category_is_active:
                     if not isinstance(controls, list) or not any(
@@ -1092,7 +1261,17 @@ def validate_portfolio(
                     "human_role",
                     "first_step",
                 ):
-                    _string(pilot.get(field), f"{path}.pilot.{field}", errors)
+                    _bounded_string(
+                        pilot.get(field),
+                        f"{path}.pilot.{field}",
+                        errors,
+                        max_words=50,
+                    )
+                if category_is_active and _is_placeholder_assignment(pilot.get("owner")):
+                    errors.append(
+                        f"{path}.pilot.owner must name an accountable role or person; "
+                        "placeholder assignments such as 'unassigned' or 'TBD' are not actionable"
+                    )
                 _string_list(
                     pilot.get("success_metrics"),
                     f"{path}.pilot.success_metrics",
@@ -1106,6 +1285,13 @@ def validate_portfolio(
                     errors.append(f"{path}.pilot.timeline_days must be an integer from 1 to 180")
         if len(names) != len(set(names)):
             errors.append("portfolio.opportunities must not repeat opportunity names")
+        if active_opportunity_count and constraints:
+            missing_constraints = sorted(constraints - active_addressed_constraints)
+            if missing_constraints:
+                errors.append(
+                    "active portfolio opportunities must collectively cover every ledger constraint; "
+                    "missing: " + ", ".join(missing_constraints)
+                )
 
     if as_of:
         for index, source in enumerate(ledger.get("public_sources", [])):
@@ -1159,6 +1345,16 @@ def evaluate_outcome_rubric(
         for item in ledger.get("inventory_evidence", [])
         if isinstance(item, dict)
     }
+    source_by_id = {
+        item.get("source_id"): item
+        for item in ledger.get("public_sources", [])
+        if isinstance(item, dict)
+    }
+    assumption_by_id = {
+        item.get("assumption_id"): item
+        for item in ledger.get("assumptions", [])
+        if isinstance(item, dict)
+    }
     rows: list[dict[str, Any]] = []
     for opportunity in portfolio.get("opportunities", []):
         refs = opportunity.get("evidence_refs", {})
@@ -1167,6 +1363,16 @@ def evaluate_outcome_rubric(
             for item_id in refs.get("inventory_ids", [])
             if item_id in inventory_by_id
         ]
+        referenced_sources = [
+            source_by_id[item_id]
+            for item_id in refs.get("public_source_ids", [])
+            if item_id in source_by_id
+        ]
+        referenced_assumptions = [
+            assumption_by_id[item_id]
+            for item_id in refs.get("assumption_ids", [])
+            if item_id in assumption_by_id
+        ]
         specificity_checks = {
             "named_workflow": len(opportunity.get("name", "").split()) >= 2,
             "concrete_problem": len(opportunity.get("business_problem", "").split()) >= 10,
@@ -1174,14 +1380,24 @@ def evaluate_outcome_rubric(
             "public_strategy_signal": bool(refs.get("public_source_ids")),
             "department_context": any(item.get("department") for item in referenced_inventory),
             "system_context": any(item.get("systems") for item in referenced_inventory),
+            "quantified_inventory_signal": any(
+                item.get("metrics") for item in referenced_inventory
+            ),
+            "official_public_evidence": any(
+                item.get("official") is True for item in referenced_sources
+            ),
         }
         decision_checks = {
             "explicit_decision_ask": len(opportunity.get("decision_ask", "").split()) >= 6,
             "category_and_confidence": bool(opportunity.get("category") and opportunity.get("confidence")),
             "deterministic_scores": set(opportunity.get("scores", {})) == {"high_impact", "poc"},
+            "score_tradeoffs": len(set(opportunity.get("criteria_scores", {}).values())) >= 2,
             "value_basis": bool(opportunity.get("value_case", {}).get("basis")),
             "validation_questions": len(opportunity.get("validation_questions", [])) >= 2,
             "deployment_disposition": bool(opportunity.get("deployment", {}).get("status")),
+            "validated_assumptions": not any(
+                item.get("status") == "unvalidated" for item in referenced_assumptions
+            ),
         }
         pilot = opportunity.get("pilot", {})
         pilot_checks = {
@@ -1189,7 +1405,7 @@ def evaluate_outcome_rubric(
             "narrow_scope": bool(pilot.get("narrow_scope")),
             "agent_role": bool(pilot.get("agent_role")),
             "human_role": bool(pilot.get("human_role")),
-            "owner": bool(pilot.get("owner")),
+            "accountable_owner": not _is_placeholder_assignment(pilot.get("owner")),
             "measures": len(pilot.get("success_metrics", [])) >= 2,
             "data_needed": bool(pilot.get("data_needed")),
             "exit_criteria": bool(pilot.get("exit_criteria")),
@@ -1221,7 +1437,7 @@ def evaluate_outcome_rubric(
         return round(sum(row[key] for row in rows) / len(rows), 2)
 
     return {
-        "rubric_version": "1.0",
+        "rubric_version": "1.2",
         "portfolio_id": portfolio.get("portfolio_id"),
         "specificity": average("specificity"),
         "decision_utility": average("decision_utility"),

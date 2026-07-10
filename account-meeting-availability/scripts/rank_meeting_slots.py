@@ -11,6 +11,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, time as wall_time, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -28,6 +29,8 @@ MAX_INPUT_BYTES = 10 * 1024 * 1024
 MAX_WINDOW_DAYS = 31
 MAX_PARTICIPANTS = 100
 MAX_INTERVALS_PER_PARTICIPANT = 1000
+MAX_EXCLUDED_SLOT_DETAILS = 100
+MINIMUM_PYTHON = (3, 11)
 PRIVATE_FILE_MODE = stat.S_IRUSR | stat.S_IWUSR
 PRIVATE_DIRECTORY_MODE = stat.S_IRWXU
 
@@ -54,6 +57,15 @@ BUSY_STATUSES = {
 }
 
 
+def python_runtime_failure(version_info) -> Optional[str]:
+    if tuple(version_info[:2]) < MINIMUM_PYTHON:
+        return (
+            "rank_meeting_slots.py requires Python 3.11 or newer; "
+            "run it with the repository's configured Python runtime"
+        )
+    return None
+
+
 @dataclass(frozen=True)
 class BusyInterval:
     start: datetime
@@ -71,6 +83,7 @@ class WorkingHours:
 @dataclass(frozen=True)
 class Participant:
     participant_id: str
+    display_name: str
     email: str
     required: bool
     time_zone_name: str
@@ -310,9 +323,15 @@ def parse_request(payload) -> RankingRequest:
                 "working_hours",
                 "busy_intervals",
             },
+            optional={"display_name"},
             context=context,
         )
         participant_id = _require_string(participant["id"], f"{context}.id", max_length=128)
+        display_name = _require_string(
+            participant.get("display_name", participant_id),
+            f"{context}.display_name",
+            max_length=128,
+        )
         if participant_id in seen_ids:
             raise ValueError(f"duplicate participant id '{participant_id}'")
         seen_ids.add(participant_id)
@@ -339,6 +358,7 @@ def parse_request(payload) -> RankingRequest:
         participants.append(
             Participant(
                 participant_id=participant_id,
+                display_name=display_name,
                 email=email,
                 required=participant["required"],
                 time_zone_name=time_zone_name,
@@ -387,12 +407,24 @@ def _inside_working_hours(participant: Participant, start: datetime, end: dateti
 
 
 def participant_is_available(participant: Participant, start: datetime, end: datetime) -> bool:
+    return participant_unavailability_reason(participant, start, end) is None
+
+
+def participant_unavailability_reason(
+    participant: Participant, start: datetime, end: datetime
+) -> Optional[str]:
     if not _inside_working_hours(participant, start, end):
-        return False
-    return not any(
-        interval.status != "free" and _overlaps(start, end, interval)
-        for interval in participant.busy_intervals
+        return "outside_working_hours"
+    blocking_statuses = sorted(
+        {
+            interval.status
+            for interval in participant.busy_intervals
+            if interval.status != "free" and _overlaps(start, end, interval)
+        }
     )
+    if blocking_statuses:
+        return "blocking_" + "+".join(blocking_statuses)
+    return None
 
 
 def rank_request(payload) -> dict:
@@ -403,23 +435,58 @@ def rank_request(payload) -> dict:
     optional = [participant for participant in request.participants if not participant.required]
 
     candidates = []
+    evaluated_slot_count = 0
+    excluded_slots = []
+    exclusion_reason_counts: dict[str, int] = {}
     cursor = request.window_start
     while cursor + duration <= request.window_end:
         end = cursor + duration
-        if all(participant_is_available(participant, cursor, end) for participant in required):
-            optional_available = [
-                participant.participant_id
-                for participant in optional
-                if participant_is_available(participant, cursor, end)
-            ]
+        evaluated_slot_count += 1
+        required_blockers = []
+        for participant in required:
+            reason = participant_unavailability_reason(participant, cursor, end)
+            if reason:
+                required_blockers.append(
+                    {
+                        "participant_id": participant.participant_id,
+                        "display_name": participant.display_name,
+                        "reason": reason,
+                    }
+                )
+
+        if required_blockers:
+            for reason in sorted({blocker["reason"] for blocker in required_blockers}):
+                exclusion_reason_counts[reason] = exclusion_reason_counts.get(reason, 0) + 1
+            if len(excluded_slots) < MAX_EXCLUDED_SLOT_DETAILS:
+                excluded_slots.append(
+                    {
+                        "start": format_utc(cursor),
+                        "end": format_utc(end),
+                        "required_blockers": required_blockers,
+                    }
+                )
+        else:
+            optional_available = []
+            optional_unavailability = []
+            for participant in optional:
+                reason = participant_unavailability_reason(participant, cursor, end)
+                if reason is None:
+                    optional_available.append(participant.participant_id)
+                else:
+                    optional_unavailability.append(
+                        {
+                            "participant_id": participant.participant_id,
+                            "display_name": participant.display_name,
+                            "reason": reason,
+                        }
+                    )
             optional_unavailable = [
-                participant.participant_id
-                for participant in optional
-                if participant.participant_id not in optional_available
+                item["participant_id"] for item in optional_unavailability
             ]
             local_times = [
                 {
                     "participant_id": participant.participant_id,
+                    "display_name": participant.display_name,
                     "time_zone": participant.time_zone_name,
                     "start": format_local(cursor, participant.time_zone),
                     "end": format_local(end, participant.time_zone),
@@ -433,6 +500,7 @@ def rank_request(payload) -> dict:
                     "optional_available_count": len(optional_available),
                     "optional_available_participant_ids": optional_available,
                     "optional_unavailable_participant_ids": optional_unavailable,
+                    "optional_unavailability": optional_unavailability,
                     "local_times": local_times,
                     "_sort_start": cursor,
                 }
@@ -458,6 +526,7 @@ def rank_request(payload) -> dict:
                 "optional_unavailable_participant_ids": candidate[
                     "optional_unavailable_participant_ids"
                 ],
+                "optional_unavailability": candidate["optional_unavailability"],
                 "local_times": candidate["local_times"],
             }
         )
@@ -482,7 +551,23 @@ def rank_request(payload) -> dict:
         "slot_increment_minutes": request.slot_increment_minutes,
         "required_participant_ids": [participant.participant_id for participant in required],
         "optional_participant_ids": [participant.participant_id for participant in optional],
+        "participant_labels": {
+            participant.participant_id: participant.display_name
+            for participant in request.participants
+        },
         "eligible_slot_count": eligible_slot_count,
+        "candidate_diagnostics": {
+            "evaluated_slot_count": evaluated_slot_count,
+            "excluded_slot_count": evaluated_slot_count - eligible_slot_count,
+            "reason_counts": {
+                reason: exclusion_reason_counts[reason]
+                for reason in sorted(exclusion_reason_counts)
+            },
+            "excluded_slots": excluded_slots,
+            "excluded_slots_truncated": (
+                evaluated_slot_count - eligible_slot_count > len(excluded_slots)
+            ),
+        },
         "ranked_slots": ranked_slots,
         "source": {
             "provider": "outlook",
@@ -534,6 +619,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str]) -> int:
+    runtime_failure = python_runtime_failure(sys.version_info)
+    if runtime_failure:
+        print(f"error: {runtime_failure}", file=sys.stderr)
+        return 2
     args = parse_args(argv)
     try:
         request_path = args.request.expanduser()

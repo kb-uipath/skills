@@ -28,7 +28,7 @@ Use $account-meeting-availability to maintain the account contacts and rank comm
 
 ## Runtime And Dependencies
 
-- Python 3.9 or later.
+- Python 3.11 or later. The availability ranker fails early with runtime guidance on older interpreters.
 - Python standard library only; no package installation is required.
 - `zoneinfo` plus an installed IANA time zone database for availability ranking.
 - Read-only Outlook connector access is optional and upstream of the CLI. The scripts make no network or connector calls.
@@ -56,13 +56,13 @@ Existing unversioned CSV stores do not auto-upgrade. They fail closed with an ex
 
 Reference schema: `account-meeting-availability/references/schemas/free-busy-request-v1.schema.json`.
 
-The request contains a bounded offset-aware window, slot duration and increment, unique required/optional participants, IANA time zones, same-day local working hours, Outlook free/busy intervals, and source provenance fixed to `provider=outlook` and `retrieval_mode=read-only`.
+The request contains a bounded offset-aware window, slot duration and increment, unique required/optional participants, optional privacy-safe display names, IANA time zones, same-day local working hours, Outlook free/busy intervals, and source provenance fixed to `provider=outlook` and `retrieval_mode=read-only`.
 
 ### Free/Busy Result 1.0
 
 Reference schema: `account-meeting-availability/references/schemas/free-busy-result-v1.schema.json`.
 
-The result is deterministic for identical input. Required-participant conflicts are excluded. Remaining slots are ranked by optional attendance descending and UTC start ascending. Each slot includes UTC timestamps and participant-local timestamps. No result timestamp or generated ID is added.
+The result is deterministic for identical input. Required-participant conflicts are excluded. Remaining slots are ranked by optional attendance descending and UTC start ascending. Each slot includes UTC timestamps, participant-local timestamps, display labels, and reason records for unavailable optional participants without exposing email addresses. `candidate_diagnostics` reports bounded rejected-slot details and reason counts so a coordinator can see which required constraint blocked each candidate. No result timestamp or generated ID is added.
 
 `status=no_common_slot` with an empty `ranked_slots` array is a valid successful outcome. It does not authorize dropping participants or widening constraints.
 
@@ -71,9 +71,12 @@ The result is deterministic for identical input. Required-participant conflicts 
 From the repository root:
 
 ```bash
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+
 python3 account-meeting-availability/scripts/rank_meeting_slots.py \
   account-meeting-availability/tests/fixtures/free_busy_rankable_v1.json \
-  --output /tmp/ranked-slots.json
+  --output "$WORK_DIR/ranked-slots.json"
 ```
 
 The fixture produces three ranked results. Its first result is `2026-07-15T16:00:00Z`, rendered as noon in New York, 11:00 in Chicago, and 09:00 in Los Angeles.
@@ -82,13 +85,13 @@ Initialize and use a temporary contact store:
 
 ```bash
 python3 account-meeting-availability/scripts/contact_store.py \
-  --store /tmp/account-contacts.csv init
+  --store "$WORK_DIR/account-contacts.csv" init
 python3 account-meeting-availability/scripts/contact_store.py \
-  --store /tmp/account-contacts.csv add \
+  --store "$WORK_DIR/account-contacts.csv" add \
   --account "SSA" --record-type customer --name "Jane Doe" \
   --role "Program lead" --email "jane.doe@example.gov"
 python3 account-meeting-availability/scripts/contact_store.py \
-  --store /tmp/account-contacts.csv list --format json
+  --store "$WORK_DIR/account-contacts.csv" list --format json
 ```
 
 ## Failure Recovery
@@ -148,7 +151,7 @@ Classify contact names, email addresses, roles, working hours, and free/busy int
 
 ## Certification Status
 
-Repository-tested, not independently security-, privacy-, or compliance-certified. The targeted unit suite covers ranking, time zones, no-common-slot outcomes, concurrency, lock timeout, permissions, migration metadata, scoped duplicate identities, malformed email, and formula preservation/export. Production use still requires organizational security, privacy, Outlook connector, and retention review.
+Repository-tested, not independently security-, privacy-, or compliance-certified. The targeted unit suite covers ranking, time zones, optional-attendee reason records, no-common-slot outcomes, bounded diagnostics, concurrency, lock timeout, permissions, migration metadata, scoped duplicate identities, malformed email, and formula preservation/export. A fresh 215-candidate forward test verified byte determinism, full exclusion counts beyond the 100-detail cap, display-label privacy, and private file modes, scoring 23/25 across specificity, scheduling utility, determinism, privacy, and actionability; the optional-reason gap it identified now has deterministic regression coverage. Production use still requires organizational security, privacy, Outlook connector, and retention review.
 
 **Last verified:** 2026-07-10
 

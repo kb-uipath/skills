@@ -63,6 +63,76 @@ class RankMeetingSlotsTests(unittest.TestCase):
             local_times["optional-specialist"]["start"], "2026-07-15T09:00:00-07:00"
         )
 
+    def test_display_labels_and_exclusion_diagnostics_are_privacy_safe(self):
+        request = self.load_fixture("free_busy_rankable_v1.json")
+        request["participants"][0]["display_name"] = "Customer Operations Lead"
+        request["participants"][1]["display_name"] = "UiPath Account Lead"
+
+        result = self.module.rank_request(request)
+
+        self.assertEqual(
+            result["participant_labels"]["customer-owner"], "Customer Operations Lead"
+        )
+        self.assertEqual(
+            result["ranked_slots"][0]["local_times"][0]["display_name"],
+            "Customer Operations Lead",
+        )
+        self.assertEqual(
+            result["candidate_diagnostics"]["reason_counts"],
+            {"blocking_busy": 2, "blocking_tentative": 1},
+        )
+        self.assertEqual(result["candidate_diagnostics"]["evaluated_slot_count"], 10)
+        self.assertEqual(result["candidate_diagnostics"]["excluded_slot_count"], 3)
+        self.assertFalse(result["candidate_diagnostics"]["excluded_slots_truncated"])
+        self.assertNotIn("owner@example.gov", json.dumps(result))
+
+    def test_optional_unavailability_has_a_privacy_safe_reason(self):
+        request = self.load_fixture("free_busy_rankable_v1.json")
+        request["max_results"] = 10
+        request["participants"][2]["display_name"] = "Optional Platform Specialist"
+
+        result = self.module.rank_request(request)
+        affected = next(
+            slot
+            for slot in result["ranked_slots"]
+            if slot["start"] == "2026-07-15T16:30:00Z"
+        )
+
+        self.assertEqual(
+            affected["optional_unavailability"],
+            [
+                {
+                    "participant_id": "optional-specialist",
+                    "display_name": "Optional Platform Specialist",
+                    "reason": "blocking_busy",
+                }
+            ],
+        )
+        self.assertNotIn("@", json.dumps(affected))
+
+    def test_exclusion_diagnostics_are_bounded_without_losing_counts(self):
+        request = self.load_fixture("free_busy_rankable_v1.json")
+        request["window"]["start"] = "2026-07-15T00:00:00Z"
+        request["window"]["end"] = "2026-07-20T00:00:00Z"
+
+        result = self.module.rank_request(request)
+        diagnostics = result["candidate_diagnostics"]
+
+        self.assertGreater(diagnostics["excluded_slot_count"], 100)
+        self.assertEqual(len(diagnostics["excluded_slots"]), 100)
+        self.assertTrue(diagnostics["excluded_slots_truncated"])
+        self.assertGreaterEqual(
+            sum(diagnostics["reason_counts"].values()),
+            diagnostics["excluded_slot_count"],
+        )
+
+    def test_runtime_preflight_is_explicit(self):
+        self.assertIn(
+            "requires Python 3.11 or newer",
+            self.module.python_runtime_failure((3, 10, 9)),
+        )
+        self.assertIsNone(self.module.python_runtime_failure((3, 11, 0)))
+
     def test_no_common_slot_is_an_explicit_successful_outcome(self):
         request = self.load_fixture("free_busy_no_common_slot_v1.json")
         result = self.module.rank_request(request)

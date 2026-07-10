@@ -52,7 +52,7 @@ Use the version `1.0` request contract at `references/schemas/free-busy-request-
 
 - an offset-aware search window of no more than 31 days
 - duration, increment, and result limit
-- unique participant IDs and emails
+- unique participant IDs and emails, plus optional privacy-safe display names
 - required or optional status
 - an installed IANA time zone and same-day working hours for each participant
 - half-open free/busy intervals with an Outlook status
@@ -69,7 +69,7 @@ Run `scripts/rank_meeting_slots.py` with the normalized request. The CLI perform
 3. Reject a candidate overlapping any non-`free` interval for a required participant. `tentative`, `busy`, `out_of_office`, `working_elsewhere`, and `unknown` all block required attendance.
 4. Rank remaining candidates by optional participants available, descending.
 5. Break ties by earliest UTC start.
-6. Return version `1.0` result JSON. `no_common_slot` is a valid result, not permission to relax constraints.
+6. Return version `1.0` result JSON with display labels, privacy-safe optional-attendee unavailability reasons, and bounded exclusion diagnostics. Email addresses never appear in the result. `no_common_slot` is a valid result, not permission to relax constraints.
 
 Read `references/availability-contract.md` for the full deterministic contract and limitations.
 

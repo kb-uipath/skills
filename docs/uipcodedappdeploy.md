@@ -85,7 +85,7 @@ python3.11 uipcodedappdeploy/scripts/uipcodedappdeploy.py \
   --target-url https://alpha.uipath.com \
   --tenant-name '<nonproduction-tenant>' \
   --folder-key 11111111-2222-3333-4444-555555555555 \
-  --verify-url https://example-org.uipath.host/example-app \
+  --verify-url https://app.example.com/example-app \
   --format json \
   --plan-output "$PLAN"
 

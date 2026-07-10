@@ -22,6 +22,8 @@ LOCAL_PATH_PATTERNS = (
     re.compile(r"/home/[A-Za-z0-9._-]+/"),
     re.compile(r"[A-Za-z]:\\Users\\[A-Za-z0-9._-]+\\"),
     re.compile(r"/(?:private/)?var/folders/[A-Za-z0-9._/-]+"),
+    re.compile(r"/(?:private/)?tmp/[A-Za-z0-9._/-]+"),
+    re.compile(r"/Volumes/[A-Za-z0-9._ -]+/[A-Za-z0-9._/-]+"),
 )
 SECRET_PATTERNS = (
     re.compile(
@@ -31,23 +33,35 @@ SECRET_PATTERNS = (
     re.compile(r"(?i)\bBearer\s+([A-Za-z0-9._~+/=-]{20,})"),
     re.compile(r"-----BEGIN (?:RSA |DSA |EC |OPENSSH )?PRIVATE KEY-----"),
     re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{20,}\b"),
+    re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),
+    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
 )
 PLACEHOLDER_RE = re.compile(
     r"(?i)(placeholder|example|fake|redacted|changeme|your[_-]?|xxx|dummy|sample|<[^>]+>)"
 )
 DOC_HEADINGS = ("## Inputs", "## Prompt", "## Safety", "## Validation")
-STRICT_DOC_SECTIONS = {
-    "repo-hardening-sprint": (
-        "## Runtime And Dependencies",
-        "## Versioned Contract",
-        "## Runnable Example",
-        "## Recovery",
-        "## Classification And Retention",
-        "## Limitations",
-        "## Certification",
-        "Last verified: 2026-07-10",
-    )
-}
+STANDARD_DOC_CONCEPTS = (
+    ("runtime and dependencies", re.compile(r"(?im)^## Runtime And Dependencies\s*$")),
+    (
+        "versioned input/output contract",
+        re.compile(
+            r"(?is)(?:schema|contract).{0,160}(?:version|v1|@1|1\.0|2\.0)"
+            r"|(?:version|v1|@1|1\.0|2\.0).{0,160}(?:schema|contract)"
+        ),
+    ),
+    ("runnable example", re.compile(r"(?im)^## Runnable Example\s*$")),
+    ("failure recovery", re.compile(r"(?im)^## .*Recovery\s*$")),
+    (
+        "classification and retention",
+        re.compile(r"(?im)^## .*Classification.*Retention\s*$|^## .*Retention.*Classification\s*$"),
+    ),
+    ("known limitations", re.compile(r"(?im)^## (?:Known )?Limitations\s*$")),
+    ("certification status", re.compile(r"(?im)^## .*Certification.*\s*$|^## Status\s*$")),
+    ("last-verified date", re.compile(r"(?is)last verified.{0,50}2026-07-10")),
+)
 ROOT_DOC_SECTIONS = {
     "README.md": (
         "## Runtime And Validation",
@@ -131,7 +145,7 @@ def validate_skill_dir(skill_dir: Path, root: Path = ROOT) -> list[str]:
     try:
         frontmatter = parse_skill_frontmatter(skill_md)
     except ValueError as exc:
-        return [f"{skill_md.relative_to(ROOT)}: {exc}"]
+        return [f"{skill_md.relative_to(root)}: {exc}"]
 
     unexpected = set(frontmatter) - SKILL_FRONTMATTER_KEYS
     if unexpected:
@@ -184,9 +198,9 @@ def validate_skill_dir(skill_dir: Path, root: Path = ROOT) -> list[str]:
         for heading in DOC_HEADINGS:
             if heading not in doc_text:
                 errors.append(f"{doc.relative_to(root)}: missing heading {heading!r}")
-        for section in STRICT_DOC_SECTIONS.get(skill_name, ()):
-            if section not in doc_text:
-                errors.append(f"{doc.relative_to(root)}: missing public contract section {section!r}")
+        for concept, pattern in STANDARD_DOC_CONCEPTS:
+            if not pattern.search(doc_text):
+                errors.append(f"{doc.relative_to(root)}: missing public contract concept {concept!r}")
 
     return errors
 

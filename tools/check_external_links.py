@@ -40,7 +40,10 @@ def extract_urls(files: list[Path]) -> list[str]:
         for match in RAW_URL_RE.finditer(path.read_text(encoding="utf-8")):
             url = match.group(0).rstrip(".,;:]}\")")
             host = (urlparse(url).hostname or "").lower()
-            if host.endswith((".example", ".invalid")) or host in {"example.com", "example.org"}:
+            if host.endswith((".example", ".invalid", ".example.com", ".example.org")) or host in {
+                "example.com",
+                "example.org",
+            }:
                 continue
             urls.add(url)
     return sorted(urls)

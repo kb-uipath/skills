@@ -26,7 +26,7 @@ The contract of record is JSON with:
 }
 ```
 
-The v1 contract requires confirmed scope, public classification, source ledger, capability ledger, budget/program areas, prioritized use cases, proposal cards, evidence gaps, and assumptions. Legacy free-form Markdown fails closed with migration guidance; convert it to the v1 JSON contract and render Markdown from the validated JSON.
+The v1 contract requires confirmed scope, public classification, source ledger, capability ledger, budget/program areas, prioritized use cases, proposal cards, an executive close, evidence gaps, and assumptions. Legacy free-form Markdown fails closed with migration guidance; convert it to the v1 JSON contract and render Markdown from the validated JSON.
 
 Fewer than 10 cards are valid when the evidence-backed set is smaller, but every card must be complete and `evidence_gaps` must explain why the portfolio is smaller.
 
@@ -73,6 +73,8 @@ python3 gtm-org-proposal-generator/scripts/validate_gtm_output.py fixture.contra
 - Budget/program-area table.
 - Prioritized use cases.
 - Executive proposal cards with estimate tier labels and visible impact math.
+- Pilot owners, target decision dates, measurable exit criteria, and bulleted validation actions.
+- Executive close with decision ask, overlap-aware portfolio value range, named owner/date, owned next steps, and recomputable `portfolio_math` whenever more than one card is emitted.
 - Evidence gaps and validation questions.
 
 ## Safety
@@ -81,7 +83,7 @@ python3 gtm-org-proposal-generator/scripts/validate_gtm_output.py fixture.contra
 - Browse for current laws, budgets, filings, and UiPath capability availability because those details drift.
 - Never fabricate budget lines, savings, licensing availability, or deployment eligibility.
 - Label impact estimates as `Documented`, `Derived`, `Benchmarked`, or `Assumption`.
-- Treat uncited money or percentage claims, unsupported overclaim language, missing impact math, and stale or mismatched capability deployment evidence as validation failures.
+- Treat uncited money or percentage claims, displayed impact that disagrees with its own math, unsupported overclaim language, missing owners/exit criteria, and stale or mismatched capability evidence as validation failures.
 
 ## Recovery
 
@@ -90,6 +92,9 @@ If validation fails:
 - Fix the JSON contract rather than editing rendered Markdown.
 - Add missing source rows before adding claims that depend on them.
 - Add current `docs.uipath.com` capability evidence before using a capability in a card.
+- Make each capability source URL exactly match the recorded UiPath docs URL.
+- Align displayed impact with `impact_math.resulting_range`; do not repair a mismatch only in rendered Markdown.
+- Add the missing executive owner, decision date, next-step owners/dates, and pilot exit criteria.
 - If fewer than 10 cards are supportable, keep the smaller complete set and document the evidence gap.
 - If the input is legacy Markdown, migrate it to `gtm-org-proposal-generator/v1`; the validator intentionally rejects free-form Markdown.
 
@@ -112,6 +117,8 @@ If validation fails:
 - Contract version: `gtm-org-proposal-generator/v1`.
 - Local runtime dependency: Python 3 standard library only.
 - Validation command: `python3 gtm-org-proposal-generator/scripts/validate_gtm_output.py fixture.contract.json --render fixture.proposal.md`.
+- Deterministic coverage includes exact card/impact alignment and recomputation of single- and multi-card executive ranges.
+- A fresh answer-blind three-card forward test produced byte-identical rendering and scored 23/25 across specificity, evidence coverage, value discipline, decision utility, and actionability.
 - Repository gate: `python3 tools/validate_repo.py`.
 - Last verified: 2026-07-10.
 

@@ -122,8 +122,35 @@ VALID_CONTRACT = {
                 "Confirm monthly document volume with program owner.",
                 "Confirm deployment availability for Document Understanding in the tenant.",
             ],
+            "pilot_owner": "Benefits Operations Director",
+            "target_decision_date": "2026-08-15",
+            "pilot_exit_criteria": [
+                "Process 500 representative documents with at least 95% field-level accuracy.",
+                "Keep 100% of low-confidence exceptions in human review.",
+            ],
         }
     ],
+    "executive_close": {
+        "decision_ask": "Authorize a six-week document-intake pilot and name the operations owner.",
+        "portfolio_value_range": "$250,000-$500,000 potential annual value",
+        "aggregation_method": "Single-card range; no cross-card aggregation applied.",
+        "double_counting_caveat": "Capacity value is not booked savings and excludes implementation cost.",
+        "executive_owner": "Benefits Executive Sponsor",
+        "decision_date": "2026-08-15",
+        "source_ids": ["S1"],
+        "next_steps": [
+            {
+                "action": "Validate document volume, handling time, and exception mix.",
+                "owner": "Benefits Operations Director",
+                "due_date": "2026-07-24",
+            },
+            {
+                "action": "Confirm capability availability and approve pilot scope.",
+                "owner": "Automation Platform Owner",
+                "due_date": "2026-08-01",
+            },
+        ],
+    },
     "evidence_gaps": [
         {
             "gap": "Fewer than 10 proposal cards are included because only one source-backed use case is complete.",
@@ -177,6 +204,21 @@ Retention: Retain only in approved public-source GTM workspaces per account-team
 | ---: | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | Benefits document intake | Benefits licensing services | Manual document intake creates avoidable review effort. | Document Understanding (C1) | $250,000-$500,000 potential annual value | Medium | Derived | [S1] |
 
+## Executive Close
+
+- Decision ask: Authorize a six-week document-intake pilot and name the operations owner.
+- Portfolio value range: $250,000-$500,000 potential annual value
+- Aggregation method: Single-card range; no cross-card aggregation applied.
+- Double-counting caveat: Capacity value is not booked savings and excludes implementation cost.
+- Executive owner: Benefits Executive Sponsor
+- Decision date: 2026-08-15
+- Sources: [S1]
+
+### Owned Next Steps
+
+1. Benefits Operations Director: Validate document volume, handling time, and exception mix. (due 2026-07-24)
+2. Automation Platform Owner: Confirm capability availability and approve pilot scope. (due 2026-08-01)
+
 ## Proposal Cards
 
 ### 1. Benefits document intake
@@ -194,7 +236,16 @@ Retention: Retain only in approved public-source GTM workspaces per account-team
 **Estimate Tier**: Derived
 **Confidence**: Medium
 **Sources**: [S1]
-**Validation Required**: Confirm monthly document volume with program owner.; Confirm deployment availability for Document Understanding in the tenant.
+**Pilot Owner**: Benefits Operations Director
+**Target Decision Date**: 2026-08-15
+
+**Validation Required**:
+- Confirm monthly document volume with program owner.
+- Confirm deployment availability for Document Understanding in the tenant.
+
+**Pilot Exit Criteria**:
+- Process 500 representative documents with at least 95% field-level accuracy.
+- Keep 100% of low-confidence exceptions in human review.
 
 ## Evidence Gaps
 
@@ -268,6 +319,80 @@ class ValidateGtmOutputTests(unittest.TestCase):
             errors,
         )
 
+    def test_capability_source_must_match_recorded_uipath_docs_url(self):
+        contract = copy.deepcopy(VALID_CONTRACT)
+        contract["capability_ledger"][0]["source_ids"] = ["S1"]
+
+        errors = self.module.validate_contract(contract)
+
+        self.assertIn(
+            "capability_ledger[1].source_ids must cite a UiPath source whose url exactly matches docs_url",
+            errors,
+        )
+
+    def test_displayed_impact_must_match_its_own_math(self):
+        contract = copy.deepcopy(VALID_CONTRACT)
+        contract["proposal_cards"][0]["estimated_impact"] = "$9.9 billion"
+
+        errors = self.module.validate_contract(contract)
+
+        self.assertIn(
+            "proposal_cards[1] displayed impact must exactly match impact_math.resulting_range",
+            errors,
+        )
+
+    def test_executive_range_is_recomputed_for_single_and_multi_card_portfolios(self):
+        single = copy.deepcopy(VALID_CONTRACT)
+        single["executive_close"]["portfolio_value_range"] = "$9,900,000-$10,000,000"
+        self.assertIn(
+            "executive_close.portfolio_value_range must exactly match the single proposal-card range",
+            self.module.validate_contract(single),
+        )
+
+        contract = copy.deepcopy(VALID_CONTRACT)
+        second = copy.deepcopy(contract["proposal_cards"][0])
+        second["rank"] = 2
+        second["use_case"] = "Benefits correspondence triage"
+        second["estimated_impact"] = "$100,000-$200,000 potential annual value"
+        second["impact_math"]["resulting_range"] = second["estimated_impact"]
+        contract["proposal_cards"].append(second)
+        contract["executive_close"]["portfolio_value_range"] = (
+            "$315,000-$630,000 potential annual value"
+        )
+        contract["executive_close"]["portfolio_math"] = {
+            "included_card_ranks": [1, 2],
+            "lower_adjustment_factor": 0.9,
+            "upper_adjustment_factor": 0.9,
+            "resulting_range": "$315,000-$630,000 potential annual value",
+        }
+        self.assertEqual(self.module.validate_contract(contract), [])
+
+        contract["executive_close"]["portfolio_value_range"] = (
+            "$400,000-$700,000 potential annual value"
+        )
+        contract["executive_close"]["portfolio_math"]["resulting_range"] = (
+            "$400,000-$700,000 potential annual value"
+        )
+        self.assertTrue(
+            any(
+                "does not match recomputed aggregate" in error
+                for error in self.module.validate_contract(contract)
+            )
+        )
+
+    def test_executive_close_and_pilot_actions_are_required(self):
+        contract = copy.deepcopy(VALID_CONTRACT)
+        del contract["executive_close"]["executive_owner"]
+        contract["executive_close"]["next_steps"] = []
+        contract["proposal_cards"][0]["pilot_exit_criteria"] = []
+
+        errors = self.module.validate_contract(contract)
+
+        self.assertIn("executive_close.executive_owner is required", errors)
+        self.assertIn("executive_close.next_steps must not be empty", errors)
+        self.assertIn("executive_close.next_steps must include at least one owned action", errors)
+        self.assertIn("proposal_cards[1].pilot_exit_criteria must not be empty", errors)
+
     def test_fewer_than_10_cards_requires_evidence_gap_but_not_10_cards(self):
         self.assertEqual(len(VALID_CONTRACT["proposal_cards"]), 1)
         self.assertEqual(self.module.validate_contract(VALID_CONTRACT), [])
@@ -299,6 +424,19 @@ class ValidateGtmOutputTests(unittest.TestCase):
             errors,
         )
         self.assertTrue(any("unsupported overclaim phrase" in error for error in errors))
+
+    def test_reversed_impact_range_fails_closed(self):
+        contract = copy.deepcopy(VALID_CONTRACT)
+        reversed_range = "$500,000-$250,000 potential annual value"
+        contract["proposal_cards"][0]["estimated_impact"] = reversed_range
+        contract["proposal_cards"][0]["impact_math"]["resulting_range"] = reversed_range
+
+        errors = self.module.validate_contract(contract)
+
+        self.assertIn(
+            "proposal_cards[1].impact_math.resulting_range lower bound must not exceed upper bound",
+            errors,
+        )
 
 
 if __name__ == "__main__":

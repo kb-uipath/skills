@@ -57,7 +57,7 @@
       "url": "https://example.com/synthetic/north-valley/digital-services-plan",
       "published_date": "2026-04-15",
       "accessed_date": "2026-07-09",
-      "official": true,
+      "official": false,
       "evidence_summary": "The plan prioritizes simpler intake and faster resident response."
     }
   ],

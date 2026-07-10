@@ -78,7 +78,7 @@ python3 usecasehandoff/scripts/create_handoff_package.py \
   --level scaffold
 ```
 
-After filling every source, owner, acceptance criterion, test strategy, first sprint item, and next action, refresh the manifest and run ready validation:
+After filling every source, local-source SHA-256, owner, acceptance criterion, test strategy, first sprint item, and next action, refresh the manifest and run ready validation:
 
 ```bash
 python3 usecasehandoff/scripts/create_handoff_package.py \
@@ -103,7 +103,7 @@ python3 usecasehandoff/scripts/create_handoff_package.py \
 - Separate customer-specific evidence from public/vendor documentation.
 - Use `scripts/create_handoff_package.py` for deterministic local scaffolding before connector writes.
 - Use ready validation before routing a package to any external destination.
-- Ready validation fails closed for placeholders, uncited non-open claims, ownerless rows, empty acceptance criteria, empty test strategy, empty first sprint backlog, missing next action, stale hashes, or a manifest status other than `ready`.
+- Ready validation fails closed for placeholders, uncited non-open claims, claims missing from `references.md`, missing or hash-mismatched relative local sources, ownerless rows, empty acceptance criteria, empty test strategy, empty first sprint backlog, missing next action, stale package hashes, or a manifest status other than `ready`.
 
 ## Classification And Retention
 
@@ -123,7 +123,7 @@ python3 usecasehandoff/scripts/create_handoff_package.py \
 
 - The helper does not fetch evidence, search connectors, send messages, upload files, or verify external destinations.
 - Ready validation proves package structure and minimum content completeness; it does not prove business truth beyond the supplied citations.
-- SHA-256 hashes cover the nine-file package contract only. Additional attachments should be referenced rather than added into the package directory.
+- Manifest SHA-256 values cover the nine-file package. `references.md` separately verifies relative local source files; HTTPS sources remain operator-reviewed and use `N/A` unless an independently captured digest is available.
 
 ## Validation
 
@@ -134,7 +134,7 @@ python3 tools/validate_repo.py
 
 ## Certification
 
-Certified locally with unit coverage for deterministic scaffolding, overwrite protection, scaffold-level validation, default ready validation, ready defect rejection, legacy migration guidance, and migrated scaffold validation.
+Certified locally for offline packaging with unit coverage for deterministic scaffolding, overwrite protection, scaffold-level validation, default ready validation, ready defect rejection, local-source existence and SHA-256 integrity, legacy migration guidance, and migrated scaffold validation. A fresh nine-file ready-package forward test passed missing-source and tamper recovery probes and scored 24/25 across evidence discipline, specificity, completeness, risk ownership, and first-sprint actionability.
 
 ## Last Verified
 

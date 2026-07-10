@@ -64,6 +64,7 @@ class PortfolioPipelineTests(unittest.TestCase):
                 self.assertEqual(validate_portfolio(portfolio, ledger), [])
                 self.assertEqual(score_portfolio(portfolio), portfolio)
                 rubric = evaluate_outcome_rubric(portfolio, ledger)
+                self.assertEqual(rubric["rubric_version"], "1.2")
                 self.assertEqual(rubric["specificity"], expected["specificity"])
                 self.assertEqual(rubric["decision_utility"], expected["decision_utility"])
                 self.assertEqual(
@@ -85,6 +86,40 @@ class PortfolioPipelineTests(unittest.TestCase):
                     self.assertEqual(
                         validate_portfolio(portfolio, ledger, profile=profile), []
                     )
+
+    def test_profile_cross_check_rejects_material_inventory_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            profile, _profile_path = profile_case("noisy", Path(tmp))
+            ledger, portfolio, _expected = case_artifacts("noisy")
+            mutations = {
+                "status": ("status", "idea", "inventory status mismatch"),
+                "department": ("department", "Procurement", "inventory department mismatch"),
+                "owner": ("owner", "Different owner", "inventory owner mismatch"),
+                "systems": ("systems", ["SAP"], "inventory systems mismatch"),
+            }
+            for name, (field, value, expected) in mutations.items():
+                with self.subTest(field=name):
+                    changed = copy.deepcopy(ledger)
+                    changed["inventory_evidence"][0][field] = value
+                    self.assertTrue(
+                        any(
+                            expected in failure
+                            for failure in validate_portfolio(
+                                portfolio, changed, profile=profile
+                            )
+                        )
+                    )
+
+            changed_metric = copy.deepcopy(ledger)
+            changed_metric["inventory_evidence"][0]["metrics"][0]["value"] = 11_999
+            self.assertTrue(
+                any(
+                    "inventory metric mismatch" in failure
+                    for failure in validate_portfolio(
+                        portfolio, changed_metric, profile=profile
+                    )
+                )
+            )
 
     def test_score_cli_is_deterministic_and_reconstructs_golden(self):
         ledger, portfolio, _expected = case_artifacts("noisy")
@@ -235,12 +270,43 @@ class PortfolioPipelineTests(unittest.TestCase):
         malformed_refs["opportunities"][0]["evidence_refs"]["inventory_ids"] = [{}]
         self.assertTrue(validate_portfolio(malformed_refs, noisy_ledger))
 
+        invalid_official_url = copy.deepcopy(noisy_ledger)
+        invalid_official_url["public_sources"][0]["official"] = True
+        invalid_official_url["public_sources"][0]["url"] = "https://strategy.invalid/plan"
+        self.assertTrue(
+            any(
+                "publicly resolvable host" in item
+                for item in validate_evidence_ledger(invalid_official_url)
+            )
+        )
+
+        for owner in ("(unassigned)", "Benefits owner TBD", "Owner needed"):
+            with self.subTest(owner=owner):
+                placeholder_owner = copy.deepcopy(noisy_portfolio)
+                placeholder_owner["opportunities"][0]["pilot"]["owner"] = owner
+                self.assertTrue(
+                    any(
+                        "must name an accountable role or person" in item
+                        for item in validate_portfolio(placeholder_owner, noisy_ledger)
+                    )
+                )
+
+        reserved_official_url = copy.deepcopy(noisy_ledger)
+        reserved_official_url["public_sources"][0]["official"] = True
+        reserved_official_url["public_sources"][0]["url"] = "https://strategy.test/plan"
+        self.assertTrue(
+            any(
+                "reserved test/example host" in item
+                for item in validate_evidence_ledger(reserved_official_url)
+            )
+        )
+
         on_prem_ledger, on_prem_portfolio, _expected = case_artifacts("on_prem")
         missing_constraint = copy.deepcopy(on_prem_portfolio)
         missing_constraint["opportunities"][0]["deployment"]["constraints_addressed"].pop()
         self.assertTrue(
             any(
-                "must cover every ledger constraint" in item
+                "must collectively cover every ledger constraint" in item
                 for item in validate_portfolio(missing_constraint, on_prem_ledger)
             )
         )

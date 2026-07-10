@@ -22,7 +22,7 @@ class LinkCheckTests(unittest.TestCase):
             root = Path(tmp)
             (root / "README.md").write_text(
                 "https://docs.uipath.com/path https://docs.uipath.com/path "
-                "https://example.com/fixture\n",
+                "https://example.com/fixture https://app.example.com/fixture\n",
                 encoding="utf-8",
             )
 

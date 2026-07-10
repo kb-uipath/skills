@@ -48,21 +48,21 @@ Follow this sequence:
 8. Agentic suitability test: reject deterministic, low-value, or unsupported candidates.
 9. Deterministic scoring and validation: run `scripts/score_portfolio.py`, then `scripts/validate_portfolio.py`.
 10. Value framing: use supported deterministic formulas or qualitative sizing; never invent arithmetic.
-11. Capability and deployment validation: map likely capability fit without entitlement overclaims and cover every ledger constraint.
-12. Executive packaging: render Markdown with `scripts/render_portfolio_markdown.py`, cross-check it with `scripts/validate_executive_brief.py` plus the JSON artifacts, then preserve the existing DOCX render and brand-verification flow.
+11. Capability and deployment validation: map likely capability fit without entitlement overclaims; assign each applicable deployment constraint to at least one active opportunity so the portfolio covers every constraint without repeating irrelevant controls.
+12. Executive packaging: require accountable pilot owners, render Markdown with visible score rationale and deterministic tie handling, cross-check it with `scripts/validate_executive_brief.py` plus the JSON artifacts, then preserve the DOCX render and brand-verification flow.
 
 ## Inventory profiling script
 
 For uploaded inventory files, run:
 
 ```bash
-python scripts/inventory_profiler.py --input /path/to/inventory.xlsx --outdir /path/to/output_dir
+python scripts/inventory_profiler.py --input work/planner/inventory.xlsx --outdir work/planner/profile
 ```
 
 For a specific worksheet:
 
 ```bash
-python scripts/inventory_profiler.py --input /path/to/inventory.xlsx --sheet "Sheet Name" --outdir /path/to/output_dir
+python scripts/inventory_profiler.py --input work/planner/inventory.xlsx --sheet "Sheet Name" --outdir work/planner/profile
 ```
 
 Read both outputs before recommending:
@@ -71,8 +71,11 @@ Read both outputs before recommending:
 - `inventory_profile.json`: structured detected columns, data quality, status counts, numeric fields, and top metric rows.
 
 Profile schema `1.0` also emits `inventory_items` with stable IDs in the form
-`INV-<SHEET>-R<ROW>`. Inserting rows or renaming a sheet changes IDs; regenerate the profile and
-deliberately migrate ledger references instead of silently reusing stale IDs.
+`INV-<SHEET>-R<ROW>`, canonical profile fields, and detected metric values. Shorthand quantities
+such as `~24k` are normalized numerically. Inserting rows or renaming a sheet changes IDs;
+regenerate the profile and deliberately migrate ledger references instead of silently reusing
+stale IDs. Strict validation reconciles name, description, status, department, owner, systems,
+source row, and detected metrics against the ledger.
 
 Use the script output as a starting point, not final truth. Validate suspicious mappings manually when column names are ambiguous.
 
@@ -89,6 +92,8 @@ Use the script output as a starting point, not final truth. Validate suspicious 
 - Cite inventory facts with `INV-*`, public facts with `SRC-*`, and planning assumptions with `ASM-*`.
 - Do not use excluded inventory IDs as recommendation evidence.
 - Record publication and access dates for every public source.
+- Mark synthetic sources as non-official. Official sources require HTTPS and cannot use reserved,
+  local, private, or non-resolving placeholder hosts.
 - A confirmed entitlement claim requires matching confirmed ledger evidence; otherwise say `likely fit`.
 
 ## Versioned portfolio pipeline
@@ -117,6 +122,10 @@ The scorer refuses in-place overwrite. Validation rejects unknown fields, missin
 dangling evidence, excluded evidence, stale scores/ranks, unsupported value math, missing
 deployment controls, rejected assumptions, and entitlement overclaims. Follow the migration
 steps in `references/data_contracts.md`; do not weaken a failure into a warning.
+
+Active pilots require an accountable person or role; `TBD`, `unassigned`, and similar placeholders
+fail validation. Narrative fields are bounded for executive use, the renderer refuses briefs above
+3,500 words by default, and the prioritized table exposes scoring strengths and limiting criteria.
 
 ## Recommendation rules
 

@@ -124,11 +124,15 @@ COLUMN_KEYWORDS: Dict[str, List[str]] = {
     ],
     "handling_time": [
         "handling time",
+        "average handling time",
+        "average handling minutes",
+        "avg handling minutes",
         "average handle time",
         "aht",
         "minutes per transaction",
         "hours per transaction",
         "manual time",
+        "average processing minutes",
         "processing time",
         "time per case",
     ],
@@ -452,13 +456,31 @@ def parse_number(value: Any) -> Optional[float]:
     text = text.replace(",", "")
     text = text.replace("$", "")
     text = text.replace("%", "")
-    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    match = re.search(
+        r"-?\d+(?:\.\d+)?\s*(k|m|b|thousand|million|billion)?\b",
+        text,
+        re.IGNORECASE,
+    )
     if not match:
         return None
     try:
-        number = float(match.group(0))
+        numeric_match = re.search(r"-?\d+(?:\.\d+)?", match.group(0))
+        if numeric_match is None:
+            return None
+        number = float(numeric_match.group(0))
+        suffix = (match.group(1) or "").casefold()
+        multiplier = {
+            "": 1,
+            "k": 1_000,
+            "thousand": 1_000,
+            "m": 1_000_000,
+            "million": 1_000_000,
+            "b": 1_000_000_000,
+            "billion": 1_000_000_000,
+        }[suffix]
+        number *= multiplier
         return -number if negative else number
-    except ValueError:
+    except (KeyError, ValueError):
         return None
 
 
@@ -668,6 +690,21 @@ def build_profile(path: Path, sheets: Dict[str, List[Dict[str, Any]]]) -> Dict[s
         "value": value_col,
         "priority": priority_col,
     }
+    metric_fields: List[Tuple[str, str]] = []
+    used_metric_columns = set()
+    for field in (
+        "annual_volume",
+        "weekly_volume",
+        "volume",
+        "handling_time",
+        "hours_saved",
+        "value",
+        "priority",
+    ):
+        column = core_fields.get(field)
+        if column and column not in used_metric_columns:
+            metric_fields.append((field, column))
+            used_metric_columns.add(column)
 
     required_for_full_quality = ["use_case_name", "description", "status", "department"]
     missing_core = [field for field in required_for_full_quality if not core_fields.get(field)]
@@ -714,12 +751,18 @@ def build_profile(path: Path, sheets: Dict[str, List[Dict[str, Any]]]) -> Dict[s
             {
                 "inventory_id": stable_inventory_id(row),
                 "name": clean_cell(row.get(name_col)) if name_col else "",
+                "description": clean_cell(row.get(desc_col)) if desc_col else "",
                 "status": classify_status(row.get(status_col)) if status_col else "unknown",
                 "department": clean_cell(row.get(dept_col)) if dept_col else "",
                 "owner": clean_cell(row.get(owner_col)) if owner_col else "",
                 "systems": clean_cell(row.get(systems_col)) if systems_col else "",
                 "sheet": row.get("__sheet"),
                 "row_number": row.get("__row_number"),
+                "metrics": [
+                    {"name": field, "value": parsed}
+                    for field, column in metric_fields
+                    if (parsed := parse_number(row.get(column))) is not None
+                ],
             }
             for row in all_rows
         ],

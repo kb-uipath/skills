@@ -49,6 +49,7 @@ REQUIRED_TOP_LEVEL = (
     "budget_program_areas",
     "prioritized_use_cases",
     "proposal_cards",
+    "executive_close",
     "evidence_gaps",
     "assumptions",
 )
@@ -112,6 +113,9 @@ REQUIRED_PROPOSAL_CARD = (
     "confidence",
     "source_ids",
     "validation_required",
+    "pilot_owner",
+    "target_decision_date",
+    "pilot_exit_criteria",
 )
 REQUIRED_IMPACT_MATH = (
     "baseline",
@@ -121,6 +125,28 @@ REQUIRED_IMPACT_MATH = (
     "source_ids",
 )
 REQUIRED_EVIDENCE_GAP = ("gap", "impact", "resolution_path")
+REQUIRED_EXECUTIVE_CLOSE = (
+    "decision_ask",
+    "portfolio_value_range",
+    "aggregation_method",
+    "double_counting_caveat",
+    "executive_owner",
+    "decision_date",
+    "source_ids",
+    "next_steps",
+)
+REQUIRED_NEXT_STEP = ("action", "owner", "due_date")
+REQUIRED_PORTFOLIO_MATH = (
+    "included_card_ranks",
+    "lower_adjustment_factor",
+    "upper_adjustment_factor",
+    "resulting_range",
+)
+
+MONEY_AMOUNT_RE = re.compile(
+    r"\$\s*([\d,]+(?:\.\d+)?)\s*(thousand|million|billion|k|m|bn|b)?",
+    re.IGNORECASE,
+)
 
 
 def validate_text(text: str) -> list[str]:
@@ -164,8 +190,18 @@ def validate_contract(contract: Any) -> list[str]:
     source_ids = validate_source_ledger(
         contract.get("source_ledger"), scope_accessed_date, errors
     )
+    sources_by_id = {
+        source.get("source_id"): source
+        for source in contract.get("source_ledger", [])
+        if isinstance(source, dict) and isinstance(source.get("source_id"), str)
+    }
     capability_ids = validate_capability_ledger(
-        contract.get("capability_ledger"), scope, scope_accessed_date, source_ids, errors
+        contract.get("capability_ledger"),
+        scope,
+        scope_accessed_date,
+        source_ids,
+        sources_by_id,
+        errors,
     )
     validate_budget_areas(contract.get("budget_program_areas"), source_ids, errors)
     validate_use_cases(
@@ -176,6 +212,12 @@ def validate_contract(contract: Any) -> list[str]:
         source_ids,
         capability_ids,
         contract.get("capability_ledger"),
+        errors,
+    )
+    validate_executive_close(
+        contract.get("executive_close"),
+        source_ids,
+        contract.get("proposal_cards"),
         errors,
     )
     validate_evidence_gaps(contract.get("evidence_gaps"), contract.get("proposal_cards"), errors)
@@ -227,6 +269,7 @@ def validate_capability_ledger(
     scope: dict[str, Any],
     scope_accessed_date: date | None,
     source_ids: set[str],
+    sources_by_id: dict[str, dict[str, Any]],
     errors: list[str],
 ) -> set[str]:
     capabilities = expect_list(value, "capability_ledger", errors)
@@ -269,6 +312,18 @@ def validate_capability_ledger(
             errors.append(f"{path}.docs_checked_date cannot be after confirmed_scope.accessed_date")
 
         validate_source_refs(item.get("source_ids"), source_ids, f"{path}.source_ids", errors)
+        cited_sources = [
+            sources_by_id[source_id]
+            for source_id in item.get("source_ids", [])
+            if source_id in sources_by_id
+        ]
+        if isinstance(docs_url, str) and not any(
+            source.get("url") == docs_url and source.get("publisher") == "UiPath"
+            for source in cited_sources
+        ):
+            errors.append(
+                f"{path}.source_ids must cite a UiPath source whose url exactly matches docs_url"
+            )
 
     return ids
 
@@ -327,6 +382,10 @@ def validate_use_cases(
             item.get("capability_ids"), capability_ids, f"{path}.capability_ids", errors
         )
         validate_impact_math(item.get("impact_math"), source_ids, f"{path}.impact_math", errors)
+        validate_impact_alignment(
+            item.get("impact_range"), item.get("impact_math"), path, errors
+        )
+        validate_nested_source_coverage(item, path, errors)
         require_money_or_percent_sources(item.get("impact_range"), item, path, errors)
 
 
@@ -362,6 +421,10 @@ def validate_cards(
             item.get("capability_ids"), capability_ids, f"{path}.capability_ids", errors
         )
         validate_impact_math(item.get("impact_math"), source_ids, f"{path}.impact_math", errors)
+        validate_impact_alignment(
+            item.get("estimated_impact"), item.get("impact_math"), path, errors
+        )
+        validate_nested_source_coverage(item, path, errors)
         require_money_or_percent_sources(item.get("estimated_impact"), item, path, errors)
 
         validation_required = item.get("validation_required")
@@ -369,6 +432,13 @@ def validate_cards(
             errors.append(f"{path}.validation_required must be a non-empty list")
         elif not all_non_empty_strings(validation_required):
             errors.append(f"{path}.validation_required must contain only non-empty strings")
+
+        parse_date_field(item.get("target_decision_date"), f"{path}.target_decision_date", errors)
+        exit_criteria = item.get("pilot_exit_criteria")
+        if not isinstance(exit_criteria, list) or not exit_criteria:
+            errors.append(f"{path}.pilot_exit_criteria must be a non-empty list")
+        elif not all_non_empty_strings(exit_criteria):
+            errors.append(f"{path}.pilot_exit_criteria must contain only non-empty strings")
 
         for capability_id in item.get("capability_ids", []):
             if availability_by_id.get(capability_id) == "requires-confirmation":
@@ -378,6 +448,135 @@ def validate_cards(
                         f"{path}.validation_required must call out deployment availability "
                         f"for {capability_id}"
                     )
+
+
+def validate_executive_close(
+    value: Any,
+    source_ids: set[str],
+    cards_value: Any,
+    errors: list[str],
+) -> None:
+    path = "executive_close"
+    item = expect_dict(value, path, errors)
+    require_fields(item, REQUIRED_EXECUTIVE_CLOSE, path, errors)
+    validate_source_refs(item.get("source_ids"), source_ids, f"{path}.source_ids", errors)
+    require_money_or_percent_sources(
+        item.get("portfolio_value_range"), item, f"{path}.portfolio_value_range", errors
+    )
+    parse_date_field(item.get("decision_date"), f"{path}.decision_date", errors)
+
+    next_steps = expect_list(item.get("next_steps"), f"{path}.next_steps", errors)
+    if not next_steps:
+        errors.append(f"{path}.next_steps must include at least one owned action")
+    for index, raw_step in enumerate(next_steps, start=1):
+        step_path = f"{path}.next_steps[{index}]"
+        step = expect_dict(raw_step, step_path, errors)
+        require_fields(step, REQUIRED_NEXT_STEP, step_path, errors)
+        parse_date_field(step.get("due_date"), f"{step_path}.due_date", errors)
+
+    cards = cards_value if isinstance(cards_value, list) else []
+    card_ranges = [
+        parse_money_range(card.get("estimated_impact"))
+        for card in cards
+        if isinstance(card, dict)
+    ]
+    close_range = parse_money_range(item.get("portfolio_value_range"))
+    if close_range and close_range[0] > close_range[1]:
+        errors.append(f"{path}.portfolio_value_range lower bound must not exceed upper bound")
+    if len(cards) == 1 and card_ranges and card_ranges[0] and close_range != card_ranges[0]:
+        errors.append(
+            f"{path}.portfolio_value_range must exactly match the single proposal-card range"
+        )
+    if len(cards) > 1:
+        validate_portfolio_math(
+            item.get("portfolio_math"),
+            cards,
+            card_ranges,
+            item.get("portfolio_value_range"),
+            close_range,
+            errors,
+        )
+
+
+def parse_money_range(value: Any) -> tuple[float, float] | None:
+    if not isinstance(value, str):
+        return None
+    amounts: list[float] = []
+    multipliers = {
+        None: 1,
+        "": 1,
+        "k": 1_000,
+        "thousand": 1_000,
+        "m": 1_000_000,
+        "million": 1_000_000,
+        "b": 1_000_000_000,
+        "bn": 1_000_000_000,
+        "billion": 1_000_000_000,
+    }
+    for match in MONEY_AMOUNT_RE.finditer(value):
+        number = float(match.group(1).replace(",", ""))
+        amounts.append(number * multipliers[(match.group(2) or "").casefold()])
+    if not amounts:
+        return None
+    if len(amounts) == 1:
+        return (amounts[0], amounts[0])
+    return (amounts[0], amounts[1])
+
+
+def validate_portfolio_math(
+    value: Any,
+    cards: list[Any],
+    card_ranges: list[tuple[float, float] | None],
+    displayed_range: Any,
+    close_range: tuple[float, float] | None,
+    errors: list[str],
+) -> None:
+    path = "executive_close.portfolio_math"
+    item = expect_dict(value, path, errors)
+    require_fields(item, REQUIRED_PORTFOLIO_MATH, path, errors)
+
+    expected_ranks = [
+        card.get("rank") for card in cards if isinstance(card, dict) and isinstance(card.get("rank"), int)
+    ]
+    included_ranks = item.get("included_card_ranks")
+    if included_ranks != expected_ranks:
+        errors.append(f"{path}.included_card_ranks must include every proposal-card rank in order")
+
+    factors: list[float | None] = []
+    for field in ("lower_adjustment_factor", "upper_adjustment_factor"):
+        factor = item.get(field)
+        if (
+            isinstance(factor, bool)
+            or not isinstance(factor, (int, float))
+            or not 0 < float(factor) <= 1
+        ):
+            errors.append(f"{path}.{field} must be a number greater than 0 and at most 1")
+            factors.append(None)
+        else:
+            factors.append(float(factor))
+    if all(factor is not None for factor in factors) and factors[0] > factors[1]:
+        errors.append(f"{path}.lower_adjustment_factor must not exceed upper_adjustment_factor")
+
+    resulting_range = item.get("resulting_range")
+    if normalize_claim_text(resulting_range) != normalize_claim_text(displayed_range):
+        errors.append(f"{path}.resulting_range must match executive_close.portfolio_value_range")
+    if not all(card_range is not None for card_range in card_ranges):
+        errors.append(
+            f"{path} requires parseable dollar ranges on every included proposal card"
+        )
+        return
+    if close_range is None or not all(factor is not None for factor in factors):
+        return
+    expected_lower = round(sum(card_range[0] for card_range in card_ranges) * factors[0], 2)
+    expected_upper = round(sum(card_range[1] for card_range in card_ranges) * factors[1], 2)
+    if not (
+        abs(close_range[0] - expected_lower) <= 0.01
+        and abs(close_range[1] - expected_upper) <= 0.01
+    ):
+        errors.append(
+            f"{path}.resulting_range does not match recomputed aggregate "
+            f"{expected_lower:.2f}-{expected_upper:.2f}"
+        )
 
 
 def validate_evidence_gaps(value: Any, cards_value: Any, errors: list[str]) -> None:
@@ -413,6 +612,41 @@ def validate_impact_math(
     validate_source_refs(impact_math.get("source_ids"), source_ids, f"{path}.source_ids", errors)
     for field in REQUIRED_IMPACT_MATH[:-1]:
         require_money_or_percent_sources(impact_math.get(field), impact_math, f"{path}.{field}", errors)
+    parsed_range = parse_money_range(impact_math.get("resulting_range"))
+    if parsed_range and parsed_range[0] > parsed_range[1]:
+        errors.append(f"{path}.resulting_range lower bound must not exceed upper bound")
+
+
+def validate_impact_alignment(
+    displayed_value: Any,
+    impact_math_value: Any,
+    path: str,
+    errors: list[str],
+) -> None:
+    if not isinstance(displayed_value, str) or not isinstance(impact_math_value, dict):
+        return
+    resulting_range = impact_math_value.get("resulting_range")
+    if not isinstance(resulting_range, str):
+        return
+    if normalize_claim_text(displayed_value) != normalize_claim_text(resulting_range):
+        errors.append(
+            f"{path} displayed impact must exactly match impact_math.resulting_range"
+        )
+
+
+def validate_nested_source_coverage(
+    item: dict[str, Any],
+    path: str,
+    errors: list[str],
+) -> None:
+    item_refs = set(item.get("source_ids") or [])
+    impact_math = item.get("impact_math")
+    nested_refs = set(impact_math.get("source_ids") or []) if isinstance(impact_math, dict) else set()
+    missing = sorted(nested_refs - item_refs)
+    if missing:
+        errors.append(
+            f"{path}.source_ids must include every impact_math source ID: {', '.join(missing)}"
+        )
 
 
 def render_markdown(contract: dict[str, Any]) -> str:
@@ -427,6 +661,7 @@ def render_markdown(contract: dict[str, Any]) -> str:
     areas = canonical["budget_program_areas"]
     use_cases = canonical["prioritized_use_cases"]
     cards = canonical["proposal_cards"]
+    executive_close = canonical["executive_close"]
     gaps = canonical["evidence_gaps"]
     assumptions = canonical["assumptions"]
 
@@ -560,6 +795,35 @@ def render_markdown(contract: dict[str, Any]) -> str:
             + " |"
         )
 
+    lines.extend(
+        [
+            "",
+            "## Executive Close",
+            "",
+            f"- Decision ask: {executive_close['decision_ask']}",
+            f"- Portfolio value range: {executive_close['portfolio_value_range']}",
+            f"- Aggregation method: {executive_close['aggregation_method']}",
+            f"- Double-counting caveat: {executive_close['double_counting_caveat']}",
+            f"- Executive owner: {executive_close['executive_owner']}",
+            f"- Decision date: {executive_close['decision_date']}",
+            f"- Sources: {format_source_ids(executive_close['source_ids'])}",
+        ]
+    )
+    portfolio_math = executive_close.get("portfolio_math")
+    if isinstance(portfolio_math, dict):
+        lines.extend(
+            [
+                f"- Included card ranks: {', '.join(str(rank) for rank in portfolio_math['included_card_ranks'])}",
+                f"- Aggregate adjustment factors: {portfolio_math['lower_adjustment_factor']}-"
+                f"{portfolio_math['upper_adjustment_factor']}",
+            ]
+        )
+    lines.extend(["", "### Owned Next Steps", ""])
+    for index, step in enumerate(executive_close["next_steps"], start=1):
+        lines.append(
+            f"{index}. {step['owner']}: {step['action']} (due {step['due_date']})"
+        )
+
     lines.extend(["", "## Proposal Cards", ""])
     for card in cards:
         impact_math = card["impact_math"]
@@ -586,7 +850,14 @@ def render_markdown(contract: dict[str, Any]) -> str:
                 f"**Estimate Tier**: {card['estimate_tier']}",
                 f"**Confidence**: {card['confidence']}",
                 f"**Sources**: {format_source_ids(card['source_ids'])}",
-                "**Validation Required**: " + "; ".join(card["validation_required"]),
+                f"**Pilot Owner**: {card['pilot_owner']}",
+                f"**Target Decision Date**: {card['target_decision_date']}",
+                "",
+                "**Validation Required**:",
+                *[f"- {item}" for item in card["validation_required"]],
+                "",
+                "**Pilot Exit Criteria**:",
+                *[f"- {item}" for item in card["pilot_exit_criteria"]],
                 "",
             ]
         )
@@ -752,6 +1023,10 @@ def numeric_suffix(value: str) -> int:
 
 def markdown_cell(value: Any) -> str:
     return str(value).replace("|", "\\|").replace("\n", " ").strip()
+
+
+def normalize_claim_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip().rstrip(".").casefold()
 
 
 def format_source_ids(source_ids: list[str]) -> str:

@@ -237,12 +237,57 @@ jobs:
 
         self.assert_error_contains(self.run_validator(mutate), "exact == pin")
 
+    def test_rejects_temp_volume_path_and_known_token_shapes(self) -> None:
+        def mutate(root: Path) -> None:
+            temp_path = "/private" + "/" + "tmp" + "/customer-export.csv"
+            github_token = "ghp_" + ("A" * 40)
+            aws_key = "AKIA" + ("B" * 16)
+            self.write(
+                root,
+                "docs/leaks.md",
+                f"path={temp_path}\ntoken={github_token}\naccess={aws_key}\n",
+            )
+
+        errors = self.run_validator(mutate)
+        self.assert_error_contains(errors, "local absolute path leak")
+        self.assert_error_contains(errors, "possible secret material")
+
     def test_rejects_http_external_link(self) -> None:
         def mutate(root: Path) -> None:
             scheme = "http" + "://"
             self.write(root, "docs/external.md", f"[bad]({scheme}example.com)\nraw {scheme}example.org\n")
 
         self.assert_error_contains(self.run_validator(mutate), "external link must use https")
+
+    def test_rejects_incomplete_public_document_contract(self) -> None:
+        def mutate(root: Path) -> None:
+            self.write(
+                root,
+                "docs/repo-hardening-sprint.md",
+                """# repo-hardening-sprint
+
+## Inputs
+
+Repository path.
+
+## Prompt
+
+Use $repo-hardening-sprint.
+
+## Safety
+
+No live writes.
+
+## Validation
+
+Run tests.
+""",
+            )
+
+        errors = self.run_validator(mutate)
+        self.assert_error_contains(errors, "runtime and dependencies")
+        self.assert_error_contains(errors, "versioned input/output contract")
+        self.assert_error_contains(errors, "certification status")
 
 
 if __name__ == "__main__":

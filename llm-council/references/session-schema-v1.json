@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kb-uipath:llm-council:session:v1",
+  "title": "LLM Council Session v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "original_question",
+    "framed_question",
+    "chairman_verdict",
+    "decision_criteria",
+    "disconfirming_evidence",
+    "review_date",
+    "confidence",
+    "execution_mode",
+    "metadata",
+    "advisors",
+    "peer_reviews",
+    "anonymization_mapping"
+  ],
+  "properties": {
+    "schema_version": {"const": "llm-council.session.v1"},
+    "original_question": {"type": "string", "minLength": 1},
+    "framed_question": {"type": "string", "minLength": 1},
+    "chairman_verdict": {"type": "string", "minLength": 1},
+    "decision_criteria": {"$ref": "#/$defs/nonEmptyStrings"},
+    "disconfirming_evidence": {"$ref": "#/$defs/nonEmptyStrings"},
+    "review_date": {"type": "string", "format": "date"},
+    "confidence": {"$ref": "#/$defs/confidence"},
+    "execution_mode": {"enum": ["subagents", "single_agent_fallback"]},
+    "fallback_reason": {"type": "string"},
+    "metadata": {"$ref": "#/$defs/metadata"},
+    "advisors": {"$ref": "#/$defs/advisors"},
+    "peer_reviews": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {"$ref": "#/$defs/peerReview"}
+    },
+    "anonymization_mapping": {"$ref": "#/$defs/anonymizationMapping"},
+    "advisor_positions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/advisorPosition"}
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"execution_mode": {"const": "subagents"}}},
+      "then": {
+        "properties": {
+          "metadata": {
+            "properties": {
+              "advisor_agent_ids": {"minItems": 5, "maxItems": 5},
+              "reviewer_agent_ids": {"minItems": 5, "maxItems": 5}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"execution_mode": {"const": "single_agent_fallback"}}},
+      "then": {
+        "required": ["fallback_reason"],
+        "properties": {
+          "fallback_reason": {"type": "string", "minLength": 1},
+          "metadata": {
+            "properties": {
+              "advisor_agent_ids": {"maxItems": 0},
+              "reviewer_agent_ids": {"maxItems": 0}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nonEmptyStrings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "confidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "rationale"],
+      "properties": {
+        "level": {"enum": ["low", "medium", "high"]},
+        "rationale": {"type": "string", "minLength": 1}
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "preparer",
+        "preparer_seed",
+        "run_id",
+        "model_ids",
+        "advisor_agent_ids",
+        "reviewer_agent_ids",
+        "input_hashes",
+        "created_at",
+        "sensitivity",
+        "permissions",
+        "retention"
+      ],
+      "properties": {
+        "preparer": {"type": "string", "minLength": 1},
+        "preparer_seed": {"type": "string", "minLength": 1},
+        "run_id": {"type": "string", "minLength": 1},
+        "model_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "advisor_agent_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "reviewer_agent_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "input_hashes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["original_question", "framed_question"],
+          "properties": {
+            "original_question": {"$ref": "#/$defs/sha256"},
+            "framed_question": {"$ref": "#/$defs/sha256"}
+          }
+        },
+        "created_at": {"type": "string", "format": "date-time"},
+        "sensitivity": {"enum": ["public", "internal", "confidential", "restricted"]},
+        "permissions": {"$ref": "#/$defs/nonEmptyStrings"},
+        "retention": {"type": "string", "minLength": 1},
+        "hashes": {"type": "object"}
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "advisors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "The Contrarian",
+        "The First Principles Thinker",
+        "The Expansionist",
+        "The Outsider",
+        "The Executor"
+      ],
+      "properties": {
+        "The Contrarian": {"type": "string", "minLength": 1},
+        "The First Principles Thinker": {"type": "string", "minLength": 1},
+        "The Expansionist": {"type": "string", "minLength": 1},
+        "The Outsider": {"type": "string", "minLength": 1},
+        "The Executor": {"type": "string", "minLength": 1}
+      }
+    },
+    "peerReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewer", "response"],
+      "properties": {
+        "reviewer": {"type": "string", "minLength": 1},
+        "response": {"type": "string", "minLength": 1}
+      }
+    },
+    "anonymizationMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Response A", "Response B", "Response C", "Response D", "Response E"],
+      "properties": {
+        "Response A": {"$ref": "#/$defs/advisorName"},
+        "Response B": {"$ref": "#/$defs/advisorName"},
+        "Response C": {"$ref": "#/$defs/advisorName"},
+        "Response D": {"$ref": "#/$defs/advisorName"},
+        "Response E": {"$ref": "#/$defs/advisorName"}
+      }
+    },
+    "advisorName": {
+      "enum": [
+        "The Contrarian",
+        "The First Principles Thinker",
+        "The Expansionist",
+        "The Outsider",
+        "The Executor"
+      ]
+    },
+    "advisorPosition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["advisor", "position", "stance"],
+      "properties": {
+        "advisor": {"$ref": "#/$defs/advisorName"},
+        "position": {"type": "string", "minLength": 1},
+        "stance": {"enum": ["positive", "negative", "mixed", "neutral"]}
+      }
+    }
+  }
+}

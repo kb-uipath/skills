@@ -17,7 +17,7 @@ Use `references/report-package-outline.md` when creating the final artifact set.
    Identify the customer or internal team, sponsor, originating stakeholder, process name, automation name, platform, environment, current maturity, and intended audience. Preserve user-supplied names and terminology, but normalize the final narrative so an executive and delivery lead can both understand it.
 
 2. Gather all source material.
-   Search the current chat, local workspace, connected mail, Slack, Teams, SharePoint, Google Drive, and relevant public or vendor documentation when available. Prefer exact source artifacts over memory. Capture source titles, authors or systems, dates, URLs or local paths, and the facts each source supports.
+   Search the current chat, local workspace, connected mail, Slack, Teams, SharePoint, Google Drive, and relevant public or vendor documentation when available. Prefer exact source artifacts over memory. Capture source titles, authors or systems, dates, URLs or relative local paths, SHA-256 for local sources, and the facts each source supports.
 
 3. Build an evidence ledger before writing.
    Track every metric, claim, constraint, integration, system name, stakeholder, and business outcome with citation coverage. Mark each item as `Source-backed`, `Derived`, `Estimate`, or `Open`. Do not blend these categories.
@@ -82,14 +82,14 @@ Migrate older six-file packages before validation:
 python3 scripts/create_handoff_package.py --migrate outputs/legacy-handoff-package
 ```
 
-Ready validation fails closed when placeholders, uncited non-open claims, ownerless work, empty acceptance criteria, empty test strategy, missing first sprint backlog, missing next action, stale hashes, or non-ready manifest status remain.
+Ready validation fails closed when placeholders, uncited non-open claims, undefined reference claims, missing or hash-mismatched local sources, ownerless work, empty acceptance criteria, empty test strategy, missing first sprint backlog, missing next action, stale package hashes, or non-ready manifest status remain.
 
 ## Evidence Rules
 
 - Never present a metric as fact without a source or an explicit estimate label.
 - Prefer internal source names and dates for customer-specific claims.
 - Prefer public agency, vendor, or official documentation for external facts.
-- Preserve source URLs and local file paths in a dedicated references file.
+- Preserve source URLs and portable relative local paths in `references.md`; record and verify local-source SHA-256 values.
 - State calculations in plain language, including numerator, denominator, annualization, and any haircut.
 - Separate what the current citizen developer automation does from what the enterprise hardened version should do.
 

@@ -70,6 +70,7 @@ PLACEHOLDER_RE = re.compile(
 )
 ISO_TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 EVIDENCE_TIERS = {"Source-backed", "Derived", "Estimate", "Open"}
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def utc_now() -> str:
@@ -133,9 +134,9 @@ def package_files(title: str, account: str, date: str) -> dict[str, str]:
         ),
         "references.md": (
             f"# References\n\nUse case: {title}\n\n"
-            "| Source | Type | Date | Link or path | Claims supported | Owner |\n"
-            "| --- | --- | --- | --- | --- | --- |\n"
-            "| TODO source | chat/email/file/web/vendor docs | {date} |  |  | OWNER NEEDED |\n"
+            "| Source | Type | Date | Link or path | SHA-256 | Claims supported | Owner |\n"
+            "| --- | --- | --- | --- | --- | --- | --- |\n"
+            "| TODO source | chat/email/file/web/vendor docs | {date} |  | N/A |  | OWNER NEEDED |\n"
         ),
         "cover-message.md": (
             f"# Cover Message\n\n"
@@ -456,6 +457,78 @@ def validate_ready(package_dir: Path) -> list[str]:
                 cited_claims += 1
     if cited_claims == 0:
         errors.append("evidence-ledger.md must include at least one cited non-open claim")
+
+    reference_rows = table_rows((package_dir / "references.md").read_text(encoding="utf-8"))
+    reference_headers = None
+    referenced_claim_ids: set[str] = set()
+    reference_names: set[str] = set()
+    for cells, line_number in reference_rows:
+        if "Source" in cells:
+            reference_headers = cells
+            for required_header in ("Link or path", "SHA-256", "Claims supported", "Owner"):
+                if required_header not in reference_headers:
+                    errors.append(f"references.md must include a {required_header} column")
+            continue
+        if not reference_headers:
+            continue
+        if len(cells) < len(reference_headers):
+            cells.extend([""] * (len(reference_headers) - len(cells)))
+        row = dict(zip(reference_headers, cells))
+        if not any(row.values()):
+            continue
+        source_name = row.get("Source", "").strip()
+        link = row.get("Link or path", "").strip()
+        digest = row.get("SHA-256", "").strip().lower()
+        claims = row.get("Claims supported", "")
+        if is_placeholder(source_name) or is_placeholder(link):
+            errors.append(f"references.md:{line_number}: source and link/path are required")
+            continue
+        reference_names.update({source_name, link})
+        referenced_claim_ids.update(re.findall(r"\b[A-Za-z]+\d+\b", claims))
+
+        if link.startswith("http://"):
+            errors.append(f"references.md:{line_number}: remote source must use HTTPS")
+            continue
+        if link.startswith("https://"):
+            if digest not in {"n/a", "not-applicable"} and not SHA256_RE.fullmatch(digest):
+                errors.append(
+                    f"references.md:{line_number}: remote source SHA-256 must be N/A or a lowercase digest"
+                )
+            continue
+
+        local_path = Path(link)
+        if local_path.is_absolute():
+            errors.append(f"references.md:{line_number}: local source path must be relative")
+            continue
+        resolved = (package_dir / local_path).resolve()
+        try:
+            resolved.relative_to(package_dir.parent.resolve())
+        except ValueError:
+            errors.append(f"references.md:{line_number}: local source path escapes the package root")
+            continue
+        if not resolved.is_file():
+            errors.append(f"references.md:{line_number}: referenced local source does not exist")
+            continue
+        if not SHA256_RE.fullmatch(digest):
+            errors.append(f"references.md:{line_number}: local source requires a lowercase SHA-256")
+        elif file_hash(resolved) != digest:
+            errors.append(f"references.md:{line_number}: local source SHA-256 mismatch")
+
+    for cells, line_number in evidence_rows:
+        if "Claim ID" in cells or not cells:
+            continue
+        claim_id = cells[0].strip() if len(cells) > 0 else ""
+        tier = cells[2].strip() if len(cells) > 2 else ""
+        source = cells[3].strip() if len(cells) > 3 else ""
+        if tier != "Open" and claim_id:
+            if claim_id not in referenced_claim_ids:
+                errors.append(
+                    f"evidence-ledger.md:{line_number}: claim {claim_id} is missing from references.md"
+                )
+            if source not in reference_names:
+                errors.append(
+                    f"evidence-ledger.md:{line_number}: source is not defined in references.md"
+                )
 
     for filename in ("delivery-plan.md", "risk-register.md", "references.md"):
         rows = table_rows((package_dir / filename).read_text(encoding="utf-8"))

@@ -10,7 +10,7 @@ Use this skill when the user explicitly invokes `$llm-council`, asks to "council
 
 ## Runtime And Dependencies
 
-- Runtime: Python 3.9 or newer.
+- Runtime: Python 3.11 or newer.
 - Dependencies: Python standard library only for artifact rendering.
 - Primary entrypoint: `llm-council/scripts/render_council_artifacts.py`.
 - External writes: none. The renderer writes only local HTML and Markdown artifacts.
@@ -27,12 +27,13 @@ Use this skill when the user explicitly invokes `$llm-council`, asks to "council
   - `The Outsider`
   - `The Executor`
 - Five peer review responses.
-- Decision criteria, disconfirming evidence, review date, confidence, sensitivity, permissions, and retention metadata.
+- Decision criteria, disconfirming evidence, review date, confidence, sensitivity, permissions, retention, run/model metadata, advisor/reviewer agent IDs, and input hashes.
 - Output folder and optional timestamp slug.
 
 ## Versioned Contract
 
 The renderer accepts only `schema_version: "llm-council.session.v1"`.
+The published schema is [`session-schema-v1.json`](../llm-council/references/session-schema-v1.json); the standard-library runtime enforces the same operational invariants without a JSON Schema dependency.
 
 The v1 contract is intentionally strict:
 
@@ -45,7 +46,9 @@ The v1 contract is intentionally strict:
 - `confidence.level` must be `low`, `medium`, or `high`, with a non-empty rationale.
 - `execution_mode` must be `subagents` or `single_agent_fallback`.
 - `single_agent_fallback` requires `fallback_reason`; simulated perspectives must not be described as independent.
-- `metadata` must include `preparer`, `preparer_seed`, `created_at`, `sensitivity`, `permissions`, and `retention`.
+- `metadata` must include `preparer`, `preparer_seed`, `run_id`, model IDs, input hashes, `created_at`, sensitivity, permissions, and retention.
+- True subagent sessions require exactly five unique advisor agent IDs and five disjoint reviewer agent IDs. Fallback sessions require both ID lists to be empty.
+- Recorded original/framed-question hashes must match the actual inputs; changed inputs fail closed.
 
 Legacy loose payloads fail closed with migration guidance instead of producing partial artifacts.
 
@@ -81,6 +84,11 @@ payload["decision_criteria"] = ["Customer proof must justify delivery risk."]
 payload["disconfirming_evidence"] = ["No named pilot owner or measurable success metric exists."]
 payload["confidence"] = {"level": "medium", "rationale": "The decision has enough internal signal but lacks live customer proof."}
 payload["review_date"] = "2026-07-10"
+payload["execution_mode"] = "single_agent_fallback"
+payload["fallback_reason"] = "Runnable local example; no independent subagents were invoked."
+payload["metadata"]["model_ids"] = ["local-example-model"]
+payload["metadata"]["advisor_agent_ids"] = []
+payload["metadata"]["reviewer_agent_ids"] = []
 for advisor in payload["advisors"]:
     payload["advisors"][advisor] = f"{advisor} says the launch should be gated by owner, metric, and rollback clarity."
 for review in payload["peer_reviews"]:
@@ -91,7 +99,8 @@ PY
 python3 llm-council/scripts/render_council_artifacts.py \
   "$tmpdir/session.json" \
   --output-dir "$tmpdir" \
-  --timestamp example
+  --timestamp example \
+  --sensitivity internal
 ```
 
 Use `--validate-only` to check a payload without writing artifacts:
@@ -106,7 +115,7 @@ python3 llm-council/scripts/render_council_artifacts.py "$tmpdir/session.json" -
 - `council-transcript-[timestamp].md`
 - Validate-only result with advisor count, review count, schema version, and session hash.
 
-Rendered artifacts include session metadata, sensitivity, permissions, retention, decision criteria, disconfirming evidence, confidence, fallback disclosure when applicable, and SHA-256 content hashes.
+Rendered artifacts include run/model metadata, input hashes, sensitivity, permissions, retention, decision criteria, disconfirming evidence, confidence, fallback disclosure when applicable, and SHA-256 content hashes. New output directories use mode `0700`; report and transcript files are written atomically with mode `0600` on POSIX filesystems.
 
 ## Collision And Overwrite Handling
 
@@ -127,6 +136,7 @@ The renderer refuses to overwrite an existing report or transcript for the same 
 - Broken anonymization mapping: regenerate the template with a stable `--seed` and preserve the resulting `Response A` through `Response E` mapping.
 - Artifact collision: choose a new timestamp or use `--overwrite` only after confirming replacement is intended.
 - Sensitive data concern: delete local artifacts and rerun with tighter `metadata.permissions` and `metadata.retention`.
+- Changed question/hash mismatch: regenerate the seeded session shell; do not copy old input hashes onto new prompts.
 
 ## Classification And Retention
 
@@ -137,11 +147,11 @@ Set `metadata.sensitivity` to one of `public`, `internal`, `confidential`, or `r
 - The renderer validates and renders a session payload; it does not call models or create advisor content.
 - Single-agent fallback is weaker than independent subagents and must be labeled.
 - The council is judgment support, not factual authority.
-- The local tests do not certify live subagent orchestration or external tool behavior.
+- Concrete child model IDs may not be exposed by every orchestration tool. Record that limitation literally in `model_ids`; do not invent model provenance.
 
 ## Certification
 
-Certified locally for no-live-write rendering only. The hardening gate on 2026-07-10 covers strict schema validation, seeded template preparation, collision refusal, single-agent fallback disclosure, local artifact rendering, and repository metadata validation. Live multi-agent independence and production telemetry are not certified by this repository.
+Certified for the offline council workflow, not production decision quality. The hardening gate on 2026-07-10 covers the published strict schema, input-hash and agent-ID validation, seeded anonymization, collision refusal, deterministic atomic `0600` rendering, sensitivity override, and truthful fallback. A fresh synthetic run used five distinct advisor agents followed by five distinct anonymous reviewer agents, producing a validated council and a separately labeled fallback. Scores were 5/5 decision utility, 5/5 independence, 5/5 auditability, and 4/5 operational actionability; real decision data, concrete model provenance, and production telemetry remain uncertified.
 
 ## Validation
 

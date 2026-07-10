@@ -39,7 +39,9 @@ This yields a 0 to 100 score.
 
 Use `scripts/score_portfolio.py` for the calculation. It rounds to two decimal places and breaks
 ties by ascending `OPP-*` ID. `scripts/validate_portfolio.py` recomputes both score sets and fails
-when stored values or rankings are stale.
+when stored values or rankings are stale. The rendered portfolio exposes the two strongest and two
+limiting criterion inputs for each recommendation; a total score without its basis is not an
+executive-ready explanation.
 
 ## High-impact recommendation ranking
 
@@ -69,7 +71,7 @@ For POC ranking, use this weighting instead:
 | Value potential | 5 |
 | Enterprise scalability | 0 |
 
-Favor bounded pilots with clear data, clear owner, low-risk decision boundaries, and measurable outcomes. A POC does not need the largest enterprise value, but it must prove a pattern that can scale.
+Favor bounded pilots with clear data, an accountable named person or role, low-risk decision boundaries, and measurable outcomes. `TBD`, `unassigned`, and similar placeholders fail validation. A POC does not need the largest enterprise value, but it must prove a pattern that can scale.
 
 ## Confidence rating
 
@@ -82,6 +84,11 @@ Assign confidence separately from score.
 | Low | Sparse inventory fields, unclear status, weak value data, or strategy alignment based on inference |
 
 Do not let a high score hide low confidence. A candidate can be strategically attractive and still have low confidence because the input data is incomplete.
+
+The separate outcome rubric is version `1.2`. It scores artifact specificity, decision utility,
+and pilot actionability after contract validation. Missing quantified inventory signals,
+non-official public evidence, and referenced unvalidated assumptions reduce the result; a
+structurally complete artifact does not automatically receive 100.
 
 ## Recommendation categories
 

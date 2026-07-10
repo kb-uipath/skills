@@ -6,7 +6,7 @@ Use this outline when the user asks for a full delivery-team handoff package. Ke
 
 Create a dated folder:
 
-`artifacts/<customer_or_program>_<use_case_slug>_<yyyymmdd>/`
+`artifacts/<yyyy-mm-dd>-<use-case-slug>/`
 
 Required stable files for schema `usecasehandoff.package` version `1.0.0`:
 
@@ -86,7 +86,10 @@ Include:
 - Date or retrieval date
 - Link or local path
 - Claims supported
+- `SHA-256` for every relative local source, or `N/A` for an HTTPS source
 - Owner
+
+Relative local sources must exist under the artifact output root and match the recorded lowercase SHA-256 before ready validation passes. Absolute local paths and paths that escape the output root fail closed. Every non-open evidence claim ID and source name must resolve to this table.
 
 ## cover-message.md
 
