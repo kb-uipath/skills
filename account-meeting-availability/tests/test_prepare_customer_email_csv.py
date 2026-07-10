@@ -2,6 +2,7 @@ import csv
 import contextlib
 import importlib.util
 import io
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -50,6 +51,7 @@ class PrepareCustomerEmailCsvTests(unittest.TestCase):
             self.assertEqual(rows[1]["record type"], "uipath")
             self.assertEqual(rows[1]["needs review"], "yes")
             self.assertEqual(rows[1]["source type"], "none")
+            self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
 
     def test_missing_required_header_fails_cleanly(self):
         with self.assertRaisesRegex(ValueError, "Missing required column"):
@@ -107,6 +109,25 @@ class PrepareCustomerEmailCsvTests(unittest.TestCase):
             self.assertEqual(rows[0]["needs review"], "yes")
             self.assertEqual(rows[0]["sourcing confidence"], "low")
             self.assertIn("distribution", rows[0]["sourcing evidence"])
+
+    def test_malformed_email_fails_closed_without_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            source = tmp_path / "contacts.csv"
+            output = tmp_path / "normalized.csv"
+            source.write_text(
+                "Account,Type,Name,Title,Email\n"
+                "Acme,Customer,Alice,CFO,alice@@example.com\n",
+                encoding="utf-8",
+            )
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                result = self.module.main([str(source), "--output", str(output)])
+
+            self.assertEqual(result, 1)
+            self.assertIn("exactly one '@'", stderr.getvalue())
+            self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

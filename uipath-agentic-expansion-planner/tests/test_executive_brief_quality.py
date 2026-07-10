@@ -93,11 +93,11 @@ Acme City has enough automation signal to move from scattered process support to
 
 ## Prioritized Portfolio
 
-| Rank | Opportunity | Category | Score | Confidence | Why it matters |
-|---:|---|---|---:|---|---|
-| 1 | Citizen intake triage | Scale now | 86 | High | Combines strategy alignment, production evidence, and bounded pilot scope |
-| 2 | Permit exception routing | Validate next | 79 | Medium | Strong process fit but needs owner confirmation |
-| 3 | Invoice exception support | Pilot first | 74 | Medium | Narrow and measurable for a first proof point |
+| Rank | Opportunity | Category | Score | Confidence | Scoring basis | Why it matters |
+|---:|---|---|---:|---|---|---|
+| 1 | Citizen intake triage | Scale now | 86 | High | Evidence 5/5; feasibility 4/5 | Combines strategy alignment, production evidence, and bounded pilot scope |
+| 2 | Permit exception routing | Validate next | 79 | Medium | Strategy 4/5; ownership 2/5 | Strong process fit but needs owner confirmation |
+| 3 | Invoice exception support | Pilot first | 74 | Medium | Time to pilot 4/5; scale 3/5 | Narrow and measurable for a first proof point |
 
 ## Top 5 High-Impact Recommendations
 
@@ -200,6 +200,11 @@ class ExecutiveBriefQualityTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("Banned hype term", result.stderr)
+
+    def test_validate_executive_brief_rejects_non_executive_length(self):
+        result = self.run_validator(VALID_BRIEF + "\n\n" + "filler " * 4000)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no more than 3500 words", result.stderr)
 
     def test_validate_executive_brief_rejects_missing_recommendation_fields(self):
         result = self.run_validator(VALID_BRIEF.replace("**Governance:**", "**Control model:**", 1))

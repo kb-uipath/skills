@@ -1,0 +1,109 @@
+{
+  "schema_version": "1.0",
+  "portfolio_id": "PORTFOLIO-SPARSE-001",
+  "customer_name": "North Valley Services",
+  "ledger_id": "LEDGER-SPARSE-001",
+  "as_of_date": "2026-07-10",
+  "score_model_version": "1.0",
+  "ranking_limits": {
+    "high_impact": 1,
+    "low_friction_poc": 1
+  },
+  "opportunities": [
+    {
+      "opportunity_id": "OPP-BENEFITS-INTAKE",
+      "name": "Benefits email intake triage",
+      "category": "validate_next",
+      "confidence": "low",
+      "why_now": "The public access plan calls for faster resident response, but the inventory signal is still idea-stage.",
+      "decision_ask": "Assign a Benefits owner and approve a two-week evidence validation sprint.",
+      "business_problem": "Benefits staff manually interpret incoming eligibility emails and route attachments without a documented owner or baseline.",
+      "agentic_enhancement": "Summarize message intent, identify missing information, and recommend a queue while a human approves every route.",
+      "evidence_refs": {
+        "inventory_ids": [
+          "INV-INVENTORY-R00002"
+        ],
+        "public_source_ids": [
+          "SRC-DIGITAL-PLAN"
+        ],
+        "assumption_ids": [
+          "ASM-OWNER-AVAILABLE"
+        ]
+      },
+      "criteria_scores": {
+        "strategic_alignment": 4,
+        "inventory_evidence": 2,
+        "agentic_suitability": 4,
+        "value_potential": 3,
+        "feasibility": 3,
+        "enterprise_scalability": 2,
+        "governance_readiness": 3,
+        "time_to_pilot": 4
+      },
+      "scores": {
+        "high_impact": 62.0,
+        "poc": 68.0
+      },
+      "capability_fit": [
+        {
+          "capability": "Action Center",
+          "claim": "likely_fit",
+          "entitlement_evidence_refs": []
+        }
+      ],
+      "deployment": {
+        "status": "requires_validation",
+        "constraints_addressed": [
+          "Deployment model not confirmed"
+        ],
+        "controls": [
+          "Human review before every route update"
+        ],
+        "notes": "Do not select implementation components until deployment and GenAI policy are confirmed."
+      },
+      "value_case": {
+        "method": "qualitative",
+        "label": "medium",
+        "basis": "Potential response-time and rework improvement; volume and handling time are not available."
+      },
+      "value_levers": [
+        "Response time",
+        "Routing quality",
+        "Resident experience"
+      ],
+      "feasibility": "Start read-only with sampled messages after an owner confirms labels and exception boundaries.",
+      "governance": "Treat eligibility content as confidential and require human approval before queue assignment.",
+      "validation_questions": [
+        "Who will own the Benefits email intake pilot?",
+        "What message volume and current handling time establish the baseline?"
+      ],
+      "pilot": {
+        "objective": "Measure whether assisted triage improves routing accuracy without autonomous decisions.",
+        "narrow_scope": "One Benefits inbox, one message category, and read-only recommendations.",
+        "owner": "Benefits operations director",
+        "agent_role": "Summarize email intent and recommend a destination queue.",
+        "human_role": "Approve every recommendation and label errors for review.",
+        "success_metrics": [
+          "Routing acceptance rate",
+          "Median triage time"
+        ],
+        "data_needed": [
+          "Fifty redacted historical emails"
+        ],
+        "exit_criteria": [
+          "At least 85 percent routing acceptance with no unauthorized data exposure"
+        ],
+        "first_step": "Name the process owner and approve access to a redacted sample.",
+        "timeline_days": 45
+      }
+    }
+  ],
+  "rankings": {
+    "high_impact": [
+      "OPP-BENEFITS-INTAKE"
+    ],
+    "low_friction_poc": [
+      "OPP-BENEFITS-INTAKE"
+    ]
+  }
+}

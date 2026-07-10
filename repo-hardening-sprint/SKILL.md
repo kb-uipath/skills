@@ -7,6 +7,8 @@ description: Run safe, repository-agnostic cleanup and production-hardening spri
 
 Use this skill to turn a messy implementation into a safer, cleaner, commit-ready repo without drifting into a redesign. Optimize reliability, maintainability, docs clarity, and test coverage while preserving the repo's public contracts.
 
+Contract version: `repo-hardening-sprint/v1`. Last verified: 2026-07-10.
+
 ## Core Rules
 
 - Ground every sprint in the current repo state before editing: `git status --short`, branch, remotes, package manifests, test scripts, docs layout, and likely entrypoints.
@@ -15,11 +17,14 @@ Use this skill to turn a messy implementation into a safer, cleaner, commit-read
 - Avoid dependency upgrades, broad formatting churn, generated artifact churn, and behavior changes that are not required for the cleanup goal.
 - Prefer small, reversible edits grouped by subsystem. After each meaningful group, run targeted validation.
 - If a cleanup reveals a larger product decision, stop changing that area and document the follow-up instead of guessing.
+- Unsafe legacy behavior fails closed with migration guidance. Do not preserve automatic live writes, destructive git commands, untracked task logs, regex-only structured parsing, unpinned CI actions, or unbounded dependency ranges as "compatibility."
+- No live external writes, sends, uploads, deploys, or permission changes are part of a hardening sprint unless the user explicitly requests that exact operation.
 
 ## Sprint Workflow
 
 1. **Baseline**
    - Inspect `git status --short`, current branch, remotes, and recent commits.
+   - Inspect the base diff when a base branch is available, for example `git merge-base HEAD origin/main` followed by `git diff --name-status <base>...HEAD`.
    - Identify build/test/lint/typecheck commands from package manifests, CI config, Makefiles, Cargo/Go/Python tooling, or repo docs.
    - Search for stale docs, public API names, duplicated logic, dead code, generated binaries, local caches, and tracked build artifacts.
    - Run a cheap baseline gate first, such as typecheck or targeted tests, before changing code.
@@ -27,6 +32,7 @@ Use this skill to turn a messy implementation into a safer, cleaner, commit-read
 2. **Define Safe Boundaries**
    - List public commands, schemas, env vars, file formats, exported functions, protocol fields, and documented integration points that must not break.
    - Separate current public product docs from legacy, internal, roadmap, or historical docs.
+   - Classify what can be retained in the repo: source, tests, docs, redacted fixtures, and validation helpers are acceptable; secrets, tenant dumps, customer exports, local paths, connector payloads, and caches are not.
    - Decide what is in scope: implementation cleanup, docs cleanup, tests, smoke checks, packaging, CI.
    - Decide what is out of scope: new product features, migrations, broad rewrites, dependency upgrades, production writes, destructive git operations.
 
@@ -36,13 +42,17 @@ Use this skill to turn a messy implementation into a safer, cleaner, commit-read
    - Remove dead wrappers, unused types, stale comments, tracked binaries, and source-tree build artifacts.
    - Make operator-facing UX truthful: help text, docs, error messages, and actual behavior must match.
    - Move legacy docs under an explicit internal/archive area when they confuse the current public surface.
+   - Use structured parsers for structured files such as YAML, JSON, TOML, XML, and spreadsheets instead of ad hoc string edits when a parser is available.
+   - Pin CI actions and development dependencies when they are part of the reproducible validation contract.
    - Add or tighten tests for every behavior that could regress during cleanup.
 
 4. **Validation**
    - Run targeted tests after each subsystem edit.
    - Run the full repo gate before finalizing. Prefer the repo's CI-equivalent command when present.
-   - For this skills repository, prefer `make validate` when available; it wraps `tools/validate_repo.py`, Python syntax checks, Python unit tests, Node syntax checks, Node tests, and `git diff --check`.
+   - For this skills repository, prefer `make validate` when available; it wraps `tools/validate_repo.py`, Python syntax checks, auto-discovered Python unit tests, Node syntax checks, Node tests, and base-aware `git diff --check`.
+   - Run `make secrets` before pushing. Run `make validate-online` separately when network access is available; report failures without making the deterministic PR gate network-dependent.
    - If `make validate` is not available but `tools/validate_repo.py` exists, run `python3 tools/validate_repo.py` before final review.
+   - Validate real YAML, local links and anchors, path leaks, plausible secrets, pinned actions/dependencies, root governance files, and certification wording when those surfaces exist.
    - Add a read-only smoke script when the repo has CLI/integration paths that are hard to validate through unit tests.
    - Run `git diff --check` before commit readiness.
    - If a smoke test requires credentials, production data, or writes to external systems, make it opt-in and document the manual step instead.
@@ -61,7 +71,7 @@ git branch --show-current
 git remote -v
 rg -n "TODO|FIXME|deprecated|legacy|internal|archive|public API|schema|contract" .
 rg -n "api[_-]?key|token|secret|password|credential|Bearer " . -g '!node_modules' -g '!dist'
-rg --files -g 'package.json' -g 'Makefile' -g '.github/workflows/*.yml' -g 'go.mod' -g 'Cargo.toml' -g 'pyproject.toml'
+rg --files -g 'package.json' -g 'Makefile' -g '.github/workflows/*.yml' -g '.github/workflows/*.yaml' -g 'go.mod' -g 'Cargo.toml' -g 'pyproject.toml' -g 'requirements*.txt'
 ```
 
 Use the results to choose validation commands rather than imposing a fixed stack.

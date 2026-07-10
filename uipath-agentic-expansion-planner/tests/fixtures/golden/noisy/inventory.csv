@@ -1,0 +1,5 @@
+Use Case Name,Description,Status,Department,Owner,Systems,Annual Volume
+Invoice Exception Triage,Review invoice exceptions and prepare a resolution packet,Production,Finance,Dana Chen,SAP; Outlook,12000
+Invoice Exception Triage,Old duplicate record retained for history,Archived,Finance,,SAP,12000
+Vendor Email Routing,Classify vendor emails and route incomplete submissions,Pilot,Finance,,Outlook,9000
+Miscellaneous Request,Unclear request with no stable process,Unknown,Shared Services,,,0

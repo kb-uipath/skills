@@ -1,4 +1,4 @@
 interface:
   display_name: "GTM Org Proposal Generator"
   short_description: "Public org research to UiPath proposal cards"
-  default_prompt: "Use $gtm-org-proposal-generator to research an organization and produce executive UiPath automation proposal cards."
+  default_prompt: "Use $gtm-org-proposal-generator to research an organization and produce a validated v1 JSON contract plus rendered executive UiPath automation proposal cards."

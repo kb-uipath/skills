@@ -4,6 +4,7 @@ import {
   buildPatch,
   draft,
   parseOpportunityId,
+  receipt,
   verify,
 } from "../scripts/meddpicc.mjs";
 
@@ -33,19 +34,39 @@ const describeResponse = {
 };
 
 const current = {
-  Id: "006Pa00000TNhhtIAD",
+  Id: "006000000000001AAA",
   Name: "Selective Insurance",
   LastModifiedDate: "2026-05-19T14:30:00.000+0000",
   Metrics__c: "Existing metrics",
   Opportunity_Next_Steps__c: null,
 };
 
+function safeBuildPayload(prepared, overrides = {}) {
+  const confirmation = receipt({
+    mode: "confirmation",
+    draft: prepared,
+    confirmed: true,
+    confirmedAt: prepared.generatedAt,
+    confirmedBy: prepared.author,
+  });
+  return {
+    draft: prepared,
+    describe: describeResponse,
+    connectionId: "conn-123",
+    freshLastModifiedDate: prepared.currentLastModifiedDate,
+    confirmation,
+    transaction: confirmation.transaction,
+    now: prepared.generatedAt,
+    ...overrides,
+  };
+}
+
 test("parse-id accepts Lightning URL, embedded text, and rejects wrong object", () => {
   assert.equal(
-    parseOpportunityId("https://uipath.lightning.force.com/lightning/r/Opportunity/006Pa00000TNhhtIAD/view").opportunityId,
-    "006Pa00000TNhhtIAD",
+    parseOpportunityId("https://uipath.lightning.force.com/lightning/r/Opportunity/006000000000001AAA/view").opportunityId,
+    "006000000000001AAA",
   );
-  assert.equal(parseOpportunityId("the opp is 006Pa00000TNhhtIAD").source, "embedded");
+  assert.equal(parseOpportunityId("the opp is 006000000000001AAA").source, "embedded");
   assert.equal(parseOpportunityId("001Pa00000TNhhtIAD").valid, false);
 });
 
@@ -113,16 +134,11 @@ test("build-patch validates describe metadata and JSON escapes multiline body", 
     content: { Metrics: "Line one\nLine \"two\"" },
   });
 
-  const result = buildPatch({
-    draft: prepared,
-    describe: describeResponse,
-    connectionId: "conn-123",
-    now: "2026-05-19T15:01:00.000Z",
-  });
+  const result = buildPatch(safeBuildPayload(prepared, { now: "2026-05-19T15:01:00.000Z" }));
 
   assert.equal(result.requiresFreshRead, false);
   assert.equal(result.envelope.method, "PATCH");
-  assert.equal(result.envelope.url, "/services/data/v60.0/sobjects/Opportunity/006Pa00000TNhhtIAD");
+  assert.equal(result.envelope.url, "/services/data/v60.0/sobjects/Opportunity/006000000000001AAA");
   assert.deepEqual(JSON.parse(result.envelope.body), result.salesforceBody);
 });
 
@@ -137,7 +153,7 @@ test("build-patch rejects invalid multipicklist values", () => {
   });
 
   assert.throws(
-    () => buildPatch({ draft: prepared, describe: describeResponse, connectionId: "conn-123", now: "2026-05-19T15:01:00.000Z" }),
+    () => buildPatch(safeBuildPayload(prepared, { now: "2026-05-19T15:01:00.000Z" })),
     /Invalid picklist value/,
   );
 });
@@ -152,12 +168,7 @@ test("build-patch refuses stale drafts without emitting an envelope", () => {
     content: { Metrics: "Reduce processing time by 30%." },
   });
 
-  const result = buildPatch({
-    draft: prepared,
-    describe: describeResponse,
-    connectionId: "conn-123",
-    now: "2026-05-19T15:30:00.000Z",
-  });
+  const result = buildPatch(safeBuildPayload(prepared, { now: "2026-05-19T15:30:00.000Z" }));
 
   assert.equal(result.requiresFreshRead, true);
   assert.equal(result.envelope, null);
@@ -171,9 +182,11 @@ test("verify reports matched fields and discrepancies", () => {
     current,
     content: { Metrics: "Reduce processing time by 30%." },
   });
+  const patch = buildPatch(safeBuildPayload(prepared));
 
   const matched = verify({
     draft: prepared,
+    transaction: patch.transaction,
     response: { code: 204 },
     readBack: { ...current, Metrics__c: prepared.proposedFields.Metrics__c },
   });
@@ -181,6 +194,7 @@ test("verify reports matched fields and discrepancies", () => {
 
   const mismatch = verify({
     draft: prepared,
+    transaction: patch.transaction,
     response: { code: 204 },
     readBack: { ...current, Metrics__c: "different" },
   });

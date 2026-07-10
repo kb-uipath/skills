@@ -1,0 +1,172 @@
+{
+  "schema_version": "estimate-du-units.output.v1",
+  "estimate_id": "synthetic-multi-document",
+  "input_mode": "structured",
+  "as_of": "2026-07-10",
+  "applicability": {
+    "status": "conditional",
+    "rationale": "Consumption applies only when both document types are sent through DU."
+  },
+  "calculation_applied": true,
+  "rate_context": {
+    "mode": "rate_profile",
+    "profile_id": "synthetic-additive-v1",
+    "stale_override_used": false,
+    "components": [
+      {
+        "name": "synthetic-ai-base",
+        "unit": "ai_unit",
+        "rate": "1",
+        "source_url": "https://example.com/rates/ai-base",
+        "accessed_on": "2026-07-01",
+        "effective_on": "2026-01-01",
+        "max_age_days": 30,
+        "age_days": 9,
+        "is_stale": false
+      },
+      {
+        "name": "synthetic-ai-add-on",
+        "unit": "ai_unit",
+        "rate": "0.125",
+        "source_url": "https://example.com/rates/ai-add-on",
+        "accessed_on": "2026-07-01",
+        "effective_on": "2026-01-01",
+        "max_age_days": 30,
+        "age_days": 9,
+        "is_stale": false
+      },
+      {
+        "name": "synthetic-platform-base",
+        "unit": "platform_unit",
+        "rate": "0.2",
+        "source_url": "https://example.com/rates/platform-base",
+        "accessed_on": "2026-07-01",
+        "effective_on": "2026-01-01",
+        "max_age_days": 30,
+        "age_days": 9,
+        "is_stale": false
+      },
+      {
+        "name": "synthetic-platform-add-on",
+        "unit": "platform_unit",
+        "rate": "0.05",
+        "source_url": "https://example.com/rates/platform-add-on",
+        "accessed_on": "2026-07-01",
+        "effective_on": "2026-01-01",
+        "max_age_days": 30,
+        "age_days": 9,
+        "is_stale": false
+      }
+    ],
+    "totals_per_page": {
+      "ai_unit": "1.125",
+      "platform_unit": "0.25"
+    }
+  },
+  "scenarios": [
+    {
+      "name": "low",
+      "documents": [
+        {
+          "name": "invoices",
+          "annual_transactions": "1000",
+          "pages_per_transaction": "2",
+          "annual_pages": "2000",
+          "units": {
+            "ai_unit": {
+              "exact": "2250",
+              "rounded": "2250"
+            },
+            "platform_unit": {
+              "exact": "500",
+              "rounded": "500"
+            }
+          }
+        },
+        {
+          "name": "claims",
+          "annual_transactions": "500",
+          "pages_per_transaction": "3",
+          "annual_pages": "1500",
+          "units": {
+            "ai_unit": {
+              "exact": "1687.5",
+              "rounded": "1688"
+            },
+            "platform_unit": {
+              "exact": "375",
+              "rounded": "375"
+            }
+          }
+        }
+      ],
+      "totals": {
+        "annual_pages": "3500",
+        "units": {
+          "ai_unit": {
+            "exact": "3937.5",
+            "rounded": "3938"
+          },
+          "platform_unit": {
+            "exact": "875",
+            "rounded": "875"
+          }
+        }
+      }
+    },
+    {
+      "name": "base",
+      "documents": [
+        {
+          "name": "invoices",
+          "annual_transactions": "1200",
+          "pages_per_transaction": "2.5",
+          "annual_pages": "3000",
+          "units": {
+            "ai_unit": {
+              "exact": "3375",
+              "rounded": "3375"
+            },
+            "platform_unit": {
+              "exact": "750",
+              "rounded": "750"
+            }
+          }
+        },
+        {
+          "name": "claims",
+          "annual_transactions": "600",
+          "pages_per_transaction": "3.5",
+          "annual_pages": "2100",
+          "units": {
+            "ai_unit": {
+              "exact": "2362.5",
+              "rounded": "2363"
+            },
+            "platform_unit": {
+              "exact": "525",
+              "rounded": "525"
+            }
+          }
+        }
+      ],
+      "totals": {
+        "annual_pages": "5100",
+        "units": {
+          "ai_unit": {
+            "exact": "5737.5",
+            "rounded": "5738"
+          },
+          "platform_unit": {
+            "exact": "1275",
+            "rounded": "1275"
+          }
+        }
+      }
+    }
+  ],
+  "warnings": [
+    "Applicability is conditional; totals apply only when the stated condition is met."
+  ],
+  "disclaimer": "Planning estimate only; not a quote or entitlement statement."
+}

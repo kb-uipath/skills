@@ -2,7 +2,7 @@
 
 Accept:
 
-- Lightning URLs such as `https://uipath.lightning.force.com/lightning/r/Opportunity/006Pa00000TNhhtIAD/view`
+- Lightning URLs such as `https://uipath.lightning.force.com/lightning/r/Opportunity/006000000000001AAA/view`
 - Related or edit Lightning URLs containing `/Opportunity/{id}`
 - Classic or bare-path URLs containing a `006...` ID
 - Bare 15-character or 18-character Opportunity IDs
@@ -23,11 +23,11 @@ node scripts/meddpicc.mjs parse-id --input payload.json
 Input:
 
 ```json
-{"input":"Update MEDDPICC on https://uipath.lightning.force.com/lightning/r/Opportunity/006Pa00000TNhhtIAD/view"}
+{"input":"Update MEDDPICC on https://uipath.lightning.force.com/lightning/r/Opportunity/006000000000001AAA/view"}
 ```
 
 Output:
 
 ```json
-{"opportunityId":"006Pa00000TNhhtIAD","valid":true,"source":"embedded"}
+{"opportunityId":"006000000000001AAA","valid":true,"source":"embedded"}
 ```

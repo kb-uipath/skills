@@ -1,0 +1,27 @@
+{
+  "contract_version": "pubsec-big-rocks-row-research/proposed-updates@1",
+  "target": {
+    "account": "Department of Fixtures",
+    "row": 13
+  },
+  "updates": [
+    {
+      "header": "Cloud Y/N",
+      "value": "Y",
+      "confidence": "High",
+      "evidence": [
+        "current-source:Accounts:5"
+      ],
+      "reason": "Current account-specific source names Automation Cloud."
+    },
+    {
+      "header": "Notes / Evidence Additions",
+      "value": "Verified current evidence; review before distribution.",
+      "confidence": "Medium",
+      "evidence": [
+        "current-source:Accounts:5"
+      ],
+      "reason": "Record the evidence pointer in the local review copy."
+    }
+  ]
+}

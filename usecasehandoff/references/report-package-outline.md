@@ -6,25 +6,29 @@ Use this outline when the user asks for a full delivery-team handoff package. Ke
 
 Create a dated folder:
 
-`artifacts/<customer_or_program>_<use_case_slug>_<yyyymmdd>/`
+`artifacts/<yyyy-mm-dd>-<use-case-slug>/`
 
-Recommended files:
+Required stable files for schema `usecasehandoff.package` version `1.0.0`:
 
 - `README.md`
-- `01_executive_summary.md`
-- `02_analysis_output.md`
-- `03_source_citations.md`
-- `04_cover_message.md`
-- `05_delivery_team_handoff_report.md`
-- `06_download_and_reference_links.md`
+- `executive-summary.md`
+- `analysis.md`
+- `evidence-ledger.md`
+- `delivery-plan.md`
+- `risk-register.md`
+- `references.md`
+- `cover-message.md`
+- `manifest.json`
 
 Create a ZIP at the workspace root or beside the artifact folder when the user asks to send, upload, or provide a downloadable packet.
+
+Do not add extra files to the package directory. Reference source attachments in `references.md` so manifest hashes continue to cover the stable package contract.
 
 ## README.md
 
 State the package purpose, intended audience, contents, and recommended reading order. Include the generated date and whether metrics are source-backed, derived, or estimated.
 
-## 01_executive_summary.md
+## executive-summary.md
 
 Use these sections:
 
@@ -35,32 +39,59 @@ Use these sections:
 
 Keep this concise enough for an RVP or account lead. Do not bury the value proposition.
 
-## 02_analysis_output.md
+## analysis.md
+
+Cover the current state, verified pain points, systems and constraints, value drivers, assumptions, and validation questions. Link material claims to evidence IDs and keep assumptions visibly separate from facts.
+
+## evidence-ledger.md
+
+Use a table with:
+
+- Claim ID
+- Claim or metric
+- Evidence tier: `Source-backed`, `Derived`, `Estimate`, or `Open`
+- Source title/link
+- Source date
+- Owner
+- Notes
+
+Include `## Open Evidence Gaps`. Every non-open claim needs a source title/link and source date before ready validation.
+
+## delivery-plan.md
 
 Use these sections:
 
-- Use case identity
-- Stakeholders and audience
 - Current-state process
-- Pain points
-- Systems and data touched
-- Known volumes, cycle times, and financial impact
-- Baseline assumptions and open questions
+- Target-state enterprise workflow
+- Systems and integrations
+- Data, queue, and exception model
+- Security, credentials, access, and audit requirements
+- Delivery phases with owner and acceptance criteria
+- Test strategy
+- First sprint backlog
+- Next action
 
-## 03_source_citations.md
+For enterprise hardening, cover queue-based design, config management, credential handling, role-based access, audit logging, retry strategy, business exceptions, system exceptions, alerts, runbooks, deployment environments, and rollback.
 
-Use a table or concise bullets with:
+## risk-register.md
 
-- Claim or metric
-- Source title
+Track risk, impact, mitigation, owner, and status. Ready validation rejects ownerless risk rows.
+
+## references.md
+
+Include:
+
+- Source names
 - Source type: email, Slack, Teams, SharePoint, Drive, local file, public web, vendor docs
 - Date or retrieval date
 - Link or local path
-- Confidence: high, medium, low
+- Claims supported
+- `SHA-256` for every relative local source, or `N/A` for an HTTPS source
+- Owner
 
-Include a separate section for unsupported or partially supported claims.
+Relative local sources must exist under the artifact output root and match the recorded lowercase SHA-256 before ready validation passes. Absolute local paths and paths that escape the output root fail closed. Every non-open evidence claim ID and source name must resolve to this table.
 
-## 04_cover_message.md
+## cover-message.md
 
 Write a short post-ready or email-ready message:
 
@@ -69,34 +100,22 @@ Write a short post-ready or email-ready message:
 - What the recipient should do next
 - Any caveats about source coverage or open assumptions
 
-Do not over-explain the use case in the cover message.
+It must include a concrete `Next action:` line before ready validation passes. Do not over-explain the use case in the cover message.
 
-## 05_delivery_team_handoff_report.md
+## manifest.json
 
-Use these sections:
+The manifest records schema, schema version, title, account, package date, status, classification, retention, generated time, last verification time, stable file list, SHA-256 hashes for every non-manifest file, `no_send: true`, and the no-send/no-upload safety statement.
 
-- Purpose and outcome
-- Current-state workflow
-- Target-state enterprise workflow
-- Recommended architecture
-- Data, queues, and exception model
-- Security, credentials, access, and audit requirements
-- Monitoring, reporting, and support model
-- AI/UiPath AI Unit opportunities
-- Implementation phases
-- Acceptance criteria
-- Test strategy
-- Risks, dependencies, and decisions needed
-- Backlog and next actions
+Supported statuses: `scaffold`, `draft`, `ready`, `routed`, `archived`.
 
-For enterprise hardening, cover queue-based design, config management, credential handling, role-based access, audit logging, retry strategy, business exceptions, system exceptions, alerts, runbooks, deployment environments, and rollback.
+Supported classifications: `public`, `internal`, `confidential`, `restricted`.
 
-## 06_download_and_reference_links.md
+## Reference Handling
 
 Include:
 
-- Local artifact paths
-- SharePoint/Drive/file links
+- Local artifact paths when they are stable and non-sensitive
+- SharePoint/Drive/file links when authorized
 - Source thread links where available
 - Public documentation links
 - Vendor documentation links
@@ -108,7 +127,9 @@ Before finalizing:
 
 - Every metric is cited or labeled as an estimate.
 - The delivery team can identify the first implementation phase.
+- Every delivery phase, risk, and source row has an owner.
+- Acceptance criteria, test strategy, first sprint backlog, and next action are populated.
 - AI opportunities are separated from deterministic automation.
 - Open questions are explicit and assigned where possible.
-- The artifact package has been listed or ZIP-tested.
+- Scaffold validation passes, manifest hashes are refreshed, and ready validation passes.
 - Any upload or message send has been verified in the destination.

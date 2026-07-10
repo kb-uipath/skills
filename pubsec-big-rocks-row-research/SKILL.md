@@ -7,60 +7,72 @@ description: Research and synthesize evidence for one account row in the PubSec 
 
 ## Objective
 
-Produce evidence-backed fill recommendations for one account row. The output must separate facts from inference, cite the source path/tool/search query used, and avoid filling cells where the evidence is too weak. Use only evidence updated within the past 3 months, measured from the current date at runtime.
+Produce evidence-backed recommendations for one account row without mutating the source workbook. Separate fill-eligible current evidence from discovery leads, cite source paths/tools/searches, and leave cells unchanged when evidence or workbook safety checks are insufficient. Use only evidence updated within the past 3 months, measured from the current date at runtime.
 
 ## Required Workflow
 
-1. Identify the target row.
-   - Use the account name and row number when provided.
-   - If the user provides only a SharePoint workbook link, fetch or open the workbook and confirm the sheet, header row, account name, and existing values.
-   - Treat bullet-only cells like `• \n• \n•` as blank placeholders.
-   - Calculate the recency cutoff date immediately. For example, if today is May 1, 2026, the cutoff is February 1, 2026. Do not use evidence older than that cutoff for cell values.
+1. Establish the local input contract.
+   - Use only `.xlsx` files already available within the user's authorization boundary.
+   - Create a `pubsec-big-rocks-row-research/source-manifest@1` JSON manifest with explicit source paths, classification, retention date, and upstream freshness metadata.
+   - Do not use implicit machine-local sources. The legacy `--source` and `--sources-only` flags fail closed; migrate those paths into `--manifest`.
+   - Calculate the recency cutoff immediately. Evidence before the cutoff cannot support a cell value.
 
-2. Run the structured-source pass first.
-   - Call `load_workspace_dependencies` if needed.
-   - Run `scripts/research_row_sources.py` with the workbook path plus either `--row` or `--account`.
-   - Use `--sources-only` for deterministic fixture runs or when the default local source paths are not available.
-   - Use `--include-stale` only for discovery; stale records remain leads and must not be used directly to fill target cells.
-   - Use the script output as a candidate evidence map for workbook tabs, migration master, TAC account tracking, PubSec Gov SFDC, Wingman Active Organizations, and org license sheets.
-   - Treat local file modified dates as a weak freshness signal only. Prefer SharePoint/SFDC/Slack/Teams document or message timestamps when available.
+2. Resolve the target exactly.
+   - Run `scripts/research_row_sources.py` with the workbook, manifest, and either `--row` or `--account`.
+   - The script dynamically detects the main header row, account column, and target columns from normalized aliases.
+   - Account lookup requires one exact normalized match. Never select a fuzzy candidate. If candidates are ambiguous, review the returned rows and rerun with `--row` plus the exact account.
+   - Treat bullet-only and dash-only cells as placeholders; all other existing values and formulas are protected.
 
    ```bash
-   /path/to/python3 scripts/research_row_sources.py \
-     --workbook "/path/to/PUBSEC CS Portfolio_Big Rocks_MAY2026 - Copy.xlsx" \
-     --row 183 \
+   python3 scripts/research_row_sources.py \
+     --workbook "/absolute/path/PUBSEC-CS-Portfolio-Big-Rocks.xlsx" \
+     --manifest "/absolute/path/source-manifest.json" \
+     --account "Exact Account Name" \
      --months 3 \
      --format markdown
    ```
 
-3. Resolve the account-specific workspace before broad searching.
-   - Find the TAM/Enterprise Success account SharePoint site first. Common patterns include `TAM-<AccountName>`, `ES-<AccountName>`, or links from TAC Account Tracking / migration master. Browse that site before generic SharePoint search.
-   - Find the account Slack channel first. Common patterns include `#account-<name/acronym>`, but use Slack channel search rather than guessing. Read the channel or search within it before workspace-wide Slack search.
-   - Find relevant Teams channels/chats if the Teams connector is available. Search exact account name, acronym, TAM, CSM, AE, and migration/product terms.
-   - Find SFDC account-specific evidence. If no SFDC connector is available, use SFDC exports in SharePoint, TAC Account Tracking, PubSec Gov SFDC, account plans, opportunity/renewal docs, and account-specific SharePoint files that cite SFDC.
-   - Discard account workspace sources whose last modified/message/activity timestamp is older than the cutoff. Undated sources can help locate newer sources but cannot support cell values.
+3. Use evidence buckets correctly.
+   - `evidence.fill_eligible_current` contains exact-account records with a trusted date at or after the cutoff.
+   - `evidence.discovery_leads` contains non-exact current candidates and, only with `--include-stale`, stale or undated candidates.
+   - `evidence.excluded` contains stale or undated candidates omitted from discovery output.
+   - `recommendation_leads` is derived only from `fill_eligible_current`; stale evidence never enters it.
+   - Local file modification time is diagnostic only and never establishes fill eligibility.
 
-4. Search unstructured/internal sources.
-   - Slack: search the exact account name, common acronym, TAM/CSM, and product terms (`ACPS`, `Automation Suite`, `DU`, `Document Understanding`, `AI Units`, `Agentic`, `Autopilot`, `Test Suite`, `IXP`, `churn`, `renewal`) with an `after:` date or timestamp at/after the cutoff. If Slack returns `invalid_auth_token` or similar, state that no Slack evidence was used.
-   - SharePoint: search exact account name and acronym with `recency_days` or inspect returned `updated_at` metadata. Fetch relevant account plans, handoff docs, CSP/CVR/EBR decks, TAC docs, migration docs, proposals, and files inside the account-specific TAM/ES site only when updated within the cutoff window.
-   - OneNote: inspect account-specific OneNote sections/backups when the user provides or discovers a path. Use only sections/pages/backups modified within the cutoff window.
-   - Teams: search account-specific Teams channels/chats and nearby messages within the cutoff window if the connector is available. If not available, state that Teams evidence was not used.
-   - Existing workbook tabs: check churn forecast, high-risk tabs, renewal tabs, and any notes/evidence column already present only if the workbook or tab source is updated within the cutoff window.
+4. Resolve account-specific workspace evidence before broad searching.
+   - Find the TAM/Enterprise Success SharePoint site, account Slack channel, relevant Teams channel/chat, and SFDC account context before broad searches.
+   - Use account-specific SharePoint, Slack, Teams, OneNote, or SFDC timestamps at or after the cutoff.
+   - If a connector is unavailable, state that limitation. Do not silently substitute a weaker source.
+   - Do not perform an external write as part of this skill.
 
 5. Synthesize field recommendations.
-   - Read `references/evidence-and-field-rules.md` before making recommendations.
-   - Use the workbook's exact dropdown values.
-   - Do not overwrite existing substantive values. If an existing value needs augmentation, recommend red text for the notes column to the right of column V/W, depending on the workbook layout.
-   - Leave a field blank when the only support is stale evidence, undated evidence, entitlement, generic interest, or a broad account profile.
+   - Read `references/evidence-and-field-rules.md` first.
+   - Use exact workbook dropdown values.
+   - Never infer utilization from support tier, support level, ARR, entitlement, or engagement.
+   - Do not overwrite formulas or substantive existing values.
+   - Use `Low` confidence only for notes or follow-up, never for a proposed direct cell value.
 
-6. Return a row-ready result.
-   - Include account, row, current blanks, source coverage, recommended cell updates, notes/evidence additions, and unresolved gaps.
-   - Mark each recommendation as `High`, `Medium`, or `Low` confidence.
-   - Use `Low` confidence only for notes or follow-up, not for direct cell values.
+6. Preview and write only a verified local copy when explicitly requested.
+   - Put proposed changes in a `pubsec-big-rocks-row-research/proposed-updates@1` JSON file.
+   - Every proposed update must cite evidence IDs present in `evidence.fill_eligible_current` from the same run. Discovery-lead or unknown IDs block the preview.
+   - Run with `--proposed-updates` first. An invalid preview returns nonzero status and does not write.
+   - Add `--write-copy /new/local/path.xlsx` only after reviewing a valid preview.
+   - The destination must be new and different from the source. The script refuses in-place and overwrite operations.
+   - A successful copy verifies dropdown values, unchanged formulas, unchanged non-target values, preserved data validations, exact changed values, and red font after save. A failed verification removes the output copy.
 
-## Output Shape
+## Output Contract
 
-Use this structure unless the user asked for workbook edits:
+The JSON root is `pubsec-big-rocks-row-research/output@1` and includes:
+
+- `target_row`: resolved account, dynamic schema, current values, and blank targets.
+- `evidence.fill_eligible_current`: current exact-account evidence allowed into synthesis.
+- `evidence.discovery_leads`: non-fill candidates for locating better evidence.
+- `evidence.excluded`: records blocked by freshness or account rules.
+- `recommendation_leads`: investigation prompts generated only from fill-eligible evidence.
+- `proposed_update_preview`: per-cell safety checks, when supplied.
+- `write_copy`: post-save verification results, when requested and successful.
+
+## Row-Ready Response
 
 ```markdown
 **Account**
@@ -68,7 +80,7 @@ Row: ...
 Account: ...
 
 **Recommended Cell Updates**
-| Cell/Header | Value | Confidence | Evidence |
+| Cell/Header | Value | Confidence | Evidence ID |
 | --- | --- | --- | --- |
 
 **Notes Column Additions**
@@ -80,20 +92,12 @@ Account: ...
 **Sources Checked**
 - ...
 
-**Excluded As Stale Or Undated**
+**Discovery Leads / Excluded Evidence**
 - ...
 ```
 
-## Editing Discipline
-
-If the user asks to edit the workbook:
-- Use workbook-aware tooling such as `openpyxl`; never flatten the workbook to CSV.
-- Back up the workbook before writing.
-- Format all newly entered or appended content in red text.
-- Preserve formulas, validations, sheets, and existing substantive cell values.
-- Verify exact changed cells, dropdown validity, and red font after save.
-
 ## Bundled Resources
 
-- `scripts/research_row_sources.py`: deterministic local structured-source lookup for one workbook row/account.
-- `references/evidence-and-field-rules.md`: field-specific evidence standards, source priority, and anti-mistake rules.
+- `scripts/research_row_sources.py`: deterministic manifest-driven research, preview, and verified copy CLI.
+- `references/evidence-and-field-rules.md`: field evidence standards, source priority, dropdown values, and anti-inference rules.
+- `tests/fixtures/`: versioned source-manifest and proposed-update examples used by the test suite.

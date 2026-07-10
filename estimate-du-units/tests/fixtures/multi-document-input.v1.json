@@ -1,0 +1,41 @@
+{
+  "schema_version": "estimate-du-units.input.v1",
+  "estimate_id": "synthetic-multi-document",
+  "as_of": "2026-07-10",
+  "applicability": {
+    "status": "conditional",
+    "rationale": "Consumption applies only when both document types are sent through DU."
+  },
+  "scenarios": [
+    {
+      "name": "low",
+      "documents": [
+        {
+          "name": "invoices",
+          "annual_transactions": "1000",
+          "pages_per_transaction": "2"
+        },
+        {
+          "name": "claims",
+          "annual_transactions": "500",
+          "pages_per_transaction": "3"
+        }
+      ]
+    },
+    {
+      "name": "base",
+      "documents": [
+        {
+          "name": "invoices",
+          "annual_transactions": "1200",
+          "pages_per_transaction": "2.5"
+        },
+        {
+          "name": "claims",
+          "annual_transactions": "600",
+          "pages_per_transaction": "3.5"
+        }
+      ]
+    }
+  ]
+}

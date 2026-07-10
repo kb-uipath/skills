@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "ledger_id": "LEDGER-SPARSE-001",
+  "customer": {
+    "name": "North Valley Services",
+    "sector": "Public social services",
+    "deployment": {
+      "model": "unknown",
+      "constraints": [
+        "Deployment model not confirmed"
+      ],
+      "genai_policy": "unknown",
+      "data_classification": "confidential",
+      "human_approval_required": true
+    },
+    "entitlements": [
+      {
+        "capability": "Action Center",
+        "status": "unknown",
+        "evidence_refs": []
+      }
+    ]
+  },
+  "inventory_profile": {
+    "source_name": "inventory.csv",
+    "as_of_date": "2026-06-30",
+    "inventory_ids": [
+      "INV-INVENTORY-R00002"
+    ]
+  },
+  "inventory_evidence": [
+    {
+      "inventory_id": "INV-INVENTORY-R00002",
+      "name": "Benefits Email Intake",
+      "description": "Staff read benefit eligibility emails and route attachments.",
+      "status": "idea",
+      "department": "Benefits",
+      "owner": "",
+      "systems": [
+        "Outlook"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 2
+      },
+      "facts": [
+        "The inventory contains one idea-stage email intake row with no named owner."
+      ],
+      "metrics": []
+    }
+  ],
+  "public_sources": [
+    {
+      "source_id": "SRC-DIGITAL-PLAN",
+      "title": "Digital Services Access Plan",
+      "publisher": "North Valley Services",
+      "url": "https://example.com/synthetic/north-valley/digital-services-plan",
+      "published_date": "2026-04-15",
+      "accessed_date": "2026-07-09",
+      "official": false,
+      "evidence_summary": "The plan prioritizes simpler intake and faster resident response."
+    }
+  ],
+  "assumptions": [
+    {
+      "assumption_id": "ASM-OWNER-AVAILABLE",
+      "statement": "A Benefits process owner can be assigned before pilot design.",
+      "category": "feasibility",
+      "status": "unvalidated"
+    }
+  ]
+}

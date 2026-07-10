@@ -5,14 +5,20 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import html
 import json
+import os
+import random
 import re
+import stat
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
 
+SCHEMA_VERSION = "llm-council.session.v1"
 REQUIRED_ADVISORS = [
     "The Contrarian",
     "The First Principles Thinker",
@@ -20,12 +26,27 @@ REQUIRED_ADVISORS = [
     "The Outsider",
     "The Executor",
 ]
+RESPONSE_LABELS = [f"Response {letter}" for letter in "ABCDE"]
 REQUIRED_SESSION_FIELDS = (
+    "schema_version",
     "original_question",
     "framed_question",
     "chairman_verdict",
     "advisors",
+    "peer_reviews",
+    "anonymization_mapping",
+    "decision_criteria",
+    "disconfirming_evidence",
+    "review_date",
+    "confidence",
+    "execution_mode",
+    "metadata",
 )
+CONFIDENCE_LEVELS = {"low", "medium", "high"}
+EXECUTION_MODES = {"subagents", "single_agent_fallback"}
+SENSITIVITY_CLASSES = {"public", "internal", "confidential", "restricted"}
+PRIVATE_FILE_MODE = stat.S_IRUSR | stat.S_IWUSR
+PRIVATE_DIRECTORY_MODE = stat.S_IRWXU
 
 STANCE_CLASS = {
     "positive": "stance-positive",
@@ -35,24 +56,26 @@ STANCE_CLASS = {
 }
 
 
-def load_session(path: Path) -> dict[str, Any]:
+def load_session(
+    path: Path, *, sensitivity_override: str | None = None
+) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise SystemExit(f"Invalid JSON in {path}: {exc}") from exc
 
+    if sensitivity_override:
+        metadata = payload.get("metadata")
+        if not isinstance(metadata, dict):
+            raise SystemExit("metadata must be an object before --sensitivity can be applied.")
+        metadata["sensitivity"] = sensitivity_override
+
     validate_session_schema(payload)
 
     payload["advisors"] = normalize_advisors(payload["advisors"])
     payload["peer_reviews"] = normalize_peer_reviews(payload.get("peer_reviews") or [])
-
-    missing = [
-        advisor
-        for advisor in REQUIRED_ADVISORS
-        if not str(payload["advisors"].get(advisor, "")).strip()
-    ]
-    if missing:
-        raise SystemExit("Missing advisor response(s): " + ", ".join(missing))
+    validate_strict_contract(payload)
+    payload["metadata"]["hashes"] = derive_content_hashes(payload)
 
     return payload
 
@@ -61,8 +84,23 @@ def validate_session_schema(payload: Any) -> None:
     if not isinstance(payload, dict):
         raise SystemExit("Session JSON must be an object.")
 
+    if payload.get("schema_version") != SCHEMA_VERSION:
+        raise SystemExit(
+            "Missing or unsupported schema_version. "
+            f"Use '{SCHEMA_VERSION}'. Migration: render only strict sessions with "
+            "five named advisors, five peer reviews, Response A-E mapping, metadata, "
+            "decision criteria, disconfirming evidence, review date, and confidence."
+        )
+
+    allowed_fields = set(REQUIRED_SESSION_FIELDS) | {"fallback_reason", "advisor_positions"}
+    unknown_fields = sorted(set(payload) - allowed_fields)
+    if unknown_fields:
+        raise SystemExit(
+            "Session JSON has unsupported field(s): " + ", ".join(unknown_fields)
+        )
+
     for field in REQUIRED_SESSION_FIELDS:
-        if not payload.get(field):
+        if field not in payload or payload.get(field) in (None, ""):
             raise SystemExit(f"Missing required field: {field}")
 
     for field in ("original_question", "framed_question", "chairman_verdict"):
@@ -74,37 +112,342 @@ def normalize_advisors(raw: Any) -> dict[str, str]:
     if isinstance(raw, dict):
         return {str(key): str(value or "") for key, value in raw.items()}
 
-    if isinstance(raw, list):
-        advisors: dict[str, str] = {}
-        for item in raw:
-            if not isinstance(item, dict):
-                raise SystemExit("Advisor list entries must be objects.")
-            name = item.get("advisor") or item.get("name")
-            response = item.get("response") or item.get("text") or item.get("body")
-            if not name:
-                raise SystemExit("Advisor list entries need an 'advisor' or 'name' field.")
-            advisors[str(name)] = str(response or "")
-        return advisors
-
-    raise SystemExit("Field 'advisors' must be an object or a list of advisor response objects.")
+    raise SystemExit(
+        "Field 'advisors' must be an object keyed by the five required advisor names. "
+        "Migration: convert legacy advisor arrays into a strict advisor response object."
+    )
 
 
 def normalize_peer_reviews(raw: Any) -> list[dict[str, str]]:
-    if isinstance(raw, str):
-        return [{"reviewer": "Peer review", "response": raw}]
     if not isinstance(raw, list):
-        raise SystemExit("Field 'peer_reviews' must be a string or list when provided.")
+        raise SystemExit(
+            "Field 'peer_reviews' must be a list of exactly five reviewer response objects. "
+            "Migration: split legacy peer review text into Reviewer 1 through Reviewer 5."
+        )
 
     reviews: list[dict[str, str]] = []
     for index, item in enumerate(raw, start=1):
-        if isinstance(item, dict):
-            reviewer = item.get("reviewer") or item.get("name") or f"Reviewer {index}"
-            response = item.get("response") or item.get("text") or item.get("body") or ""
-        else:
-            reviewer = f"Reviewer {index}"
-            response = item
+        if not isinstance(item, dict):
+            raise SystemExit("Peer review entries must be objects with reviewer and response fields.")
+        reviewer = item.get("reviewer") or item.get("name") or f"Reviewer {index}"
+        response = item.get("response") or item.get("text") or item.get("body") or ""
         reviews.append({"reviewer": str(reviewer), "response": str(response or "")})
     return reviews
+
+
+def validate_strict_contract(payload: dict[str, Any]) -> None:
+    advisor_keys = set(payload["advisors"])
+    required_advisors = set(REQUIRED_ADVISORS)
+    missing = required_advisors - advisor_keys
+    extra = advisor_keys - required_advisors
+    if missing or extra:
+        details = []
+        if missing:
+            details.append("missing: " + ", ".join(sorted(missing)))
+        if extra:
+            details.append("unexpected: " + ", ".join(sorted(extra)))
+        raise SystemExit("Advisors must be exactly the five required names (" + "; ".join(details) + ").")
+    for advisor, response in payload["advisors"].items():
+        if not isinstance(response, str) or not response.strip():
+            raise SystemExit(f"Advisor response for '{advisor}' must be a non-empty string.")
+
+    reviews = payload["peer_reviews"]
+    if len(reviews) != 5:
+        raise SystemExit("peer_reviews must contain exactly five reviews.")
+    seen_reviewers: set[str] = set()
+    for index, review in enumerate(reviews, start=1):
+        reviewer = str(review.get("reviewer", "")).strip()
+        response = review.get("response")
+        if not reviewer:
+            raise SystemExit(f"Peer review {index} needs a reviewer name.")
+        if reviewer in seen_reviewers:
+            raise SystemExit(f"Duplicate peer reviewer name: {reviewer}.")
+        seen_reviewers.add(reviewer)
+        if not isinstance(response, str) or not response.strip():
+            raise SystemExit(f"Peer review {index} must include a non-empty response string.")
+
+    validate_mapping(payload.get("anonymization_mapping"))
+    validate_string_list(payload.get("decision_criteria"), "decision_criteria")
+    validate_string_list(payload.get("disconfirming_evidence"), "disconfirming_evidence")
+    validate_review_date(payload.get("review_date"))
+    validate_confidence(payload.get("confidence"))
+    validate_metadata(payload.get("metadata"), execution_mode=payload.get("execution_mode"))
+    validate_input_hashes(payload)
+    validate_execution_mode(payload)
+    validate_advisor_positions(payload.get("advisor_positions"))
+
+
+def validate_mapping(raw: Any) -> None:
+    if not isinstance(raw, dict):
+        raise SystemExit("anonymization_mapping must be an object with keys Response A through Response E.")
+    keys = set(str(key) for key in raw)
+    expected = set(RESPONSE_LABELS)
+    if keys != expected:
+        raise SystemExit(
+            "anonymization_mapping must use exactly Response A through Response E. "
+            "Migration: replace legacy A-E keys with Response A-E keys."
+        )
+    mapped = [str(raw[label]) for label in RESPONSE_LABELS]
+    if set(mapped) != set(REQUIRED_ADVISORS) or len(mapped) != len(set(mapped)):
+        raise SystemExit("anonymization_mapping must bijectively map Response A-E to the five advisors.")
+
+
+def validate_string_list(raw: Any, field: str) -> None:
+    if not isinstance(raw, list) or not raw:
+        raise SystemExit(f"{field} must be a non-empty list of strings.")
+    for index, value in enumerate(raw, start=1):
+        if not isinstance(value, str) or not value.strip():
+            raise SystemExit(f"{field}[{index}] must be a non-empty string.")
+
+
+def validate_review_date(raw: Any) -> None:
+    if not isinstance(raw, str):
+        raise SystemExit("review_date must be an ISO date string in YYYY-MM-DD format.")
+    try:
+        dt.date.fromisoformat(raw)
+    except ValueError as exc:
+        raise SystemExit("review_date must be an ISO date string in YYYY-MM-DD format.") from exc
+
+
+def validate_confidence(raw: Any) -> None:
+    if not isinstance(raw, dict):
+        raise SystemExit("confidence must be an object with level and rationale fields.")
+    level = str(raw.get("level", "")).lower()
+    if level not in CONFIDENCE_LEVELS:
+        raise SystemExit("confidence.level must be one of: low, medium, high.")
+    rationale = raw.get("rationale")
+    if not isinstance(rationale, str) or not rationale.strip():
+        raise SystemExit("confidence.rationale must be a non-empty string.")
+
+
+def validate_metadata(raw: Any, *, execution_mode: Any) -> None:
+    if not isinstance(raw, dict):
+        raise SystemExit("metadata must be an object.")
+    allowed_fields = {
+        "preparer",
+        "preparer_seed",
+        "run_id",
+        "model_ids",
+        "advisor_agent_ids",
+        "reviewer_agent_ids",
+        "input_hashes",
+        "created_at",
+        "sensitivity",
+        "permissions",
+        "retention",
+        "hashes",
+    }
+    unknown_fields = sorted(set(raw) - allowed_fields)
+    if unknown_fields:
+        raise SystemExit(
+            "metadata has unsupported field(s): " + ", ".join(unknown_fields)
+        )
+    for field in (
+        "preparer",
+        "preparer_seed",
+        "run_id",
+        "model_ids",
+        "advisor_agent_ids",
+        "reviewer_agent_ids",
+        "input_hashes",
+        "created_at",
+        "sensitivity",
+        "permissions",
+        "retention",
+    ):
+        if field not in raw or raw.get(field) in (None, ""):
+            raise SystemExit(f"metadata.{field} is required.")
+    if str(raw.get("sensitivity")).lower() not in SENSITIVITY_CLASSES:
+        raise SystemExit("metadata.sensitivity must be one of: public, internal, confidential, restricted.")
+    if not isinstance(raw.get("permissions"), list) or not raw.get("permissions"):
+        raise SystemExit("metadata.permissions must be a non-empty list.")
+    for index, permission in enumerate(raw["permissions"], start=1):
+        if not isinstance(permission, str) or not permission.strip():
+            raise SystemExit(f"metadata.permissions[{index}] must be a non-empty string.")
+    if not isinstance(raw.get("retention"), str) or not raw["retention"].strip():
+        raise SystemExit("metadata.retention must be a non-empty string.")
+    if not isinstance(raw.get("run_id"), str) or not raw["run_id"].strip():
+        raise SystemExit("metadata.run_id must be a non-empty string.")
+    validate_identifier_list(raw.get("model_ids"), "metadata.model_ids", exact_count=None)
+    agent_count = 5 if execution_mode == "subagents" else 0
+    validate_identifier_list(
+        raw.get("advisor_agent_ids"),
+        "metadata.advisor_agent_ids",
+        exact_count=agent_count,
+    )
+    validate_identifier_list(
+        raw.get("reviewer_agent_ids"),
+        "metadata.reviewer_agent_ids",
+        exact_count=agent_count,
+    )
+    if set(raw["advisor_agent_ids"]) & set(raw["reviewer_agent_ids"]):
+        raise SystemExit("advisor and reviewer agent IDs must be disjoint.")
+    input_hashes = raw.get("input_hashes")
+    if not isinstance(input_hashes, dict) or set(input_hashes) != {
+        "original_question",
+        "framed_question",
+    }:
+        raise SystemExit(
+            "metadata.input_hashes must contain exactly original_question and framed_question."
+        )
+    for field, value in input_hashes.items():
+        if not isinstance(value, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
+            raise SystemExit(f"metadata.input_hashes.{field} must be a sha256 digest.")
+    created_at = str(raw.get("created_at"))
+    try:
+        dt.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise SystemExit("metadata.created_at must be an ISO timestamp.") from exc
+
+
+def validate_identifier_list(raw: Any, field: str, *, exact_count: int | None) -> None:
+    if not isinstance(raw, list):
+        raise SystemExit(f"{field} must be a list.")
+    if exact_count == 0:
+        if raw:
+            raise SystemExit(f"{field} must be empty for single-agent fallback.")
+        return
+    if not raw:
+        raise SystemExit(f"{field} must be a non-empty list.")
+    if exact_count is not None and len(raw) != exact_count:
+        raise SystemExit(f"{field} must contain exactly {exact_count} IDs.")
+    if not all(isinstance(item, str) and item.strip() for item in raw):
+        raise SystemExit(f"{field} must contain only non-empty strings.")
+    if len(raw) != len(set(raw)):
+        raise SystemExit(f"{field} must not contain duplicate IDs.")
+    if any(item.casefold().startswith("replace") for item in raw):
+        raise SystemExit(f"{field} still contains template placeholders.")
+
+
+def validate_input_hashes(payload: dict[str, Any]) -> None:
+    recorded = payload["metadata"]["input_hashes"]
+    expected = {
+        "original_question": sha256_text(payload["original_question"]),
+        "framed_question": sha256_text(payload["framed_question"]),
+    }
+    if recorded != expected:
+        raise SystemExit(
+            "metadata.input_hashes do not match the original and framed questions; "
+            "regenerate the session shell after changing council inputs."
+        )
+
+
+def validate_execution_mode(payload: dict[str, Any]) -> None:
+    mode = str(payload.get("execution_mode", ""))
+    if mode not in EXECUTION_MODES:
+        raise SystemExit("execution_mode must be 'subagents' or 'single_agent_fallback'.")
+    fallback_reason = payload.get("fallback_reason")
+    if mode == "single_agent_fallback" and (
+        not isinstance(fallback_reason, str) or not fallback_reason.strip()
+    ):
+        raise SystemExit("single_agent_fallback requires a non-empty fallback_reason.")
+
+
+def validate_advisor_positions(raw: Any) -> None:
+    if raw in (None, ""):
+        return
+    if not isinstance(raw, list):
+        raise SystemExit("advisor_positions must be a list when provided.")
+    for index, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            raise SystemExit(f"advisor_positions[{index}] must be an object.")
+        advisor = str(item.get("advisor", "")).strip()
+        if advisor not in REQUIRED_ADVISORS:
+            raise SystemExit(f"advisor_positions[{index}].advisor must be one of the required advisors.")
+        stance = str(item.get("stance", "neutral")).lower()
+        if stance not in STANCE_CLASS:
+            raise SystemExit(f"advisor_positions[{index}].stance is not supported.")
+
+
+def sha256_text(value: str) -> str:
+    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def derive_content_hashes(payload: dict[str, Any]) -> dict[str, Any]:
+    canonical_payload = json.loads(json.dumps(payload, sort_keys=True, ensure_ascii=True))
+    metadata = dict(canonical_payload.get("metadata") or {})
+    metadata.pop("hashes", None)
+    canonical_payload["metadata"] = metadata
+    canonical = json.dumps(canonical_payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+    return {
+        "canonical_session": sha256_text(canonical),
+        "advisors": {
+            advisor: sha256_text(payload["advisors"][advisor].strip())
+            for advisor in REQUIRED_ADVISORS
+        },
+        "peer_reviews": {
+            review["reviewer"]: sha256_text(review["response"].strip())
+            for review in payload["peer_reviews"]
+        },
+    }
+
+
+def prepare_session_template(
+    seed: str,
+    original_question: str = "",
+    framed_question: str = "",
+    preparer: str = "codex",
+) -> dict[str, Any]:
+    if not seed:
+        raise SystemExit("--seed is required with --prepare-template.")
+    resolved_original_question = (
+        original_question or "Replace with the user's raw decision question."
+    )
+    resolved_framed_question = (
+        framed_question or "Replace with the neutral question sent to advisors."
+    )
+    shuffled = random.Random(seed).sample(REQUIRED_ADVISORS, len(REQUIRED_ADVISORS))
+    mapping = {label: advisor for label, advisor in zip(RESPONSE_LABELS, shuffled)}
+    created_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "original_question": resolved_original_question,
+        "framed_question": resolved_framed_question,
+        "chairman_verdict": "Replace with the COUNCIL VERDICT synthesis.",
+        "decision_criteria": ["Replace with the main decision criterion."],
+        "disconfirming_evidence": ["Replace with evidence that would weaken or overturn the recommendation."],
+        "review_date": dt.date.today().isoformat(),
+        "confidence": {
+            "level": "medium",
+            "rationale": "Replace with why this confidence level is justified.",
+        },
+        "execution_mode": "subagents",
+        "fallback_reason": "",
+        "metadata": {
+            "preparer": preparer,
+            "preparer_seed": seed,
+            "run_id": "council-" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16],
+            "model_ids": ["replace-with-model-id"],
+            "advisor_agent_ids": [
+                f"replace-with-advisor-agent-id-{index}" for index in range(1, 6)
+            ],
+            "reviewer_agent_ids": [
+                f"replace-with-reviewer-agent-id-{index}" for index in range(1, 6)
+            ],
+            "input_hashes": {
+                "original_question": sha256_text(resolved_original_question),
+                "framed_question": sha256_text(resolved_framed_question),
+            },
+            "created_at": created_at,
+            "sensitivity": "internal",
+            "permissions": ["local workspace only"],
+            "retention": "User-managed local artifacts; delete when no longer needed.",
+        },
+        "advisors": {advisor: f"Replace with {advisor} response." for advisor in REQUIRED_ADVISORS},
+        "peer_reviews": [
+            {"reviewer": f"Reviewer {index}", "response": "Replace with peer review response."}
+            for index in range(1, 6)
+        ],
+        "anonymization_mapping": mapping,
+        "advisor_positions": [
+            {
+                "advisor": advisor,
+                "position": "Replace with concise position.",
+                "stance": "neutral",
+            }
+            for advisor in REQUIRED_ADVISORS
+        ],
+    }
 
 
 def slug_timestamp(value: str | None) -> str:
@@ -125,6 +468,12 @@ def text_to_html(text: Any) -> str:
 
 def markdown_section(title: str, body: Any) -> str:
     return f"## {title}\n\n{str(body or '').strip()}\n"
+
+
+def list_to_html(items: Any) -> str:
+    if not isinstance(items, list) or not items:
+        return "<p></p>"
+    return "<ul>" + "".join(f"<li>{html.escape(str(item))}</li>" for item in items) + "</ul>"
 
 
 def render_positions(payload: dict[str, Any]) -> str:
@@ -184,6 +533,65 @@ def render_mapping(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_metadata_html(payload: dict[str, Any]) -> str:
+    metadata = payload.get("metadata") or {}
+    hashes = metadata.get("hashes") or {}
+    confidence = payload.get("confidence") or {}
+    permissions = ", ".join(str(item) for item in metadata.get("permissions") or [])
+    fallback = ""
+    if payload.get("execution_mode") == "single_agent_fallback":
+        fallback = (
+            "<p><strong>Single-agent fallback:</strong> "
+            + html.escape(str(payload.get("fallback_reason", "")))
+            + "</p>"
+        )
+    rows = [
+        ("Schema", payload.get("schema_version", "")),
+        ("Run ID", metadata.get("run_id", "")),
+        ("Model IDs", ", ".join(metadata.get("model_ids") or [])),
+        ("Execution mode", payload.get("execution_mode", "")),
+        ("Created at", metadata.get("created_at", "")),
+        ("Review date", payload.get("review_date", "")),
+        ("Confidence", f"{confidence.get('level', '')}: {confidence.get('rationale', '')}"),
+        ("Sensitivity", metadata.get("sensitivity", "")),
+        ("Permissions", permissions),
+        ("Retention", metadata.get("retention", "")),
+        ("Original-question hash", metadata.get("input_hashes", {}).get("original_question", "")),
+        ("Framed-question hash", metadata.get("input_hashes", {}).get("framed_question", "")),
+        ("Session hash", hashes.get("canonical_session", "")),
+    ]
+    body = "\n".join(
+        f"<tr><th>{html.escape(label)}</th><td>{html.escape(str(value))}</td></tr>"
+        for label, value in rows
+    )
+    return f"{fallback}<table class=\"metadata\"><tbody>{body}</tbody></table>"
+
+
+def render_metadata_markdown(payload: dict[str, Any]) -> str:
+    metadata = payload.get("metadata") or {}
+    hashes = metadata.get("hashes") or {}
+    confidence = payload.get("confidence") or {}
+    permissions = ", ".join(str(item) for item in metadata.get("permissions") or [])
+    lines = [
+        f"- Schema: {payload.get('schema_version', '')}",
+        f"- Run ID: {metadata.get('run_id', '')}",
+        f"- Model IDs: {', '.join(metadata.get('model_ids') or [])}",
+        f"- Execution mode: {payload.get('execution_mode', '')}",
+        f"- Created at: {metadata.get('created_at', '')}",
+        f"- Review date: {payload.get('review_date', '')}",
+        f"- Confidence: {confidence.get('level', '')} - {confidence.get('rationale', '')}",
+        f"- Sensitivity: {metadata.get('sensitivity', '')}",
+        f"- Permissions: {permissions}",
+        f"- Retention: {metadata.get('retention', '')}",
+        f"- Original-question hash: {metadata.get('input_hashes', {}).get('original_question', '')}",
+        f"- Framed-question hash: {metadata.get('input_hashes', {}).get('framed_question', '')}",
+        f"- Session hash: {hashes.get('canonical_session', '')}",
+    ]
+    if payload.get("execution_mode") == "single_agent_fallback":
+        lines.append(f"- Single-agent fallback reason: {payload.get('fallback_reason', '')}")
+    return "\n".join(lines)
+
+
 def render_html(payload: dict[str, Any], timestamp: str) -> str:
     title = "LLM Council Report"
     advisor_blocks = []
@@ -197,12 +605,15 @@ def render_html(payload: dict[str, Any], timestamp: str) -> str:
             """
         )
 
-    generated_at = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
+    generated_at = str(payload.get("metadata", {}).get("created_at", ""))
     question = html.escape(str(payload.get("original_question", "")).strip())
     framed = text_to_html(payload.get("framed_question", ""))
     verdict = text_to_html(payload.get("chairman_verdict", ""))
     positions = render_positions(payload)
     peer_reviews = render_peer_reviews(payload)
+    metadata = render_metadata_html(payload)
+    criteria = list_to_html(payload.get("decision_criteria"))
+    disconfirming = list_to_html(payload.get("disconfirming_evidence"))
 
     return f"""<!doctype html>
 <html lang="en">
@@ -253,6 +664,23 @@ def render_html(payload: dict[str, Any], timestamp: str) -> str:
     }}
     p {{ margin: 0 0 12px; }}
     .meta {{ color: var(--muted); font-size: 14px; }}
+    table.metadata {{
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--line);
+      background: #fff;
+    }}
+    table.metadata th,
+    table.metadata td {{
+      border-bottom: 1px solid var(--line);
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }}
+    table.metadata th {{
+      width: 180px;
+      background: var(--panel);
+    }}
     .question {{
       margin-top: 16px;
       padding: 14px 16px;
@@ -328,8 +756,23 @@ def render_html(payload: dict[str, Any], timestamp: str) -> str:
     </section>
 
     <section>
+      <h2>Session Metadata</h2>
+      {metadata}
+    </section>
+
+    <section>
       <h2>Agreement / Disagreement</h2>
       <div class="positions">{positions}</div>
+    </section>
+
+    <section>
+      <h2>Decision Criteria</h2>
+      {criteria}
+    </section>
+
+    <section>
+      <h2>Disconfirming Evidence</h2>
+      {disconfirming}
     </section>
 
     <section>
@@ -362,6 +805,12 @@ def render_markdown(payload: dict[str, Any], timestamp: str) -> str:
         f"# LLM Council Transcript - {timestamp}\n",
         markdown_section("Original Question", payload.get("original_question", "")),
         markdown_section("Framed Question", payload.get("framed_question", "")),
+        markdown_section("Session Metadata", render_metadata_markdown(payload)),
+        markdown_section("Decision Criteria", "\n".join(f"- {item}" for item in payload.get("decision_criteria", []))),
+        markdown_section(
+            "Disconfirming Evidence",
+            "\n".join(f"- {item}" for item in payload.get("disconfirming_evidence", [])),
+        ),
         markdown_section("Chairman Synthesis", payload.get("chairman_verdict", "")),
         "## Advisor Responses\n",
     ]
@@ -379,9 +828,40 @@ def render_markdown(payload: dict[str, Any], timestamp: str) -> str:
     return "\n".join(chunks)
 
 
+def ensure_output_directory(path: Path) -> None:
+    existed = path.exists()
+    path.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIRECTORY_MODE)
+    if not path.is_dir():
+        raise SystemExit(f"Output path is not a directory: {path}")
+    if not existed:
+        os.chmod(path, PRIVATE_DIRECTORY_MODE)
+
+
+def write_private_artifacts(artifacts: list[tuple[Path, str]]) -> None:
+    staged: list[tuple[str, Path]] = []
+    try:
+        for path, content in artifacts:
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+            )
+            os.chmod(temporary_name, PRIVATE_FILE_MODE)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            staged.append((temporary_name, path))
+        for temporary_name, path in staged:
+            os.replace(temporary_name, path)
+            os.chmod(path, PRIVATE_FILE_MODE)
+    finally:
+        for temporary_name, _path in staged:
+            if os.path.exists(temporary_name):
+                os.unlink(temporary_name)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("session_json", help="Path to council session JSON.")
+    parser.add_argument("session_json", nargs="?", help="Path to council session JSON.")
     parser.add_argument(
         "--output-dir",
         default=".",
@@ -397,28 +877,74 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Validate the session JSON and exit without writing report artifacts.",
     )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing report/transcript files for the resolved timestamp.",
+    )
+    parser.add_argument(
+        "--sensitivity",
+        choices=sorted(SENSITIVITY_CLASSES),
+        default=None,
+        help="Override the rendered artifact sensitivity before validation and hashing.",
+    )
+    parser.add_argument(
+        "--prepare-template",
+        action="store_true",
+        help="Print a strict session JSON template with a deterministic Response A-E mapping.",
+    )
+    parser.add_argument("--seed", default=None, help="Seed used with --prepare-template.")
+    parser.add_argument("--preparer", default="codex", help="Preparer name for --prepare-template.")
+    parser.add_argument("--original-question", default="", help="Original question for --prepare-template.")
+    parser.add_argument("--framed-question", default="", help="Framed question for --prepare-template.")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.prepare_template:
+        template = prepare_session_template(
+            seed=args.seed or "",
+            original_question=args.original_question,
+            framed_question=args.framed_question,
+            preparer=args.preparer,
+        )
+        print(json.dumps(template, indent=2, sort_keys=True))
+        return 0
+
+    if not args.session_json:
+        raise SystemExit("session_json is required unless --prepare-template is used.")
+
     session_path = Path(args.session_json).expanduser().resolve()
-    payload = load_session(session_path)
+    payload = load_session(session_path, sensitivity_override=args.sensitivity)
     if args.validate_only:
         print(f"OK: {session_path}")
+        print(f"schema={payload.get('schema_version')}")
         print(f"advisors={len(REQUIRED_ADVISORS)}")
         print(f"peer_reviews={len(payload.get('peer_reviews') or [])}")
+        print(f"session_hash={payload['metadata']['hashes']['canonical_session']}")
         return 0
 
     output_dir = Path(args.output_dir).expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    ensure_output_directory(output_dir)
     timestamp = slug_timestamp(args.timestamp or payload.get("timestamp"))
 
     html_path = output_dir / f"council-report-{timestamp}.html"
     markdown_path = output_dir / f"council-transcript-{timestamp}.md"
+    existing = [str(path) for path in (html_path, markdown_path) if path.exists()]
+    if existing and not args.overwrite:
+        raise SystemExit(
+            "Refusing to overwrite existing artifact(s): "
+            + ", ".join(existing)
+            + ". Use --overwrite after confirming the collision is intentional."
+        )
 
-    html_path.write_text(render_html(payload, timestamp), encoding="utf-8")
-    markdown_path.write_text(render_markdown(payload, timestamp), encoding="utf-8")
+    write_private_artifacts(
+        [
+            (html_path, render_html(payload, timestamp)),
+            (markdown_path, render_markdown(payload, timestamp)),
+        ]
+    )
 
     print(f"HTML report: {html_path}")
     print(f"Markdown transcript: {markdown_path}")

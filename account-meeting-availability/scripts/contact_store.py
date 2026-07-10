@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manage the persistent account meeting contact store."""
+"""Manage the versioned account meeting contact store."""
 
 from __future__ import annotations
 
@@ -8,10 +8,20 @@ import csv
 import json
 import os
 import re
-import shutil
+import shlex
+import stat
 import sys
 import tempfile
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from email_validation import validate_practical_email
 
 
 CANONICAL_HEADERS = [
@@ -28,6 +38,15 @@ REQUIRED_HEADERS = [
     "customer role",
     "customer email address",
 ]
+
+CONTACT_STORE_SCHEMA = "account-meeting-availability/contact-store"
+CONTACT_STORE_SCHEMA_VERSION = "2.0"
+CONTACT_STORE_STORAGE_FORMAT = "csv"
+LEGACY_SCHEMA_VERSION = "legacy-unversioned"
+DEFAULT_LOCK_TIMEOUT_SECONDS = 10.0
+DEFAULT_LOCK_POLL_SECONDS = 0.05
+PRIVATE_FILE_MODE = stat.S_IRUSR | stat.S_IWUSR
+PRIVATE_DIRECTORY_MODE = stat.S_IRWXU
 
 RECORD_TYPES = {"customer", "uipath"}
 FORMULA_PREFIX_RE = re.compile(r"^[\t\r\n ]*[=+\-@]")
@@ -72,12 +91,28 @@ RECORD_TYPE_ALIASES = {
 }
 
 
+class LegacyStoreError(ValueError):
+    """Raised when an unversioned store requires explicit migration."""
+
+
 def default_store_path() -> Path:
     configured = os.environ.get("CUSTOMER_EMAIL_STORE")
     if configured:
         return Path(configured).expanduser()
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
     return codex_home / "account-meeting-availability" / "contacts.csv"
+
+
+def metadata_path(path: Path) -> Path:
+    return path.with_name(path.name + ".metadata.json")
+
+
+def lock_directory_path(path: Path) -> Path:
+    return path.with_name(path.name + ".lock")
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def normalize_header(value: str) -> str:
@@ -112,62 +147,227 @@ def normalize_record_type(value: str | None, default: str = "customer") -> str:
     return normalized
 
 
-def normalize_row(row: dict[str, str]) -> dict[str, str]:
+def normalize_row(row: dict[str, str], *, context: str = "contact") -> dict[str, str]:
     normalized = {header: normalize_value(row.get(header)) for header in CANONICAL_HEADERS}
     normalized["record type"] = normalize_record_type(row.get("record type"))
+    try:
+        normalized["customer email address"] = validate_practical_email(
+            normalized["customer email address"], allow_blank=True
+        )
+    except ValueError as exc:
+        raise ValueError(f"{context}: {exc}") from exc
     return normalized
 
 
-def same_contact(left: dict[str, str], right: dict[str, str]) -> bool:
-    left_email = normalize_value(left.get("customer email address")).casefold()
-    right_email = normalize_value(right.get("customer email address")).casefold()
-    if left_email and right_email and left_email == right_email:
-        return True
+def identity_scope(row: dict[str, str]) -> tuple[str, str]:
+    return (
+        normalize_value(row.get("account name")).casefold(),
+        normalize_record_type(row.get("record type")),
+    )
 
-    left_account = normalize_value(left.get("account name")).casefold()
-    right_account = normalize_value(right.get("account name")).casefold()
-    left_type = normalize_record_type(left.get("record type"))
-    right_type = normalize_record_type(right.get("record type"))
+
+def scoped_name_identity(row: dict[str, str]) -> tuple[str, str, str]:
+    account, record_type = identity_scope(row)
+    return account, record_type, normalize_value(row.get("customer name")).casefold()
+
+
+def validate_unique_scoped_identities(
+    rows: list[dict[str, str]], *, context: str = "contact store"
+) -> None:
+    seen: dict[tuple[str, str, str], int] = {}
+    for index, row in enumerate(rows, start=1):
+        key = scoped_name_identity(row)
+        if key in seen:
+            account, record_type, name = key
+            raise ValueError(
+                f"{context} has duplicate scoped identity at rows {seen[key]} and {index}: "
+                f"account='{account}', record type='{record_type}', name='{name}'. "
+                "Resolve the duplicate explicitly before retrying."
+            )
+        seen[key] = index
+
+
+def same_contact(left: dict[str, str], right: dict[str, str]) -> bool:
+    if identity_scope(left) != identity_scope(right):
+        return False
+
     left_name = normalize_value(left.get("customer name")).casefold()
     right_name = normalize_value(right.get("customer name")).casefold()
-    return bool(left_account and right_account and left_name and right_name) and (
-        left_account,
-        left_type,
-        left_name,
-    ) == (right_account, right_type, right_name)
+    if left_name and right_name and left_name == right_name:
+        return True
+
+    left_email = normalize_value(left.get("customer email address")).casefold()
+    right_email = normalize_value(right.get("customer email address")).casefold()
+    return bool(left_email and right_email and left_email == right_email)
+
+
+def _ensure_parent(path: Path) -> None:
+    parent_existed = path.parent.exists()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIRECTORY_MODE)
+    if not parent_existed:
+        os.chmod(path.parent, PRIVATE_DIRECTORY_MODE)
+
+
+def _restrict_file(path: Path) -> None:
+    os.chmod(path, PRIVATE_FILE_MODE)
+
+
+def _atomic_text_write(path: Path, writer, *, newline: str | None = None) -> None:
+    _ensure_parent(path)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        os.chmod(temporary_name, PRIVATE_FILE_MODE)
+        with os.fdopen(descriptor, "w", newline=newline, encoding="utf-8") as handle:
+            writer(handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, path)
+        _restrict_file(path)
+    finally:
+        if os.path.exists(temporary_name):
+            os.unlink(temporary_name)
+
+
+def write_rows(
+    path: Path, rows: list[dict[str, str]], *, escape_formulas: bool = False
+) -> None:
+    normalized_rows = [
+        normalize_row(row, context=f"contact row {index}")
+        for index, row in enumerate(rows, start=1)
+    ]
+    validate_unique_scoped_identities(normalized_rows)
+
+    def write(handle) -> None:
+        writer = csv.DictWriter(handle, fieldnames=CANONICAL_HEADERS)
+        writer.writeheader()
+        for row in normalized_rows:
+            writer.writerow(safe_csv_row(row) if escape_formulas else row)
+
+    _atomic_text_write(path, write, newline="")
+
+
+def _new_metadata(*, migrated: bool) -> dict[str, object]:
+    timestamp = utc_now()
+    return {
+        "schema": CONTACT_STORE_SCHEMA,
+        "schema_version": CONTACT_STORE_SCHEMA_VERSION,
+        "storage_format": CONTACT_STORE_STORAGE_FORMAT,
+        "created_at": timestamp,
+        "migration": (
+            {
+                "from_schema_version": LEGACY_SCHEMA_VERSION,
+                "migrated_at": timestamp,
+            }
+            if migrated
+            else None
+        ),
+    }
+
+
+def write_metadata(path: Path, metadata: dict[str, object]) -> None:
+    def write(handle) -> None:
+        json.dump(metadata, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
+    _atomic_text_write(metadata_path(path), write)
+
+
+def read_metadata(path: Path) -> dict[str, object]:
+    sidecar = metadata_path(path)
+    try:
+        with sidecar.open(encoding="utf-8") as handle:
+            metadata = json.load(handle)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Contact store metadata is not valid JSON: {sidecar}") from exc
+    if not isinstance(metadata, dict):
+        raise ValueError(f"Contact store metadata must be a JSON object: {sidecar}")
+    expected_keys = {"schema", "schema_version", "storage_format", "created_at", "migration"}
+    if set(metadata) != expected_keys:
+        raise ValueError(
+            f"Contact store metadata fields do not match schema version "
+            f"{CONTACT_STORE_SCHEMA_VERSION}: {sidecar}"
+        )
+    if metadata.get("schema") != CONTACT_STORE_SCHEMA:
+        raise ValueError(
+            f"Unsupported contact store schema '{metadata.get('schema')}'. "
+            "Restore the matching metadata or use a compatible skill release."
+        )
+    if metadata.get("schema_version") != CONTACT_STORE_SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported contact store schema version '{metadata.get('schema_version')}'; "
+            f"this release supports '{CONTACT_STORE_SCHEMA_VERSION}'. "
+            "Do not edit the CSV until it has been migrated by a compatible release."
+        )
+    if metadata.get("storage_format") != CONTACT_STORE_STORAGE_FORMAT:
+        raise ValueError("Contact store metadata does not declare CSV storage")
+    _validate_metadata_timestamp(metadata.get("created_at"), "created_at")
+    migration = metadata.get("migration")
+    if migration is not None:
+        if not isinstance(migration, dict) or set(migration) != {
+            "from_schema_version",
+            "migrated_at",
+        }:
+            raise ValueError("Contact store migration metadata is malformed")
+        if migration.get("from_schema_version") != LEGACY_SCHEMA_VERSION:
+            raise ValueError("Contact store migration source version is unsupported")
+        _validate_metadata_timestamp(migration.get("migrated_at"), "migration.migrated_at")
+    return metadata
+
+
+def _validate_metadata_timestamp(value: object, context: str) -> None:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise ValueError(f"Contact store metadata {context} must be a UTC timestamp")
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError as exc:
+        raise ValueError(f"Contact store metadata {context} is invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        raise ValueError(f"Contact store metadata {context} must use UTC")
+
+
+def _legacy_migration_error(path: Path) -> LegacyStoreError:
+    quoted_path = shlex.quote(str(path))
+    return LegacyStoreError(
+        f"Legacy unversioned contact store detected at {path}. Back up this local file, "
+        f"then run: python3 scripts/contact_store.py --store {quoted_path} migrate. "
+        "No contact data was changed."
+    )
 
 
 def ensure_store(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar = metadata_path(path)
+    if path.exists() and not sidecar.exists():
+        raise _legacy_migration_error(path)
+    if sidecar.exists() and not path.exists():
+        raise ValueError(
+            f"Contact store CSV is missing but metadata remains at {sidecar}. "
+            "Restore the CSV from a trusted backup or remove both files and run init."
+        )
     if not path.exists():
         write_rows(path, [])
+        write_metadata(path, _new_metadata(migrated=False))
+    read_metadata(path)
+    _restrict_file(path)
+    _restrict_file(sidecar)
 
 
 def read_rows(path: Path) -> list[dict[str, str]]:
-    ensure_store(path)
     with path.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
-        if not reader.fieldnames:
-            return []
-        missing = [header for header in REQUIRED_HEADERS if header not in reader.fieldnames]
-        if missing:
-            raise ValueError(f"Contact store is missing column(s): {', '.join(missing)}")
-        return [normalize_row(row) for row in reader]
-
-
-def write_rows(path: Path, rows: list[dict[str, str]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=".contacts.", suffix=".csv", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=CANONICAL_HEADERS)
-            writer.writeheader()
-            for row in rows:
-                writer.writerow(safe_csv_row(normalize_row(row)))
-        shutil.move(tmp_name, path)
-    finally:
-        if os.path.exists(tmp_name):
-            os.unlink(tmp_name)
+        if reader.fieldnames != CANONICAL_HEADERS:
+            raise ValueError(
+                "Contact store CSV header does not match schema version 2.0. "
+                "Do not edit the backing CSV directly; restore the canonical header or a trusted backup."
+            )
+        rows = []
+        for index, row in enumerate(reader, start=1):
+            if None in row:
+                raise ValueError(f"contact store row {index} contains more values than headers")
+            rows.append(normalize_row(row, context=f"contact store row {index}"))
+    validate_unique_scoped_identities(rows)
+    return rows
 
 
 def read_import_csv(path: Path) -> list[dict[str, str]]:
@@ -194,13 +394,107 @@ def read_import_csv(path: Path) -> list[dict[str, str]]:
             raise ValueError("Import CSV is missing column(s): " + ", ".join(missing))
 
         rows = []
-        for row in reader:
+        for index, row in enumerate(reader, start=1):
+            if None in row:
+                raise ValueError(f"import row {index} contains more values than headers")
             imported = {
                 canonical: normalize_value(row.get(original))
                 for canonical, original in header_map.items()
             }
-            rows.append(normalize_row(imported))
-        return rows
+            rows.append(normalize_row(imported, context=f"import row {index}"))
+    validate_unique_scoped_identities(rows, context="import CSV")
+    return rows
+
+
+def migrate_store(path: Path) -> str:
+    sidecar = metadata_path(path)
+    if sidecar.exists():
+        if not path.exists():
+            raise ValueError(f"Cannot migrate because the contact CSV is missing: {path}")
+        read_metadata(path)
+        _restrict_file(path)
+        _restrict_file(sidecar)
+        return f"Contact store already uses schema {CONTACT_STORE_SCHEMA_VERSION}: {path}"
+    if not path.exists():
+        raise ValueError(f"No legacy contact store exists at {path}; run init instead")
+
+    try:
+        rows = read_import_csv(path)
+    except Exception as exc:
+        raise ValueError(
+            f"Legacy migration validation failed: {exc}. Correct a backed-up copy and retry; "
+            "the original store was not changed."
+        ) from exc
+
+    write_rows(path, rows)
+    write_metadata(path, _new_metadata(migrated=True))
+    return f"Migrated contact store to schema {CONTACT_STORE_SCHEMA_VERSION}: {path}"
+
+
+class StoreLock:
+    """Coordinate contact-store access with an atomic, cross-platform directory lock."""
+
+    def __init__(
+        self,
+        store: Path,
+        *,
+        timeout_seconds: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
+        poll_seconds: float = DEFAULT_LOCK_POLL_SECONDS,
+    ) -> None:
+        if timeout_seconds < 0:
+            raise ValueError("lock timeout must be zero or greater")
+        if poll_seconds <= 0:
+            raise ValueError("lock poll interval must be greater than zero")
+        self.store = store
+        self.path = lock_directory_path(store)
+        self.owner_path = self.path / "owner.json"
+        self.timeout_seconds = timeout_seconds
+        self.poll_seconds = poll_seconds
+        self.acquired = False
+
+    def __enter__(self):
+        _ensure_parent(self.store)
+        deadline = time.monotonic() + self.timeout_seconds
+        while True:
+            try:
+                os.mkdir(self.path, PRIVATE_DIRECTORY_MODE)
+                os.chmod(self.path, PRIVATE_DIRECTORY_MODE)
+                self.acquired = True
+                break
+            except FileExistsError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"Timed out waiting for contact store lock {self.path}. "
+                        "If a process crashed, inspect owner.json and remove the lock directory "
+                        "only after confirming that process is no longer active."
+                    )
+                time.sleep(min(self.poll_seconds, max(0.0, deadline - time.monotonic())))
+
+        try:
+            def write_owner(handle) -> None:
+                json.dump({"pid": os.getpid(), "acquired_at": utc_now()}, handle, sort_keys=True)
+                handle.write("\n")
+
+            _atomic_text_write(self.owner_path, write_owner)
+        except Exception:
+            self._release()
+            raise
+        return self
+
+    def _release(self) -> None:
+        if not self.acquired:
+            return
+        try:
+            try:
+                self.owner_path.unlink()
+            except FileNotFoundError:
+                pass
+            os.rmdir(self.path)
+        finally:
+            self.acquired = False
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self._release()
 
 
 def filter_rows(
@@ -228,11 +522,17 @@ def filter_rows(
 
 
 def upsert_row(rows: list[dict[str, str]], new_row: dict[str, str]) -> tuple[list[dict[str, str]], str]:
-    for index, row in enumerate(rows):
-        if same_contact(row, new_row):
-            rows[index] = normalize_row(new_row)
-            return rows, "updated"
-    rows.append(normalize_row(new_row))
+    normalized = normalize_row(new_row)
+    matches = [index for index, row in enumerate(rows) if same_contact(row, normalized)]
+    if len(matches) > 1:
+        raise ValueError(
+            "contact matches multiple scoped identities; resolve duplicate account/type/name "
+            "records before retrying"
+        )
+    if matches:
+        rows[matches[0]] = normalized
+        return rows, "updated"
+    rows.append(normalized)
     return rows, "added"
 
 
@@ -263,10 +563,23 @@ def print_rows(rows: list[dict[str, str]], output_format: str) -> None:
 
 def add_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--store", type=Path, default=default_store_path(), help="Contact store CSV path")
+    parser.add_argument(
+        "--lock-timeout",
+        type=float,
+        default=DEFAULT_LOCK_TIMEOUT_SECONDS,
+        help="Seconds to wait for the contact store lock (default: 10)",
+    )
+    parser.add_argument(
+        "--lock-poll-interval",
+        type=float,
+        default=DEFAULT_LOCK_POLL_SECONDS,
+        help=argparse.SUPPRESS,
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("path", help="Print the contact store path")
-    subparsers.add_parser("init", help="Create the contact store if it does not exist")
+    subparsers.add_parser("init", help="Create a versioned contact store if it does not exist")
+    subparsers.add_parser("migrate", help="Explicitly migrate an unversioned legacy contact CSV")
 
     add_parser = subparsers.add_parser("add", help="Add or update a contact")
     add_parser.add_argument("--account", required=True)
@@ -303,7 +616,7 @@ def add_args(parser: argparse.ArgumentParser) -> None:
     import_parser.add_argument("csv_path", type=Path)
     import_parser.add_argument("--mode", choices=["upsert", "skip-existing"], default="upsert")
 
-    export_parser = subparsers.add_parser("export", help="Export contacts to a CSV")
+    export_parser = subparsers.add_parser("export", help="Export contacts to a guarded CSV")
     export_parser.add_argument("--output", "-o", type=Path, required=True)
 
 
@@ -318,104 +631,126 @@ def main(argv: list[str]) -> int:
             print(store)
             return 0
 
-        ensure_store(store)
+        with StoreLock(
+            store,
+            timeout_seconds=args.lock_timeout,
+            poll_seconds=args.lock_poll_interval,
+        ):
+            if args.command == "migrate":
+                print(migrate_store(store))
+                return 0
 
-        if args.command == "init":
-            print(f"Contact store: {store}")
-            return 0
+            ensure_store(store)
 
-        rows = read_rows(store)
+            if args.command == "init":
+                print(f"Contact store: {store}")
+                print(f"Metadata: {metadata_path(store)}")
+                return 0
 
-        if args.command == "add":
-            row = {
-                "account name": args.account,
-                "record type": normalize_record_type(args.record_type),
-                "customer name": args.name,
-                "customer role": args.role,
-                "customer email address": args.email,
-            }
-            rows, action = upsert_row(rows, row)
-            write_rows(store, rows)
-            print(f"{action}: [{row['record type']}] {args.name} <{args.email}>")
-            return 0
+            rows = read_rows(store)
 
-        if args.command == "edit":
-            matches = filter_rows(
-                rows,
-                args.match_account,
-                args.match_record_type,
-                args.match_name,
-                args.match_email,
-            )
-            if len(matches) != 1:
-                raise ValueError(f"edit requires exactly one match; found {len(matches)}")
-            for index, row in enumerate(rows):
-                if row is matches[0]:
-                    updates = [
-                        ("account name", args.account),
-                        (
-                            "record type",
-                            normalize_record_type(args.record_type)
-                            if args.record_type is not None
-                            else None,
-                        ),
-                        ("customer name", args.name),
-                        ("customer role", args.role),
-                        ("customer email address", args.email),
-                    ]
-                    for field, value in updates:
-                        if value is not None:
-                            row[field] = normalize_value(value)
-                    rows[index] = normalize_row(row)
-                    break
-            write_rows(store, rows)
-            print("updated contact")
-            return 0
-
-        if args.command == "list":
-            print_rows(
-                filter_rows(rows, args.account, args.record_type, args.name, args.email),
-                args.format,
-            )
-            return 0
-
-        if args.command == "delete":
-            matches = filter_rows(
-                rows,
-                args.match_account,
-                args.match_record_type,
-                args.match_name,
-                args.match_email,
-            )
-            if len(matches) != 1:
-                raise ValueError(f"delete requires exactly one match; found {len(matches)}")
-            rows = [row for row in rows if row is not matches[0]]
-            write_rows(store, rows)
-            print("deleted contact")
-            return 0
-
-        if args.command == "import":
-            incoming = read_import_csv(args.csv_path)
-            counts = {"added": 0, "updated": 0, "skipped": 0}
-            for row in incoming:
-                if args.mode == "skip-existing" and any(same_contact(existing, row) for existing in rows):
-                    counts["skipped"] += 1
-                    continue
+            if args.command == "add":
+                email = validate_practical_email(args.email)
+                row = {
+                    "account name": args.account,
+                    "record type": normalize_record_type(args.record_type),
+                    "customer name": args.name,
+                    "customer role": args.role,
+                    "customer email address": email,
+                }
                 rows, action = upsert_row(rows, row)
-                counts[action] += 1
-            write_rows(store, rows)
-            print(
-                f"imported: {counts['added']} added, "
-                f"{counts['updated']} updated, {counts['skipped']} skipped"
-            )
-            return 0
+                write_rows(store, rows)
+                print(f"{action}: [{row['record type']}] {args.name} <{email}>")
+                return 0
 
-        if args.command == "export":
-            write_rows(args.output.expanduser(), rows)
-            print(f"Exported contacts: {args.output}")
-            return 0
+            if args.command == "edit":
+                matches = filter_rows(
+                    rows,
+                    args.match_account,
+                    args.match_record_type,
+                    args.match_name,
+                    args.match_email,
+                )
+                if len(matches) != 1:
+                    raise ValueError(f"edit requires exactly one match; found {len(matches)}")
+                for index, row in enumerate(rows):
+                    if row is matches[0]:
+                        updates = [
+                            ("account name", args.account),
+                            (
+                                "record type",
+                                normalize_record_type(args.record_type)
+                                if args.record_type is not None
+                                else None,
+                            ),
+                            ("customer name", args.name),
+                            ("customer role", args.role),
+                            (
+                                "customer email address",
+                                validate_practical_email(args.email, allow_blank=True)
+                                if args.email is not None
+                                else None,
+                            ),
+                        ]
+                        for field, value in updates:
+                            if value is not None:
+                                row[field] = normalize_value(value)
+                        rows[index] = normalize_row(row)
+                        break
+                write_rows(store, rows)
+                print("updated contact")
+                return 0
 
-        raise ValueError(f"unknown command: {args.command}")
+            if args.command == "list":
+                print_rows(
+                    filter_rows(rows, args.account, args.record_type, args.name, args.email),
+                    args.format,
+                )
+                return 0
+
+            if args.command == "delete":
+                matches = filter_rows(
+                    rows,
+                    args.match_account,
+                    args.match_record_type,
+                    args.match_name,
+                    args.match_email,
+                )
+                if len(matches) != 1:
+                    raise ValueError(f"delete requires exactly one match; found {len(matches)}")
+                rows = [row for row in rows if row is not matches[0]]
+                write_rows(store, rows)
+                print("deleted contact")
+                return 0
+
+            if args.command == "import":
+                incoming = read_import_csv(args.csv_path)
+                counts = {"added": 0, "updated": 0, "skipped": 0}
+                for row in incoming:
+                    if args.mode == "skip-existing" and any(
+                        same_contact(existing, row) for existing in rows
+                    ):
+                        counts["skipped"] += 1
+                        continue
+                    rows, action = upsert_row(rows, row)
+                    counts[action] += 1
+                write_rows(store, rows)
+                print(
+                    f"imported: {counts['added']} added, "
+                    f"{counts['updated']} updated, {counts['skipped']} skipped"
+                )
+                return 0
+
+            if args.command == "export":
+                output = args.output.expanduser()
+                protected_paths = {store.resolve(), metadata_path(store).resolve()}
+                if output.resolve() in protected_paths:
+                    raise ValueError("export output must not overwrite the contact store or metadata")
+                write_rows(output, rows, escape_formulas=True)
+                print(f"Exported contacts: {output}")
+                return 0
+
+            raise ValueError(f"unknown command: {args.command}")
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

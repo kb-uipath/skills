@@ -1,0 +1,15 @@
+{
+  "confirmedBy": "Avery Confidential",
+  "customerNarrative": "Avery Confidential at avery@example.com needs claim automation.",
+  "connectorId": "conn-private-123",
+  "requestBody": "{\"Metrics__c\":\"private narrative\"}",
+  "forbiddenAuditLiterals": [
+    "Avery Confidential",
+    "avery@example.com",
+    "claim automation",
+    "conn-private-123",
+    "private narrative",
+    "006000000000001AAA",
+    "Selective Insurance"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": "estimate-du-units.rate-profile.v1",
+  "profile_id": "synthetic-stale-v1",
+  "rates": [
+    {
+      "name": "synthetic-stale-ai-rate",
+      "unit": "ai_unit",
+      "rate": "1",
+      "source_url": "https://example.com/rates/stale-ai",
+      "accessed_on": "2026-05-01",
+      "effective_on": "2026-01-01",
+      "max_age_days": 30
+    }
+  ]
+}

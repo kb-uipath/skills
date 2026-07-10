@@ -1,0 +1,263 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:uipath:account-meeting-availability:free-busy-result:v1",
+  "title": "Account Meeting Availability Free/Busy Result v1",
+  "description": "Deterministic meeting-slot ranking result. This is a recommendation artifact, not a calendar write.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "request_id",
+    "status",
+    "reason",
+    "search_window",
+    "slot_duration_minutes",
+    "slot_increment_minutes",
+    "required_participant_ids",
+    "optional_participant_ids",
+    "participant_labels",
+    "eligible_slot_count",
+    "candidate_diagnostics",
+    "ranked_slots",
+    "source"
+  ],
+  "properties": {
+    "schema": {
+      "const": "account-meeting-availability/free-busy-result"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "status": {
+      "enum": ["ranked", "no_common_slot"]
+    },
+    "reason": {
+      "type": ["string", "null"]
+    },
+    "search_window": {
+      "$ref": "#/$defs/window"
+    },
+    "slot_duration_minutes": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 1440
+    },
+    "slot_increment_minutes": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 1440
+    },
+    "required_participant_ids": {
+      "$ref": "#/$defs/participantIds"
+    },
+    "optional_participant_ids": {
+      "$ref": "#/$defs/participantIds"
+    },
+    "participant_labels": {
+      "type": "object",
+      "description": "Participant ID to display-label map. Email addresses are never emitted.",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "eligible_slot_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "candidate_diagnostics": {
+      "$ref": "#/$defs/candidateDiagnostics"
+    },
+    "ranked_slots": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/rankedSlot"
+      }
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "end": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "participantIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "retrieval_mode", "retrieved_at"],
+      "properties": {
+        "provider": {
+          "const": "outlook"
+        },
+        "retrieval_mode": {
+          "const": "read-only"
+        },
+        "retrieved_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "rankedSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rank",
+        "start",
+        "end",
+        "optional_available_count",
+        "optional_available_participant_ids",
+        "optional_unavailable_participant_ids",
+        "optional_unavailability",
+        "local_times"
+      ],
+      "properties": {
+        "rank": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "start": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "end": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "optional_available_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "optional_available_participant_ids": {
+          "$ref": "#/$defs/participantIds"
+        },
+        "optional_unavailable_participant_ids": {
+          "$ref": "#/$defs/participantIds"
+        },
+        "optional_unavailability": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/requiredBlocker"
+          }
+        },
+        "local_times": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/localTime"
+          }
+        }
+      }
+    },
+    "candidateDiagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evaluated_slot_count",
+        "excluded_slot_count",
+        "reason_counts",
+        "excluded_slots",
+        "excluded_slots_truncated"
+      ],
+      "properties": {
+        "evaluated_slot_count": {"type": "integer", "minimum": 0},
+        "excluded_slot_count": {"type": "integer", "minimum": 0},
+        "reason_counts": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 1}
+        },
+        "excluded_slots": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {"$ref": "#/$defs/excludedSlot"}
+        },
+        "excluded_slots_truncated": {"type": "boolean"}
+      }
+    },
+    "excludedSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end", "required_blockers"],
+      "properties": {
+        "start": {"$ref": "#/$defs/timestamp"},
+        "end": {"$ref": "#/$defs/timestamp"},
+        "required_blockers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/requiredBlocker"}
+        }
+      }
+    },
+    "requiredBlocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["participant_id", "display_name", "reason"],
+      "properties": {
+        "participant_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "display_name": {"type": "string", "minLength": 1, "maxLength": 128},
+        "reason": {
+          "type": "string",
+          "pattern": "^(?:outside_working_hours|blocking_[a-z_+]+)$"
+        }
+      }
+    },
+    "localTime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["participant_id", "display_name", "time_zone", "start", "end"],
+      "properties": {
+        "participant_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "time_zone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "start": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "end": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    }
+  }
+}

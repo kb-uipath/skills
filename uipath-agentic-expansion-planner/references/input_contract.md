@@ -12,6 +12,11 @@ The skill can produce a directional analysis with these inputs:
 
 If any of these are missing, ask for the missing item before attempting a full analysis. If the user asks for a best-effort answer anyway, proceed but label the output as partial.
 
+For auditable output, convert these inputs into schema `1.0` `evidence_ledger.json` and
+`portfolio.json` using `references/data_contracts.md`. Unversioned JSON is rejected. A legacy
+Markdown brief can be structurally validated, but it cannot certify evidence, scoring, dates,
+deployment fit, value math, or entitlement claims.
+
 ## Required inputs for full-quality output
 
 Full-quality output requires all of the following.
@@ -42,6 +47,9 @@ Required inventory fields:
 - Status or lifecycle stage.
 - Department, agency, function, process area, or business owner group.
 - Owner, sponsor, SME, or requestor when available.
+
+`inventory_profiler.py` assigns each physical source row an `INV-*` ID. Use that ID downstream;
+names are not keys because names may be duplicated or changed.
 
 Strongly required for high-confidence prioritization:
 
@@ -101,6 +109,9 @@ Required for strongest strategy alignment:
 
 If public research is used, prioritize official sources and cite all public facts.
 
+Record each source as a dated `SRC-*` entry and every planning assumption as an `ASM-*` entry.
+Confirmed entitlement claims require matching ledger evidence.
+
 ### 6. Output expectations
 
 Required:
@@ -146,3 +157,5 @@ Full-quality output requires enough context to write a concise `.docx` scope lin
 - If deployment context is missing, include explicit validation questions and avoid final implementation claims.
 - If product entitlement is missing, say capability fit, not current entitlement.
 - If a user asks for a non-DOCX output, treat that request as supplemental and still render the final `.docx` unless the user explicitly prohibits file output or file creation is impossible.
+- If a versioned artifact is missing `schema_version`, has an unsupported version, or fails ID
+  integrity, stop and follow the migration guidance. Do not infer references from names.

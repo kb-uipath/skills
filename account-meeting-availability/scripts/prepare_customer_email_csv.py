@@ -5,9 +5,19 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import re
+import stat
 import sys
+import tempfile
 from pathlib import Path
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from email_validation import validate_practical_email
 
 
 CANONICAL_HEADERS = [
@@ -54,6 +64,8 @@ AUTOMATED_OR_LIST_LOCAL_PARTS = {
     "team",
 }
 FORMULA_PREFIX_RE = re.compile(r"^[\t\r\n ]*[=+\-@]")
+PRIVATE_FILE_MODE = stat.S_IRUSR | stat.S_IWUSR
+PRIVATE_DIRECTORY_MODE = stat.S_IRWXU
 
 ALIASES = {
     "account": "account name",
@@ -161,13 +173,19 @@ def build_header_map(headers: list[str]) -> dict[str, str]:
 
 def normalize_rows(rows: list[dict[str, str]], header_map: dict[str, str]) -> list[dict[str, str]]:
     normalized_rows = []
-    for row in rows:
+    for index, row in enumerate(rows, start=1):
         normalized = {
             canonical: (row.get(original, "") or "").strip()
             for canonical, original in header_map.items()
         }
         normalized["record type"] = normalize_record_type(normalized.get("record type"))
-        email = normalized.get("customer email address", "")
+        try:
+            email = validate_practical_email(
+                normalized.get("customer email address", ""), allow_blank=True
+            )
+        except ValueError as exc:
+            raise ValueError(f"row {index}: {exc}") from exc
+        normalized["customer email address"] = email
         internal_customer_email = normalized["record type"] == "customer" and is_internal_email(email)
         automated_or_distribution = bool(email) and is_automated_or_distribution_email(email)
         source_type = "provided-csv" if email else "none"
@@ -193,21 +211,40 @@ def normalize_rows(rows: list[dict[str, str]], header_map: dict[str, str]) -> li
     return normalized_rows
 
 
+def atomic_csv_write(path: Path, fieldnames: list[str], rows: list[dict[str, str]]) -> None:
+    parent_existed = path.parent.exists()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIRECTORY_MODE)
+    if not parent_existed:
+        os.chmod(path.parent, PRIVATE_DIRECTORY_MODE)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        os.chmod(temporary_name, PRIVATE_FILE_MODE)
+        with os.fdopen(descriptor, "w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, path)
+        os.chmod(path, PRIVATE_FILE_MODE)
+    finally:
+        if os.path.exists(temporary_name):
+            os.unlink(temporary_name)
+
+
 def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
     headers = CANONICAL_HEADERS + OUTPUT_HEADERS
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=headers, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(
-            {key: safe_csv_value(str(value or "")) for key, value in row.items()}
-            for row in rows
-        )
+    safe_rows = [
+        {key: safe_csv_value(str(value or "")) for key, value in row.items()}
+        for row in rows
+    ]
+    atomic_csv_write(path, headers, safe_rows)
 
 
 def write_template(path: Path) -> None:
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=CANONICAL_HEADERS)
-        writer.writeheader()
+    atomic_csv_write(path, CANONICAL_HEADERS, [])
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

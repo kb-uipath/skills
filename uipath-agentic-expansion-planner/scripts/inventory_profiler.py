@@ -124,11 +124,15 @@ COLUMN_KEYWORDS: Dict[str, List[str]] = {
     ],
     "handling_time": [
         "handling time",
+        "average handling time",
+        "average handling minutes",
+        "avg handling minutes",
         "average handle time",
         "aht",
         "minutes per transaction",
         "hours per transaction",
         "manual time",
+        "average processing minutes",
         "processing time",
         "time per case",
     ],
@@ -245,6 +249,8 @@ STOP_WORDS = {
     "workflow",
 }
 
+PROFILE_SCHEMA_VERSION = "1.0"
+
 
 def clean_cell(value: Any) -> str:
     if value is None:
@@ -258,6 +264,17 @@ def normalize_text(value: Any) -> str:
     text = clean_cell(value).lower()
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def stable_inventory_id(row: Dict[str, Any]) -> str:
+    """Create a stable ID from source sheet and physical row number."""
+
+    sheet = clean_cell(row.get("__sheet")) or "sheet"
+    sheet_slug = re.sub(r"[^A-Z0-9]+", "-", sheet.upper()).strip("-") or "SHEET"
+    row_number = row.get("__row_number")
+    if isinstance(row_number, bool) or not isinstance(row_number, int) or row_number < 1:
+        raise ValueError("inventory row is missing a positive __row_number")
+    return f"INV-{sheet_slug[:48]}-R{row_number:05d}"
 
 
 def nonempty(value: Any) -> bool:
@@ -439,13 +456,31 @@ def parse_number(value: Any) -> Optional[float]:
     text = text.replace(",", "")
     text = text.replace("$", "")
     text = text.replace("%", "")
-    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    match = re.search(
+        r"-?\d+(?:\.\d+)?\s*(k|m|b|thousand|million|billion)?\b",
+        text,
+        re.IGNORECASE,
+    )
     if not match:
         return None
     try:
-        number = float(match.group(0))
+        numeric_match = re.search(r"-?\d+(?:\.\d+)?", match.group(0))
+        if numeric_match is None:
+            return None
+        number = float(numeric_match.group(0))
+        suffix = (match.group(1) or "").casefold()
+        multiplier = {
+            "": 1,
+            "k": 1_000,
+            "thousand": 1_000,
+            "m": 1_000_000,
+            "million": 1_000_000,
+            "b": 1_000_000_000,
+            "billion": 1_000_000_000,
+        }[suffix]
+        number *= multiplier
         return -number if negative else number
-    except ValueError:
+    except (KeyError, ValueError):
         return None
 
 
@@ -545,7 +580,11 @@ def duplicate_name_groups(rows: List[Dict[str, Any]], name_column: Optional[str]
 
 
 def compact_row(row: Dict[str, Any], columns: List[str]) -> Dict[str, Any]:
-    result = {"sheet": row.get("__sheet"), "row_number": row.get("__row_number")}
+    result = {
+        "inventory_id": stable_inventory_id(row),
+        "sheet": row.get("__sheet"),
+        "row_number": row.get("__row_number"),
+    }
     for column in columns:
         if column and column in row:
             value = clean_cell(row.get(column))
@@ -593,6 +632,16 @@ def build_profile(path: Path, sheets: Dict[str, List[Dict[str, Any]]]) -> Dict[s
         )
 
     headers = get_headers(all_rows)
+    generated_ids = [stable_inventory_id(row) for row in all_rows]
+    duplicate_ids = sorted(
+        item_id for item_id, count in Counter(generated_ids).items() if count > 1
+    )
+    if duplicate_ids:
+        raise ValueError(
+            "inventory ID collision after sheet-name normalization: "
+            + ", ".join(duplicate_ids)
+            + ". Rename colliding sheets and regenerate the profile."
+        )
     guesses = guess_columns(headers)
     get_best = lambda key: guesses.get(key, {}).get("best")
 
@@ -641,12 +690,28 @@ def build_profile(path: Path, sheets: Dict[str, List[Dict[str, Any]]]) -> Dict[s
         "value": value_col,
         "priority": priority_col,
     }
+    metric_fields: List[Tuple[str, str]] = []
+    used_metric_columns = set()
+    for field in (
+        "annual_volume",
+        "weekly_volume",
+        "volume",
+        "handling_time",
+        "hours_saved",
+        "value",
+        "priority",
+    ):
+        column = core_fields.get(field)
+        if column and column not in used_metric_columns:
+            metric_fields.append((field, column))
+            used_metric_columns.add(column)
 
     required_for_full_quality = ["use_case_name", "description", "status", "department"]
     missing_core = [field for field in required_for_full_quality if not core_fields.get(field)]
     weak_value_fields = not any(core_fields.get(field) for field in ["volume", "weekly_volume", "annual_volume", "handling_time", "hours_saved", "value"])
 
     profile = {
+        "schema_version": PROFILE_SCHEMA_VERSION,
         "metadata": {
             "source_file": str(path),
             "generated_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
@@ -682,6 +747,25 @@ def build_profile(path: Path, sheets: Dict[str, List[Dict[str, Any]]]) -> Dict[s
         },
         "top_rows_by_detected_metrics": top_rows_by_metric(all_rows, detected_metric_columns, context_columns),
         "representative_rows": [compact_row(row, context_columns) for row in all_rows[:15]],
+        "inventory_items": [
+            {
+                "inventory_id": stable_inventory_id(row),
+                "name": clean_cell(row.get(name_col)) if name_col else "",
+                "description": clean_cell(row.get(desc_col)) if desc_col else "",
+                "status": classify_status(row.get(status_col)) if status_col else "unknown",
+                "department": clean_cell(row.get(dept_col)) if dept_col else "",
+                "owner": clean_cell(row.get(owner_col)) if owner_col else "",
+                "systems": clean_cell(row.get(systems_col)) if systems_col else "",
+                "sheet": row.get("__sheet"),
+                "row_number": row.get("__row_number"),
+                "metrics": [
+                    {"name": field, "value": parsed}
+                    for field, column in metric_fields
+                    if (parsed := parse_number(row.get(column))) is not None
+                ],
+            }
+            for row in all_rows
+        ],
     }
     return profile
 
@@ -707,6 +791,7 @@ def profile_to_markdown(profile: Dict[str, Any]) -> str:
     lines = [
         "# Inventory profile",
         "",
+        f"Profile schema: `{profile['schema_version']}`",
         f"Source file: `{meta['source_file']}`",
         f"Generated UTC: `{meta['generated_at_utc']}`",
         f"Sheets: {meta['sheet_count']}",
@@ -783,6 +868,13 @@ def profile_to_markdown(profile: Dict[str, Any]) -> str:
         lines.append(markdown_table(rep_rows, columns))
     else:
         lines.append("No representative rows available.\n")
+
+    lines.extend(["", "## Inventory IDs"])
+    id_rows = profile["inventory_items"][:25]
+    if id_rows:
+        lines.append(markdown_table(id_rows, ["inventory_id", "name", "status", "sheet", "row_number"]))
+    else:
+        lines.append("No inventory rows available.\n")
 
     return "\n".join(lines)
 

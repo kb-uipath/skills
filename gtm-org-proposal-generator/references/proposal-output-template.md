@@ -1,48 +1,52 @@
 # Proposal Output Template
 
-Use this structure for the final executive deliverable unless the user requests a different artifact format.
+Use the canonical JSON contract as the source of truth for final executive deliverables. Markdown is rendered from the validated contract; it is not the contract itself.
 
-## Input Confirmation
+## Canonical Contract
 
-```markdown
-**Confirmed Inputs**
-- Organization: ...
-- Industry vertical: ...
-- UiPath deployment type: ...
-- Research scope: Public authoritative sources only
-- Accessed date: ...
+```json
+{
+  "contract_version": "gtm-org-proposal-generator/v1",
+  "confirmed_scope": {
+    "organization": "...",
+    "target_entity": "...",
+    "industry_vertical": "...",
+    "uipath_deployment_type": "...",
+    "research_scope": "public-authoritative-only",
+    "accessed_date": "2026-07-10"
+  },
+  "classification": {
+    "data_classification": "Public",
+    "retention": "Retain only in approved public-source GTM workspaces per account-team policy."
+  },
+  "source_ledger": [],
+  "capability_ledger": [],
+  "budget_program_areas": [],
+  "prioritized_use_cases": [],
+  "proposal_cards": [],
+  "evidence_gaps": [],
+  "assumptions": []
+}
 ```
 
-## Source Ledger
+See `versioned-contract.md` for required fields inside each list.
 
-```markdown
-**Source Ledger**
-| ID | Source | Publisher | Date/FY | Facts Used |
-| --- | --- | --- | --- | --- |
-| S1 | Title - URL | ... | ... | ... |
-```
+## Rendered Markdown
 
-Keep source titles concise. Include URLs in markdown links when available.
+The deterministic renderer produces these sections:
 
-## Budget and Administrative-Cost Table
+- Confirmed Scope
+- Source Ledger
+- Capability Ledger
+- Budget / Program Areas
+- Prioritized Use Cases
+- Proposal Cards
+- Evidence Gaps
+- Assumptions and Validation Needed
 
-```markdown
-**Top Source-Backed Budget / Program Areas**
-| Rank | Program / Area | Total Budget | Estimated Admin Cost | Estimate Tier | Evidence |
-| ---: | --- | ---: | ---: | --- | --- |
-| 1 | ... | $... | ...% / $... | Documented/Derived/Benchmarked/Assumption | S1, S2 |
-```
-
-If fewer than 20 rows are source-backed, title the section with the actual count and include: `Only N source-backed program areas were available from public authoritative sources.`
+Do not bypass the renderer for reusable artifacts. Legacy free-form Markdown is rejected by `scripts/validate_gtm_output.py` with migration guidance.
 
 ## Use Case Prioritization
-
-```markdown
-**Prioritized Automation Use Cases**
-| Rank | Use Case | Target Program / Area | Evidence-Based Driver | UiPath Capability Fit | Estimated Impact Range | Confidence |
-| ---: | --- | --- | --- | --- | --- | --- |
-| 1 | ... | ... | ... | ... | ... | High/Medium/Low |
-```
 
 Confidence rules:
 
@@ -52,37 +56,17 @@ Confidence rules:
 
 ## Executive Proposal Cards
 
-Create one card for each prioritized use case, up to 10 total.
+Create one complete card for each prioritized use case, up to 10 total. Fewer than 10 cards are allowed when the evidence-backed set is smaller, but `evidence_gaps` must explain the limitation.
 
-```markdown
-### 1. [Use Case Title]
+Each card must include business challenge, proposed solution, relevant UiPath capabilities, estimated impact, impact math, estimate tier, confidence, sources, validation required, pilot owner, target decision date, and measurable pilot exit criteria.
 
-**Business Challenge**
-Concise executive description of the current problem, tied to sourced budget, strategy, backlog, labor, compliance, citizen/customer experience, or cost pressure. Cite source IDs.
+## Executive Close
 
-**Proposed Solution**
-High-level, deployment-appropriate UiPath automation workflow. Include systems and human review only at the level supported by evidence.
-
-**Relevant UiPath Capabilities**
-Capability names only. Include a brief phrase for why each applies. Cite current UiPath docs source IDs or note `UiPath docs checked on [date]`.
-
-**Estimated Impact**
-Planning range with visible math. Label documented inputs, assumptions, and confidence. Avoid guaranteed savings language.
-
-**Evidence and Assumptions**
-Sources: S...
-Assumptions: ...
-Confidence: High/Medium/Low
-```
-
-## Executive Summary
-
-Close with a short briefing summary:
-
-- Best-fit automation themes
-- Largest value pools
-- Highest-confidence first moves
-- Major evidence gaps or assumptions
-- Suggested next validation steps, such as process discovery, SME interview, volume pull, or pilot scoping
+- Literal decision ask
+- Overlap-aware portfolio value range and aggregation method
+- Machine-checkable `portfolio_math` for multi-card ranges, including every card rank and lower/upper adjustment factors
+- Double-counting caveat
+- Executive owner and decision date
+- Owned, dated next steps such as process discovery, SME interview, volume pull, or pilot scoping
 
 Do not ask whether the user wants the result. Deliver the core result, then list available export options such as markdown, spreadsheet, brief, or presentation outline.

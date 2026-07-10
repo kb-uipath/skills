@@ -1,0 +1,15 @@
+name: Validate external links
+
+on:
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+
+jobs:
+  links:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Check public HTTPS links
+        run: python3 tools/check_external_links.py

@@ -52,11 +52,25 @@ Do not create unofficial logos, logo lockups, Otto graphics, custom badges, or d
 
 ## Quality gate
 
+For claim-certified output, first confirm that schema `1.0` evidence and portfolio artifacts pass
+`validate_portfolio.py`; inventory facts cite `INV-*`, public facts cite dated `SRC-*`, planning
+assumptions cite `ASM-*`, and stored scores, value math, deployment controls, and entitlement
+language match the validated portfolio.
+
+The executive source must remain at or below 3,500 words by default, show the criterion-level
+basis for ranked scores, and use accountable pilot owners rather than placeholders. Repeated raw
+inventory narrative belongs in a separate analysis artifact, not the executive brief.
+
 Before rendering the Word file, run:
 
 ```bash
-python3 scripts/validate_executive_brief.py <brief.md>
+python3 scripts/validate_executive_brief.py <brief.md> \
+  --evidence-ledger <evidence_ledger.json> \
+  --portfolio <portfolio.json> \
+  --inventory-profile <inventory_profile.json>
 ```
+
+Without the JSON options, the command performs legacy structure-only validation.
 
 After rendering, run structural and brand-style verification:
 

@@ -1,0 +1,145 @@
+{
+  "schema_version": "1.0",
+  "portfolio_id": "PORTFOLIO-NOISY-001",
+  "customer_name": "Lakeview Finance Authority",
+  "ledger_id": "LEDGER-NOISY-001",
+  "as_of_date": "2026-07-10",
+  "score_model_version": "1.0",
+  "ranking_limits": {
+    "high_impact": 1,
+    "low_friction_poc": 1
+  },
+  "opportunities": [
+    {
+      "opportunity_id": "OPP-INVOICE-EXCEPTION",
+      "name": "Invoice exception resolution support",
+      "category": "validate_next",
+      "confidence": "medium",
+      "why_now": "A production exception process and pipeline email-routing pattern align with the official finance modernization priority.",
+      "decision_ask": "Approve a Finance owner workshop and validate the two value assumptions before pilot funding.",
+      "business_problem": "Finance staff assemble exception context from SAP and vendor email before they can recommend a resolution or request missing information.",
+      "agentic_enhancement": "Summarize exception context, retrieve handling guidance, draft a resolution packet, and route every proposed action for human approval.",
+      "evidence_refs": {
+        "inventory_ids": [
+          "INV-INVENTORY-R00002",
+          "INV-INVENTORY-R00004"
+        ],
+        "public_source_ids": [
+          "SRC-FINANCE-MODERNIZATION"
+        ],
+        "assumption_ids": [
+          "ASM-INTEGRATION-ENTITLEMENT",
+          "ASM-LOADED-RATE",
+          "ASM-MINUTES-SAVED"
+        ]
+      },
+      "criteria_scores": {
+        "strategic_alignment": 4,
+        "inventory_evidence": 4,
+        "agentic_suitability": 4,
+        "value_potential": 4,
+        "feasibility": 4,
+        "enterprise_scalability": 3,
+        "governance_readiness": 4,
+        "time_to_pilot": 2
+      },
+      "scores": {
+        "high_impact": 76.0,
+        "poc": 70.0
+      },
+      "capability_fit": [
+        {
+          "capability": "Integration Service",
+          "claim": "confirmed_entitlement",
+          "entitlement_evidence_refs": [
+            "ASM-INTEGRATION-ENTITLEMENT"
+          ]
+        },
+        {
+          "capability": "Action Center",
+          "claim": "likely_fit",
+          "entitlement_evidence_refs": []
+        }
+      ],
+      "deployment": {
+        "status": "compatible",
+        "constraints_addressed": [
+          "PII fields must be redacted"
+        ],
+        "controls": [
+          "Redact PII before model processing",
+          "Human approval before SAP or email updates"
+        ],
+        "notes": "The bounded design is compatible only after field-level redaction is tested."
+      },
+      "value_case": {
+        "method": "calculated",
+        "label": "medium",
+        "basis": "Planning estimate; validation required for ASM-MINUTES-SAVED and ASM-LOADED-RATE.",
+        "formula_id": "volume_minutes_rate_v1",
+        "inputs": [
+          {
+            "name": "annual_volume",
+            "value": 12000,
+            "unit": "cases/year",
+            "evidence_ref": "INV-INVENTORY-R00002"
+          },
+          {
+            "name": "minutes_saved_per_case",
+            "value": 6,
+            "unit": "minutes/case",
+            "evidence_ref": "ASM-MINUTES-SAVED"
+          },
+          {
+            "name": "loaded_hourly_rate",
+            "value": 60,
+            "unit": "USD/hour",
+            "evidence_ref": "ASM-LOADED-RATE"
+          }
+        ],
+        "annual_hours": 1200.0,
+        "annual_value": 72000.0,
+        "currency": "USD"
+      },
+      "value_levers": [
+        "Resolution cycle time",
+        "Manual preparation effort",
+        "Auditability"
+      ],
+      "feasibility": "Use one exception category, read-only SAP retrieval, and draft-only vendor messages before write-back.",
+      "governance": "Redact PII, retain source references, and require a Finance reviewer for every recommendation.",
+      "validation_questions": [
+        "Does ASM-MINUTES-SAVED match sampled handling-time evidence?",
+        "Which Finance owner approves the pilot and ASM-LOADED-RATE?"
+      ],
+      "pilot": {
+        "objective": "Validate resolution-packet quality and measured handling-time reduction for one invoice exception category.",
+        "narrow_scope": "One SAP company code, one vendor mailbox, and draft recommendations only.",
+        "owner": "Finance operations lead",
+        "agent_role": "Compile source context, retrieve guidance, and draft a resolution packet.",
+        "human_role": "Review the packet and approve every SAP or vendor action.",
+        "success_metrics": [
+          "Packet acceptance rate",
+          "Minutes saved per reviewed exception"
+        ],
+        "data_needed": [
+          "One hundred redacted closed exceptions",
+          "Current exception handling guidance"
+        ],
+        "exit_criteria": [
+          "At least 90 percent packet acceptance and validated positive time savings"
+        ],
+        "first_step": "Sample twenty closed exceptions to validate baseline time and PII fields.",
+        "timeline_days": 120
+      }
+    }
+  ],
+  "rankings": {
+    "high_impact": [
+      "OPP-INVOICE-EXCEPTION"
+    ],
+    "low_friction_poc": [
+      "OPP-INVOICE-EXCEPTION"
+    ]
+  }
+}

@@ -35,6 +35,24 @@ class InventoryProfilerTests(unittest.TestCase):
     def write_inventory(self, path: Path) -> None:
         path.write_text(FIXTURE_CSV.read_text(encoding="utf-8"), encoding="utf-8")
 
+    def test_parse_number_supports_planning_shorthand(self):
+        cases = {
+            "~24k calls": 24_000.0,
+            "1.25 million records": 1_250_000.0,
+            "2B transactions": 2_000_000_000.0,
+            "(3.5 thousand)": -3_500.0,
+            "18.5%": 18.5,
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(self.module.parse_number(raw), expected)
+
+    def test_average_handling_minutes_maps_to_handling_time(self):
+        guesses = self.module.guess_columns(
+            ["Use Case", "Average Handling Minutes", "Annual Transactions"]
+        )
+        self.assertEqual(guesses["handling_time"]["best"], "Average Handling Minutes")
+
     def test_csv_profile_outputs_json_and_markdown_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -112,6 +130,21 @@ class InventoryProfilerTests(unittest.TestCase):
                 self.assertIn("openpyxl is required", result.stderr)
             else:
                 self.assertEqual(result.returncode, 1)
+
+    def test_profile_rejects_inventory_id_collisions(self):
+        row = {
+            "Use Case Name": "Example",
+            "Description": "Synthetic collision row",
+            "Status": "Idea",
+            "Department": "Operations",
+            "__row_number": 2,
+        }
+        sheets = {
+            "Sheet A": [{**row, "__sheet": "Sheet A"}],
+            "Sheet-A": [{**row, "__sheet": "Sheet-A"}],
+        }
+        with self.assertRaisesRegex(ValueError, "inventory ID collision"):
+            self.module.build_profile(Path("inventory.xlsx"), sheets)
 
     @unittest.skipUnless(has_python_docx(), "python-docx is not installed")
     def test_render_and_verify_docx_when_python_docx_is_available(self):

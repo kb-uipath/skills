@@ -1,6 +1,10 @@
 # Output templates
 
-Use these templates to create consistent outputs for UiPath agentic expansion planning. Treat Markdown as the source for the final Word brief or as a supporting artifact; the final deliverable is the verified `.docx` unless the user explicitly prohibits file output. Apply `brand_and_brief_quality.md` before rendering.
+Use these templates to create consistent outputs for UiPath agentic expansion planning. Build the
+Markdown from validated schema `1.0` evidence and portfolio artifacts when claim certification is
+required. Treat Markdown as the source for the final Word brief or as a supporting artifact; the
+final deliverable is the verified `.docx` unless the user explicitly prohibits file output. Apply
+`brand_and_brief_quality.md` before rendering.
 
 ## Default executive brief structure
 
@@ -14,8 +18,8 @@ Use this structure for the concise Word-source Markdown. Keep it executive-skimm
 
 ## Source and Assumption Note
 
-- Inventory source: [file name, sheets, row count]
-- Public strategy sources: [source count and source types]
+- Inventory source: [file name, sheets, row count, relevant `INV-*` IDs]
+- Public strategy sources: [source count, `SRC-*` IDs, publication and access dates]
 - Data limitations: [missing fields, unclear statuses, no volume/value data, deployment unknown]
 - Value assumptions: [annualization or labor assumptions, if used]
 
@@ -33,13 +37,15 @@ Use this structure for the concise Word-source Markdown. Keep it executive-skimm
 
 | Public priority | Evidence summary | Automation relevance |
 |---|---|---|
-| [priority] | [source and date] | [relevance] |
+| [priority] | [`SRC-*`, source and date] | [relevance] |
 
 ## Prioritized Portfolio
 
-| Rank | Opportunity | Category | Score | Confidence | Why it matters |
+| Rank | Opportunity | Category | Score | Confidence | Scoring basis / why now |
 |---:|---|---|---:|---|---|
-| 1 | [name] | [Scale now / Validate next / Pilot first] | [0-100] | [High/Medium/Low] | [summary] |
+| 1 | [name] | [Scale now / Validate next / Pilot first] | [0-100] | [High/Medium/Low] | [strongest and limiting criteria, then decision relevance] |
+
+If scores tie, state that stable `OPP-*` ID order resolves the tie. Do not imply false precision.
 
 ## Top 5 High-Impact Recommendations
 
@@ -91,9 +97,9 @@ Use the workshop agenda template below or a shortened version of it. Keep it foc
 
 ## Appendix: Source Ledger
 
-| Source | Date | Type | Relevant priority |
-|---|---|---|---|
-| [source] | [date] | [official plan / annual report / etc.] | [priority] |
+| Source ID | Source | Published | Accessed | Type | Relevant priority |
+|---|---|---|---|---|---|
+| [`SRC-*`] | [source] | [date] | [date] | [official plan / annual report / etc.] | [priority] |
 
 ## DOCX executive brief structure
 
@@ -139,7 +145,7 @@ Use the full GTM-ready proposal card format for the Top 5 High-Impact Recommenda
 
 **Why now:** [Customer need, public strategy, and account context.]
 
-**Inventory evidence:** [Specific process clusters, departments, statuses, volume/value fields, or row examples.]
+**Inventory evidence:** [Specific `INV-*` process rows, departments, statuses, volume/value fields, or row examples.]
 
 **Agentic enhancement:** [What an agent does beyond baseline RPA: interpret, summarize, retrieve, recommend, route, orchestrate, draft, classify, or handle exceptions.]
 
@@ -159,13 +165,17 @@ Use the full GTM-ready proposal card format for the Top 5 High-Impact Recommenda
 
 Cards should be detailed enough for GTM use but short enough that executives can skim the section quickly.
 
-Before rendering the Word brief, run:
+Before rendering the Word brief, run the strict cross-check:
 
 ```bash
-python3 scripts/validate_executive_brief.py <brief.md>
+python3 scripts/validate_executive_brief.py <brief.md> \
+  --evidence-ledger <evidence_ledger.json> \
+  --portfolio <portfolio.json> \
+  --inventory-profile <inventory_profile.json>
 ```
 
-Fix any failure instead of treating the validator as advisory.
+Fix any failure instead of treating the validator as advisory. Omitting the JSON arguments keeps
+the legacy structure-only mode and must not be described as evidence validation.
 
 ## Proposal card format
 
@@ -175,7 +185,7 @@ Fix any failure instead of treating the validator as advisory.
 
 **Why now:** [Public strategy and account context.]
 
-**Inventory evidence:** [Specific process clusters, departments, statuses, volume/value fields, or row examples.]
+**Inventory evidence:** [Specific `INV-*` process rows, departments, statuses, volume/value fields, or row examples.]
 
 **Agentic enhancement:** [What an agent does beyond baseline RPA: interpret, summarize, retrieve, recommend, route, orchestrate, draft, classify, or handle exceptions.]
 

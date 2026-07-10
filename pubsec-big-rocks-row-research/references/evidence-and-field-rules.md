@@ -70,11 +70,13 @@ Use exact workbook values:
 
 ### Bot/License Utilization
 
-Fill only from explicit utilization/support signals:
-- `Enterprise` utilization or high TAC support usually maps to `High`.
-- `Standard` utilization or medium support usually maps to `Moderate`.
-- Low support / low engagement can map to `Low` only when the account-specific source says low usage or low support.
-- Do not infer utilization from ARR alone.
+Fill only from explicit account-specific usage or capacity evidence that directly supports the workbook value:
+- `Low`: the source explicitly reports low license or robot utilization.
+- `Moderate`: the source explicitly reports moderate utilization.
+- `High`: the source explicitly reports high utilization.
+- `Maxed`: the source explicitly reports exhausted or effectively full licensed capacity.
+
+Do not infer utilization from support tier, support level, engagement level, account segment, ARR, entitlement, renewal status, or license quantity alone. Those fields describe coverage or commercial context, not actual consumption.
 
 ### Cloud Y/N
 

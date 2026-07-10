@@ -1,0 +1,42 @@
+{
+  "schema_version": "estimate-du-units.rate-profile.v1",
+  "profile_id": "synthetic-additive-v1",
+  "rates": [
+    {
+      "name": "synthetic-ai-base",
+      "unit": "ai_unit",
+      "rate": "1",
+      "source_url": "https://example.com/rates/ai-base",
+      "accessed_on": "2026-07-01",
+      "effective_on": "2026-01-01",
+      "max_age_days": 30
+    },
+    {
+      "name": "synthetic-ai-add-on",
+      "unit": "ai_unit",
+      "rate": "0.125",
+      "source_url": "https://example.com/rates/ai-add-on",
+      "accessed_on": "2026-07-01",
+      "effective_on": "2026-01-01",
+      "max_age_days": 30
+    },
+    {
+      "name": "synthetic-platform-base",
+      "unit": "platform_unit",
+      "rate": "0.2",
+      "source_url": "https://example.com/rates/platform-base",
+      "accessed_on": "2026-07-01",
+      "effective_on": "2026-01-01",
+      "max_age_days": 30
+    },
+    {
+      "name": "synthetic-platform-add-on",
+      "unit": "platform_unit",
+      "rate": "0.05",
+      "source_url": "https://example.com/rates/platform-add-on",
+      "accessed_on": "2026-07-01",
+      "effective_on": "2026-01-01",
+      "max_age_days": 30
+    }
+  ]
+}

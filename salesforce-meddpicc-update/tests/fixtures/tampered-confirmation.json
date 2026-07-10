@@ -1,0 +1,10 @@
+{
+  "confirmationMutation": {
+    "confirmed_by": "Mallory Example"
+  },
+  "transactionMutation": {
+    "state": "verified"
+  },
+  "expectedConfirmationError": "TAMPERED_CONFIRMATION",
+  "expectedTransactionError": "TAMPERED_TRANSACTION"
+}
