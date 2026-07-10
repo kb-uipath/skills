@@ -1,82 +1,97 @@
 ---
 name: uipcodedappdeploy
-description: Deploy UiPath coded app projects with the native UiPath CLI. Use when Codex needs to increment a coded app package version, validate the project, build the app dist, pack it, publish it, and deploy it to UiPath Automation Cloud alpha using `uip codedapp pack`, `uip codedapp publish`, and `uip codedapp deploy`.
+description: Plan, validate, and explicitly execute UiPath coded app deployments with versioned JSON plans, input hashes, redacted receipts, and the native `uip codedapp` CLI.
 ---
 
-# UiPath Deploy
+# UiPath Coded App Deploy
 
-Use this skill to safely deploy a UiPath coded app to alpha. Default target: `https://alpha.uipath.com`.
+Use this skill for plan-first deployment of a UiPath coded app. Default target: `https://alpha.uipath.com`.
 
-## Workflow
+## Hard Boundaries
 
-1. Confirm the working tree and target:
-   - Run `git status --short --branch`.
-   - Confirm the project root contains `pyproject.toml` and `uipath.json`.
-   - Use `https://alpha.uipath.com` unless the user explicitly gives another target.
-   - Do not invent tenant, folder, folder key, client ID, client secret, or app name. Use provided values, infer safe defaults from project metadata, or let the CLI prompt.
+- Planning is the default and does not modify project files or invoke `uv`, `npm`, `uip`, or HTTP. `--plan-output` is the only explicit planning write.
+- Never execute directly from planning arguments. Generate a persisted plan, review it, then use `--plan <file> --execute` only after the user authorizes deployment.
+- Never invent a tenant, organization, folder key, app name, package name, target, or verification URL.
+- Execution requires a folder GUID embedded in the plan. Resolve a folder name separately with a read-only query and pass `--folder-key` while generating a new plan.
+- Never pass or print access tokens or client secrets. Use an existing `uip` login or environment-backed CLI authentication.
+- Do not run live certification or external writes unless the user explicitly opts in.
 
-2. Verify CLI availability:
-   - Run `uip --version`.
-   - Run `uip codedapp --help` if command availability is uncertain.
-   - If the user needs authentication, run one of:
-     - Interactive: `uip login --authority https://alpha.uipath.com --tenant <tenant>`
-     - Unattended: `uip login --authority https://alpha.uipath.com --tenant <tenant> --client-id <id> --client-secret env.UIPATH_CLIENT_SECRET --scope "<scopes>"`
-   - Never echo secrets. Prefer environment variables for secrets.
+## Prerequisites
 
-3. Increment the package version:
-   - Read `[project].version` from `pyproject.toml`.
-   - Increment patch by default: `1.0.13` -> `1.0.14`.
-   - Use minor/major only when the user asks.
-   - After changing `pyproject.toml`, run `uv lock` when `uv.lock` exists so lock metadata stays aligned.
+1. Use Python 3.11 or later; the helper parses TOML with standard-library `tomllib`.
+2. Confirm the worktree and project root with `git status --short --branch`.
+3. Confirm both `pyproject.toml` and `uipath.json` are present.
+4. Confirm `uip`, `uv`, and npm availability as required by the generated stages.
+5. Obtain the exact target origin, tenant/org context, and folder GUID from the user or trusted project context.
 
-4. Validate before publishing:
-   - Run `uv run python -m pytest -q`.
-   - If `app/package.json` exists, run `npm run build` in `app/`.
-   - Confirm the coded app dist exists. Default dist is `app/dist` when `app/package.json` exists, otherwise `dist`.
-   - Stop on validation failure; do not publish a failed build.
+## Plan
 
-5. Pack, publish, and deploy the coded app to alpha:
-   - Use `uip codedapp pack <dist> --name <name> --version <version> --output ./.uipath --base-url https://alpha.uipath.com`.
-   - Use `uip codedapp publish --name <name> --version <version> --uipath-dir ./.uipath --base-url https://alpha.uipath.com`.
-   - Use `uip codedapp deploy --name <name> --version <version> --folder-key <folder-key> --base-url https://alpha.uipath.com`.
-   - Resolve folder names to folder keys with `uip or folders get "<folder>" --tenant <tenant> --output json`; coded app deploy takes `--folder-key`, not `--folder`.
-   - Do not use `uv run uipath pack`, `uv run uipath publish`, or `uv run uipath deploy` for coded app deployments.
-
-6. Verify and report:
-   - Capture package version, target URL, feed/folder, and command results.
-   - Run `git status --short --branch`.
-   - If version or lock files changed, ask whether to commit unless the user already requested a commit.
-
-## Helper Script
-
-Use `scripts/uipcodedappdeploy.py` for a consistent version bump and command sequence.
-
-Dry run from a project root:
+Run from the skills repository root:
 
 ```bash
-python scripts/uipcodedappdeploy.py --project-root . --tenant-name "<tenant>" --folder "<folder>"
+python3.11 uipcodedappdeploy/scripts/uipcodedappdeploy.py \
+  --project-root /absolute/path/to/project \
+  --target-url https://alpha.uipath.com \
+  --tenant-name '<tenant>' \
+  --folder-key 11111111-2222-3333-4444-555555555555 \
+  --format json \
+  --plan-output /absolute/path/to/deploy-plan.json
 ```
 
-Execute:
+Review:
+
+- Plan schema and SHA-256 plan hash.
+- Initial and versioned input hashes for `pyproject.toml` and `uipath.json`.
+- Strict SemVer progression and requested patch/minor/major behavior.
+- Project-relative dist and `.uipath` paths.
+- Target, tenant/org values, folder GUID, package/app names, and optional verification URL.
+- Ordered allowlisted stages and any blockers.
+- Any explicit `--skip-tests` or `--skip-app-build` risk acceptance.
+
+Planning without `--plan-output` is useful for inspection but cannot be executed.
+
+## Execute
+
+After explicit approval:
 
 ```bash
-python scripts/uipcodedappdeploy.py --project-root . --tenant-name "<tenant>" --folder "<folder>" --execute
+python3.11 uipcodedappdeploy/scripts/uipcodedappdeploy.py \
+  --plan /absolute/path/to/deploy-plan.json \
+  --execute \
+  --format json
 ```
 
-Useful options:
+Execution atomically updates only `[project].version`, then runs `uv lock` when applicable, tests, app build, dist/main-file validation, `uip --version`, pack, publish, deploy, and optional HTTPS verification. It writes a redacted sibling receipt named `<plan>.receipt.json`.
 
-- `--part patch|minor|major` controls the version increment; default is `patch`.
-- `--set-version X.Y.Z` sets an explicit version.
-- `--target-url https://alpha.uipath.com` overrides the default target.
-- `--app-dist <path>` overrides the dist directory; default is `app/dist` when `app/package.json` exists.
-- `--package-name <name>` overrides the pyproject package name used for pack/publish.
-- `--app-name <name>` overrides the app name used for deploy; default is `--package-name`.
-- `--folder "<folder>"` resolves a folder path/name to a folder key with `uip or folders get`.
-- `--folder-key <key>` passes a folder key directly to `uip codedapp deploy`.
-- `--tenant-name <name>` passes the tenant to publish and folder lookup.
-- `--org-id`, `--org-name`, and `--tenant-id` pass explicit context to coded app commands when needed.
-- `--reuse-client` passes `--reuse-client` to `uip codedapp pack`.
-- `--skip-tests` or `--skip-app-build` should only be used when the user explicitly accepts that risk.
-- `--offline` produces a command plan without probing `uip` or resolving folder names. Use it for fixture tests, docs examples, and environments without UiPath CLI access. It cannot be combined with `--execute` and requires `--folder-key` for non-GUID folders.
+## Resume And Recovery
 
-The script defaults to dry-run mode. It only edits `pyproject.toml`, runs `uv lock`, and runs coded app pack/publish/deploy when `--execute` is passed.
+For a remediated local or explicitly reviewed failed stage:
+
+```bash
+python3.11 uipcodedappdeploy/scripts/uipcodedappdeploy.py \
+  --plan /absolute/path/to/deploy-plan.json \
+  --execute \
+  --resume
+```
+
+- Keep the plan and receipt unchanged. Hash mismatches require trusted-artifact recovery, not manual edits.
+- The version is intentionally written before lock/test/build. A local failure can therefore leave the planned version in `pyproject.toml`; the versioned input hash supports resume.
+- Resume skips succeeded stages and retries the failed stage.
+- Resume rejects a `running` publish/deploy receipt because the remote result is indeterminate. Verify live state and create an operator-reviewed recovery plan.
+- URL verification failure occurs after deploy and does not roll the deployment back.
+
+## Rejected Legacy Options
+
+The helper keeps legacy flag names only to fail closed with migration guidance:
+
+- Replace `--folder <name>` with a separately resolved `--folder-key <GUID>`.
+- Replace ambiguous `--tenant` with `--tenant-name` or `--tenant-id`.
+- Replace `--my-workspace` with its explicit folder GUID.
+- Remove no-op `--pack-nolock`, `--use-deploy-command`, and `--offline`.
+- Replace direct `--execute` with `--plan-output`, review, then `--plan ... --execute`.
+
+## Reporting
+
+Report the old/new version, target origin, tenant/org context, folder key, plan hash, receipt path, verification result, and final `git status --short --branch`. Never include credentials or subprocess output that may contain them.
+
+The public runtime, data handling, failure recovery, limitations, and opt-in nonproduction certification guidance are in `docs/uipcodedappdeploy.md`.
