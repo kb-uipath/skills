@@ -1,135 +1,164 @@
 # DU Estimation Guide
 
-Use this reference when the estimate needs a full worksheet, source discipline, or a defensible written artifact.
+Use this reference for source discipline, versioned calculator contracts, migration, and recovery. Rates in test fixtures are synthetic and must not be used as licensing guidance.
 
 ## Source Hierarchy
 
 | Rank | Source | Notes |
 |---:|---|---|
-| 1 | Customer production logs, queue counts, Orchestrator data | Best for actual customer consumption |
-| 2 | Source-system reports | Imaging, claims, ERP, CRM, mailbox, repository, case system |
-| 3 | Document repository counts | Folder, batch table, document class, scan count |
-| 4 | Official or regulatory workload estimate | Useful for public forms; label as proxy if not customer-specific |
+| 1 | Customer production logs, queue counts, Orchestrator data | Best evidence for actual customer volume |
+| 2 | Source-system reports | Imaging, claims, ERP, CRM, mailbox, repository, or case system |
+| 3 | Document repository counts | Folder, batch table, document class, or scan count |
+| 4 | Official or regulatory workload estimate | Label as a proxy when not customer-specific |
 | 5 | SME estimate | Use a confidence discount and scenario band |
-| 6 | Scenario band | Use when discovery is early |
+| 6 | Scenario band | Use during early discovery |
+
+For rates, use the current official UiPath metering or licensing source applicable to the customer's deployment and package path. A source URL alone is not verification; record when it was accessed, when the rate became effective, and how long the verification may be reused.
 
 ## Applicability Decision Table
 
-| Condition | DU estimate |
+| Condition | Status | Result behavior |
+|---|---|---|
+| Scanned paper, PDF, image, fax, or attachment is OCRed | `yes` | Calculate consumption |
+| Document type is classified from content or image | `yes` | Calculate consumption |
+| Fields are extracted from a document | `yes` | Calculate consumption |
+| Automation uses only structured source-system fields or an API | `no` | Preserve page context and force units to zero |
+| Automation clicks a downstream category from existing metadata | `no` unless it re-reads the page | Force units to zero when `no` |
+| Description mentions scanning, indexing, or batching but not OCR/extraction | `conditional` | Calculate a conditional estimate and state the triggering condition |
+| Another metered product processes text outside DU | `no` for DU | Estimate under that product's meter instead |
+
+Every status requires a non-empty rationale. `conditional` is not a substitute for missing analysis; its rationale must name the condition that changes the result.
+
+## Versioned Rate Profile
+
+Contract: `estimate-du-units.rate-profile.v1`. Normative schema: `rate-profile.v1.schema.json`.
+
+| Field | Contract |
 |---|---|
-| Scanned paper, PDF, image, fax, or attachment must be OCRed | Yes |
-| Document type must be classified from content or image | Yes |
-| Fields must be extracted from a document | Yes |
-| Bot only uses structured source-system fields or an API | No |
-| Bot only clicks a downstream category from existing metadata | No unless it re-reads the page |
-| Description says scan/manual indexing/batch but not OCR/extraction | Conditional |
-| GenAI/Semantic Activities process text outside DU | Estimate under that meter, not DU |
+| `schema_version` | Exact value `estimate-du-units.rate-profile.v1` |
+| `profile_id` | Non-empty identifier for the verified set |
+| `rates[].name` | Unique component name |
+| `rates[].unit` | `ai_unit` or `platform_unit` |
+| `rates[].rate` | Non-negative canonical decimal string per page |
+| `rates[].source_url` | Absolute HTTP(S) URL for the source used |
+| `rates[].accessed_on` | ISO date on which the source was checked |
+| `rates[].effective_on` | ISO date on which the rate became effective |
+| `rates[].max_age_days` | Non-negative freshness window for that component |
 
-## Metering Checklist
+Components sharing a unit are additive. A profile may carry one unit type without the other. The tool rejects duplicate component names, unsupported fields, malformed URLs or dates, negative or noncanonical rates, sources accessed after `as_of`, and rates not yet effective on `as_of`.
 
-Verify from current official UiPath sources:
+Freshness is calculated as `as_of - accessed_on`. A component is stale only when its age is greater than `max_age_days`; the boundary day is accepted. Stale profiles fail closed unless `--allow-stale-rates` is supplied, in which case every stale component and the override remain visible in the output.
 
-- Deployment and plan: Automation Cloud, Public Sector, Dedicated, Automation Suite, Flex, Unified, or other.
-- Project type: modern, classic, mixed, predefined generative, or standalone activity.
-- Package/API path: DocumentUnderstanding.Activities, IntelligentOCR.Activities, REST API, or IXP API.
-- Add-ons: Generative Validation, classic extractor/classifier, standalone extraction, duplicate processing.
-- Consumption unit: AI Units or Platform Units.
+## Versioned Structured Input
 
-Current public planning defaults to verify before use:
+Contract: `estimate-du-units.input.v1`. Normative schema: `input.v1.schema.json`.
 
-- Modern DU: 1 AI Unit per processed page.
-- IXP Document Understanding Platform Units: 0.2 Platform Units per page in the public licensing table.
-- Generative Validation and mixed/classic paths can add consumption; do not assume the base page rate covers them.
+```json
+{
+  "schema_version": "estimate-du-units.input.v1",
+  "estimate_id": "customer-process-scenario",
+  "as_of": "2026-07-10",
+  "applicability": {
+    "status": "conditional",
+    "rationale": "Consumption applies only when scanned attachments are sent through DU."
+  },
+  "scenarios": [
+    {
+      "name": "base",
+      "documents": [
+        {
+          "name": "primary-form",
+          "annual_transactions": "1200",
+          "pages_per_transaction": "2.5"
+        },
+        {
+          "name": "supporting-attachment",
+          "annual_transactions": "600",
+          "pages_per_transaction": "3"
+        }
+      ]
+    }
+  ]
+}
+```
 
-Official sources to check:
+Scenario and document names must be unique within their scope. Decimal fields are strings so exact base-10 arithmetic survives JSON parsing. Scenarios are alternatives; the calculator aggregates documents within each scenario but never totals across scenarios.
 
-- UiPath Document Understanding metering: https://docs.uipath.com/document-understanding/automation-cloud/latest/user-guide/metering-charging-logic
-- UiPath licensing table: https://licensing.uipath.com/
+## Output Contract
+
+Contract: `estimate-du-units.output.v1`. Normative schema: `output.v1.schema.json`.
+
+- `--format json` emits the complete versioned object.
+- `--format markdown` renders the same object as rate, document, and aggregate tables.
+- `exact` is the lossless decimal result.
+- `rounded` is a whole-unit decimal string rounded half up.
+- `rate_context.components` retains source, dates, age, max age, and stale status.
+- `rate_context.totals_per_page` exposes additive totals by unit.
+- `calculation_applied` is `false` when applicability is `no`.
 
 ## Formula
 
-Single document type:
+For each document:
 
 ```text
-annual_units = annual_transactions x average_pages_per_transaction x units_per_page
+annual_pages = annual_transactions x pages_per_transaction
+unit_rate_per_page = sum(all rate components for that unit)
+annual_units = annual_pages x unit_rate_per_page
 ```
 
-Multiple document types:
+For each scenario:
 
 ```text
-annual_units =
-  sum(document_type_annual_transactions x document_type_average_pages x document_type_units_per_page)
+scenario_pages = sum(document annual_pages)
+scenario_units = sum(document annual_units for each unit independently)
 ```
 
-Annualization examples:
+Do not add AI Unit results to Platform Unit results. Do not add low, base, and high scenarios together.
 
-```text
-90-day count x 365 / 90
-monthly average x 12
-weekly average x 52
-daily average x business_days_per_year
+## Legacy Migration
+
+The old command silently supplied rates. That behavior is removed and now fails closed.
+
+Preferred migration: move documents and applicability into `input.v1`, create a sourced `rate-profile.v1`, and run:
+
+```bash
+python3 estimate-du-units/scripts/du_estimate.py \
+  --input estimate-du-units/tests/fixtures/multi-document-input.v1.json \
+  --rate-profile estimate-du-units/tests/fixtures/rate-profile.v1.json \
+  --format json
 ```
 
-## Response Template
+Temporary legacy migration: `--case` parsing is preserved only when rates and verification are explicit:
 
-````markdown
-Expected annual consumption: **[rounded estimate] [AI Units/Platform Units] per year**.
-
-Formula:
-
-```text
-[transactions/year] x [pages/transaction] x [units/page] = [units/year]
+```bash
+python3 estimate-du-units/scripts/du_estimate.py \
+  --case base=1200,2.5 \
+  --ai-rate RATE_FROM_VERIFIED_SOURCE \
+  --verified-on YYYY-MM-DD \
+  --as-of YYYY-MM-DD \
+  --applicability yes \
+  --rationale "Pages are sent through DU." \
+  --format json
 ```
 
-Applicability:
-[State whether DU applies, does not apply, or is conditional.]
+Replace placeholders with verified values. Explicit rates use a 30-day freshness window unless `--max-rate-age-days` is supplied. `--extra-ai-rate` and `--extra-platform-rate` are repeatable additive components but require their corresponding base rate. A rate profile is intentionally rejected with `--case`; migrate to structured input to use profile provenance.
 
-Assumptions:
-- [Document/page assumption]
-- [Volume source assumption]
-- [Metering model and date/source]
-- [Any add-ons excluded or included]
+## Failure Recovery
 
-Sensitivity:
+| Failure | Recovery |
+|---|---|
+| No rates supplied | Add `--rate-profile`, or explicit rate flags plus `--verified-on` |
+| Explicit rate lacks verification | Re-check the source and pass its actual access date with `--verified-on` |
+| Stale rate rejected | Refresh the source and date; use `--allow-stale-rates` only with explicit risk acceptance |
+| Future accessed/effective date | Correct the profile or estimate `as_of`; do not override chronology errors |
+| Unsupported schema version or field | Migrate to the exact v1 schema; do not delete provenance fields |
+| Invalid decimal | Use a non-negative decimal string such as `"1200"` or `"2.5"` |
+| Missing applicability rationale | Decide `yes`, `no`, or `conditional` and record the evidence-based reason |
+| Legacy `--case` with a profile | Move the scenario into `input.v1`, or use explicit verified rates temporarily |
 
-| Scenario | Transactions/year | Pages/transaction | Units/page | Annual units |
-|---|---:|---:|---:|---:|
-| Low |  |  |  |  |
-| Base |  |  |  |  |
-| High |  |  |  |  |
+## Validation Commands
 
-Confidence: [High/Medium/Low] because [reason].
-
-Clarifying questions:
-1. [Only if needed]
-````
-
-## Worked Example: SSA CMS-1763
-
-Customer wording:
-
-> TOEL Automation - Assign a HISMI TERM TOEL in Paperless Manual Indexing to a single page batch of CMS-1763 scanned through FECSUI.
-
-Interpretation:
-
-The automation appears to route or index a scanned CMS-1763 Medicare termination form by assigning the HISMI TERM event/category in SSA Paperless Manual Indexing. This sounds like clerical indexing rather than an eligibility decision.
-
-Applicability:
-
-- DU applies if the automation uses OCR/classification/extraction to identify or read the scanned CMS-1763 page.
-- DU does not apply if FECSUI or a human already provides the document type and the bot only assigns the downstream TOEL value.
-
-Base planning calculation:
-
-```text
-197,518 forms/year x 1 page/form x 1 AI Unit/page = 197,518 AI Units/year
-197,518 pages/year x 0.2 Platform Units/page = 39,503.6 Platform Units/year
+```bash
+python3 -m unittest discover -s estimate-du-units/tests -p 'test_*.py'
+python3 tools/validate_repo.py
 ```
-
-Planning estimate:
-
-Use about 200,000 AI Units/year, or about 40,000 Platform Units/year under Platform Unit metering, assuming every CMS-1763 response is processed through modern DU as a one-page document.
-
-Confidence:
-
-Medium. The page count comes from the customer wording and the public form volume can be sourced, but actual SSA/customer throughput may differ and DU may not be needed if the form is already identified upstream.

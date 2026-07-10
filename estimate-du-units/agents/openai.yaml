@@ -1,4 +1,4 @@
 interface:
   display_name: "DU Unit Estimator"
   short_description: "Estimate UiPath DU unit usage"
-  default_prompt: "Use $estimate-du-units to estimate annual UiPath Document Understanding consumption from this automation description."
+  default_prompt: "Use $estimate-du-units to classify DU applicability, require verified rate provenance, and estimate annual consumption."
