@@ -1,13 +1,13 @@
 ---
 name: account-meeting-availability
-description: Source, validate, store, edit, and review account meeting contacts for both customer contacts and UiPath team members from a CSV or direct user-provided contact details. Use when the user provides or references an account/contact CSV, asks to add or edit customer or UiPath contacts, asks Codex to maintain an account contact book, fill missing email addresses, verify account contacts, prepare meeting attendees, or identify likely emails from Outlook Email/Calendar evidence without sending messages automatically.
+description: Manage versioned account contact records and deterministically rank meeting slots from read-only Outlook free/busy evidence without creating meetings or sending messages. Use when a user provides an account contact CSV, asks to add or edit customer or UiPath contacts, needs missing emails reviewed, wants account attendees prepared, or asks for common availability across customer and UiPath participants.
 ---
 
 # Account Meeting Availability
 
 ## Overview
 
-Use this skill to maintain a private account contact store for both customer contacts and UiPath team members. Treat recipient discovery as evidence gathering, not as permission to send external email.
+Use this skill to maintain a private account contact store and produce reviewable meeting-slot recommendations. Contact management is local. Availability collection is read-only. The skill never creates calendar events, drafts, messages, or invitations.
 
 ## Contact Store
 
@@ -17,136 +17,109 @@ Store persistent contacts outside the skill folder at:
 ${CUSTOMER_EMAIL_STORE:-${CODEX_HOME:-~/.codex}/account-meeting-availability/contacts.csv}
 ```
 
-Use `scripts/contact_store.py` so the user can add, edit, import, list, and export contacts without manually opening the CSV. Do not ask the user to edit this CSV directly unless they explicitly want raw file access.
+Use `scripts/contact_store.py` for add, edit, delete, import, list, and export operations. Contact store schema `2.0` keeps the canonical CSV plus a `<store>.metadata.json` sidecar. Store commands coordinate through `<store>.lock`, replace files atomically, and restrict contact data and metadata to the current user where the operating system supports POSIX-style permissions.
 
-## Input Options
+Do not edit the backing CSV or metadata directly. An existing CSV without metadata is a legacy unversioned store and fails closed. Back it up, then run the explicit `migrate` command. Migration validates headers, scoped identities, record types, and email syntax before changing the file.
 
-Accept either direct contact details from chat or a CSV.
+## Contact Inputs
 
-For direct entry, collect only the missing fields needed for:
-
-- `account name`
-- `record type` (`customer` or `uipath`; default to `customer` for older CSVs)
-- `customer name` (person name, including UiPath team members)
-- `customer role` (role/title/function)
-- `customer email address`
-
-Then run `scripts/contact_store.py add ...` or `scripts/contact_store.py edit ...`. Use `--record-type uipath` for UiPath team members.
-
-For CSV import or export, use the same logical headers.
-
-## CSV Input
-
-Require a CSV with these logical headers:
+Accept direct contact details or an import CSV. Collect only the fields needed for:
 
 - `account name`
-- `record type`
+- `record type` (`customer` or `uipath`; legacy imports default to `customer`)
 - `customer name`
 - `customer role`
 - `customer email address`
 
-Header matching may be case-insensitive and tolerate punctuation/spacing differences, but the normalized output must use the exact headers above. `record type` is optional for backward compatibility and defaults to `customer` when absent. Read `references/csv-contract.md` when implementing or troubleshooting CSV normalization.
+Nonblank email addresses must be practical ASCII mailbox addresses with a fully qualified domain. Display-name forms, quoted addresses, whitespace, address literals, malformed domains, and multiple `@` characters are rejected.
 
-## Workflow
+CSV header matching may be case-insensitive and tolerate punctuation or spacing differences, but normalized output uses the exact canonical headers. Read `references/csv-contract.md` for the complete storage and migration contract.
 
-1. Decide whether the user is adding/editing stored contacts, importing/exporting the contact store, or sourcing missing emails.
-2. For direct add/edit requests, use `scripts/contact_store.py`; do not expose the backing CSV unless needed.
-3. For CSV import, validate and normalize with `scripts/prepare_customer_email_csv.py`, then import with `scripts/contact_store.py import`.
-4. Preserve every original row and value. Do not overwrite a provided `customer email address` unless the user explicitly asks for verification or correction.
-5. For rows with missing or uncertain email addresses, gather evidence from connected Microsoft context, preferring:
-   - Outlook Email search results containing the customer name, account name, email domain, role, or thread participants.
-   - Outlook Calendar attendees for meetings tied to the account or customer name.
-   - Recent threads over old threads when evidence quality is otherwise equal.
-6. Exclude obvious internal senders for `customer` records, especially `@uipath.com`. Allow `@uipath.com` for `uipath` records. Always exclude automated/no-reply addresses, bounce addresses, listservs, and generic ticketing systems unless the user explicitly wants distribution lists.
-7. Rank candidates with evidence. Never silently choose a recipient for an external send unless the match is high confidence and the user asked to proceed.
-8. Return or write a reviewable output with the original five columns plus sourcing columns:
-   - `sourced customer email address`
-   - `sourcing confidence` (`provided`, `high`, `medium`, `low`, or `none`)
-   - `sourcing evidence`
-   - `source type`
-   - `source date`
-   - `needs review`
+## Contact Workflow
+
+1. Decide whether the user is adding or editing stored contacts, importing or exporting, or sourcing missing emails.
+2. Use `scripts/contact_store.py`; do not expose or edit the backing files unless recovery requires it.
+3. Import the original CSV with `scripts/contact_store.py import`, which validates and normalizes it directly. Use `scripts/prepare_customer_email_csv.py` only when a reviewable, formula-guarded CSV artifact is needed; do not treat that export artifact as lossless storage.
+4. Match identities within `account name` plus `record type`. The same email in another account or participant type is a separate identity and must not overwrite an existing record.
+5. Preserve provided email values unless the user explicitly asks for verification or correction.
+6. For missing or uncertain addresses, gather minimal evidence from connected Outlook Email or Calendar context. Prefer exact person evidence over account-only evidence.
+7. Exclude `@uipath.com` for `customer` records and allow it for `uipath` records. Exclude automated, bounce, listserv, ticketing, and generic distribution addresses unless the user explicitly requests one.
+8. Leave ambiguous candidates review-required. Never use a sourced address as permission to send.
+
+## Availability Input
+
+Use the version `1.0` request contract at `references/schemas/free-busy-request-v1.schema.json`. Build it only from Outlook schedule/free-busy information obtained through a read-only connector operation. The normalized request includes:
+
+- an offset-aware search window of no more than 31 days
+- duration, increment, and result limit
+- unique participant IDs and emails
+- required or optional status
+- an installed IANA time zone and same-day working hours for each participant
+- half-open free/busy intervals with an Outlook status
+- source metadata with `provider=outlook` and `retrieval_mode=read-only`
+
+Include both `customer` and `uipath` contacts for the account unless the user narrows the audience. Do not infer missing free/busy data as availability. A participant with unavailable or incomplete evidence must be resolved before ranking.
+
+## Availability Ranking
+
+Run `scripts/rank_meeting_slots.py` with the normalized request. The CLI performs no network calls.
+
+1. Generate candidates from the window start at the requested increment.
+2. Reject a candidate outside any required participant's local working hours.
+3. Reject a candidate overlapping any non-`free` interval for a required participant. `tentative`, `busy`, `out_of_office`, `working_elsewhere`, and `unknown` all block required attendance.
+4. Rank remaining candidates by optional participants available, descending.
+5. Break ties by earliest UTC start.
+6. Return version `1.0` result JSON. `no_common_slot` is a valid result, not permission to relax constraints.
+
+Read `references/availability-contract.md` for the full deterministic contract and limitations.
 
 ## Evidence Rules
 
-Prefer exact person evidence over account-only evidence:
+- High confidence: exact contact name and email are linked in sender, recipient, attendee, or signature context and the domain matches the account.
+- Medium confidence: name and account are linked in the same thread or meeting, but the address pairing is indirect.
+- Low confidence: only account, domain, naming convention, or role evidence is present.
 
-- High confidence: exact customer name appears with the candidate email in sender, recipient, attendee, or signature context, and the domain matches the account or known customer domain.
-- Medium confidence: name and account are linked in the same thread or meeting, but the email/name pairing is indirect.
-- Low confidence: only account/domain or role-level evidence is present.
+If multiple candidates remain plausible, keep the stored email unchanged, place the best candidate in the sourced output, set `needs review=yes`, and describe the ambiguity with minimal mailbox detail.
 
-If multiple candidates remain plausible, leave `customer email address` unchanged, put the best candidate in `sourced customer email address`, set `needs review` to `yes`, and explain the ambiguity.
+## Safety And Retention
 
-For meeting availability, include both `customer` and `uipath` records attached to the account unless the user narrows the audience.
+- Never send email or messages, create drafts, create or modify meetings, respond to invitations, or write to external systems.
+- Treat contacts, email addresses, roles, working hours, and free/busy intervals as confidential personal and scheduling data.
+- Store only active account contacts. Review the persistent contact store at least quarterly and remove contacts no longer needed for the account relationship.
+- Delete transient free/busy requests and ranking results after the meeting is coordinated, with 30 days as the recommended maximum unless policy requires a shorter period.
+- The scripts do not delete retained data automatically. Follow the user's organizational retention and legal-hold rules.
+- CSV formula guards are applied only to exports and CSV stdout. The private persistent store keeps normalized raw values so repeated exports do not corrupt data.
 
-## Safety
+## Commands
 
-- Do not send email from this skill.
-- Do not create Outlook drafts with sourced recipients unless the user explicitly asks after reviewing the candidates.
-- Do not expose unrelated mailbox content. Quote or summarize only the minimal evidence needed to justify the candidate.
-- Do not infer a customer email from naming convention alone unless the output clearly marks it as low confidence and needing review.
-- When exporting CSV, preserve reviewability and guard spreadsheet formula prefixes so names, accounts, or roles cannot execute as spreadsheet formulas.
-
-## Useful Commands
-
-Show the backing contact store path:
-
-Run helper commands from the `account-meeting-availability/` skill directory, or replace `scripts/...` with the equivalent path in your checkout.
+Run commands from the `account-meeting-availability/` directory.
 
 ```bash
 python3 scripts/contact_store.py path
+python3 scripts/contact_store.py init
+python3 scripts/contact_store.py migrate
 ```
 
-Add or update a contact from user-provided details:
+Add and edit contacts:
 
 ```bash
 python3 scripts/contact_store.py add --account "SSA" --record-type customer --name "Jane Doe" --role "Program lead" --email "jane.doe@example.gov"
+python3 scripts/contact_store.py edit --match-account "SSA" --match-record-type customer --match-name "Jane Doe" --role "Program owner"
 ```
 
-Add a UiPath team member:
+List, import, and export:
 
 ```bash
-python3 scripts/contact_store.py add --account "SSA" --record-type uipath --name "UiPath Teammate" --role "TAM" --email "teammate@uipath.com"
-```
-
-Edit exactly one matching contact:
-
-```bash
-python3 scripts/contact_store.py edit --match-name "Customer Contact" --email "new.address@example.gov"
-```
-
-List contacts without opening the CSV:
-
-```bash
-python3 scripts/contact_store.py list --account "SSA"
-```
-
-List only UiPath team members for an account:
-
-```bash
-python3 scripts/contact_store.py list --account "SSA" --record-type uipath
-```
-
-Import contacts into the hidden store:
-
-```bash
-python3 scripts/contact_store.py import contacts.csv
-```
-
-Export the contact store only when the user asks for a CSV artifact:
-
-```bash
+python3 scripts/contact_store.py list --account "SSA" --format json
+python3 scripts/contact_store.py import input.csv
+python3 scripts/prepare_customer_email_csv.py input.csv --output review-output.csv
 python3 scripts/contact_store.py export --output contacts-export.csv
 ```
 
-Validate and normalize a CSV:
+Rank captured read-only availability:
 
 ```bash
-python3 scripts/prepare_customer_email_csv.py input.csv --output normalized.csv
+python3 scripts/rank_meeting_slots.py tests/fixtures/free_busy_rankable_v1.json --output ranked-slots.json
 ```
 
-Create a template CSV:
-
-```bash
-python3 scripts/prepare_customer_email_csv.py --template template.csv
-```
+Review the result with the user. Stop there unless the user separately invokes an approved scheduling workflow outside this skill.

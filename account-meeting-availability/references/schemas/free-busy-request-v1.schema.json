@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:uipath:account-meeting-availability:free-busy-request:v1",
+  "title": "Account Meeting Availability Free/Busy Request v1",
+  "description": "Normalized read-only Outlook free/busy evidence used for deterministic slot ranking.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "request_id",
+    "window",
+    "slot_duration_minutes",
+    "slot_increment_minutes",
+    "max_results",
+    "participants",
+    "source"
+  ],
+  "properties": {
+    "schema": {
+      "const": "account-meeting-availability/free-busy-request"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "window": {
+      "$ref": "#/$defs/window"
+    },
+    "slot_duration_minutes": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 1440
+    },
+    "slot_increment_minutes": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 1440
+    },
+    "max_results": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "participants": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "$ref": "#/$defs/participant"
+      }
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 timestamp with an explicit UTC offset."
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "end": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "retrieval_mode", "retrieved_at"],
+      "properties": {
+        "provider": {
+          "const": "outlook"
+        },
+        "retrieval_mode": {
+          "const": "read-only"
+        },
+        "retrieved_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "participant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "email",
+        "required",
+        "time_zone",
+        "working_hours",
+        "busy_intervals"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "time_zone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Installed IANA time zone name, for example America/New_York."
+        },
+        "working_hours": {
+          "$ref": "#/$defs/workingHours"
+        },
+        "busy_intervals": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/busyInterval"
+          }
+        }
+      }
+    },
+    "workingHours": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["days", "start", "end"],
+      "properties": {
+        "days": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "monday",
+              "tuesday",
+              "wednesday",
+              "thursday",
+              "friday",
+              "saturday",
+              "sunday"
+            ]
+          }
+        },
+        "start": {
+          "type": "string",
+          "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+        },
+        "end": {
+          "type": "string",
+          "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+        }
+      }
+    },
+    "busyInterval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end", "status"],
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "end": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "status": {
+          "enum": [
+            "free",
+            "tentative",
+            "busy",
+            "out_of_office",
+            "working_elsewhere",
+            "unknown"
+          ]
+        }
+      }
+    }
+  }
+}
