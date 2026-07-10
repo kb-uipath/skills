@@ -4,6 +4,8 @@ This repository contains Codex skills packaged for public GitHub use and broader
 
 The skills are copied as top-level directories so they can be installed or synced directly into a Codex skills folder. The `docs/` folder contains usage notes, required inputs, and example prompts for each skill.
 
+Last verified: 2026-07-10
+
 ## What is included
 
 - 10 top-level Codex skills.
@@ -14,15 +16,34 @@ The skills are copied as top-level directories so they can be installed or synce
 
 ## Latest validated state
 
-As of the latest merged `main`, all 10 remaining skills meet the Org Baseline readiness bar of 8/10 or higher. The top readiness scores are:
+As of 2026-07-10, all 10 skills meet the package-quality Org Baseline. Readiness is no longer represented by one score: the repository tracks package quality, functional outcome confidence, and operational certification separately. Salesforce and coded-app deployment remain explicitly uncertified until their opt-in nonproduction workflows run successfully.
 
-| Rank | Skill | Score | Notes |
-| ---: | --- | ---: | --- |
-| 1 | `salesforce-meddpicc-update` | 9.0 | Mature fixture coverage, write safety, receipt redaction, and connector-permission docs. |
-| 2 | `uipath-agentic-expansion-planner` | 8.9 | Adds Markdown brief quality gates and UiPath brand-style DOCX verification. |
-| 3 | `account-meeting-availability` | 8.6 | Hardened CSV normalization, privacy handling, and isolated contact-store tests. |
+See [docs/production-readiness-evaluation.md](./docs/production-readiness-evaluation.md) for the sorted three-axis table, evidence, blockers, and the superseded historical score comparison.
 
-See [docs/production-readiness-evaluation.md](./docs/production-readiness-evaluation.md) for the full sorted table, baseline scores, deltas, evidence, and remaining blockers.
+## Runtime And Validation
+
+Expected local validation runtime:
+
+- Python 3.11+ with exact dependencies from `requirements-dev.txt`.
+- Node 22+ for Node syntax and test checks.
+- GNU-compatible `make`, `git`, and `rg`.
+
+Run the local gate before committing or sharing changes:
+
+```bash
+make install-dev
+python3 tools/validate_repo.py
+make validate
+make secrets
+```
+
+The gate checks skill metadata, real YAML parsing, docs coverage, relative Markdown links and anchors, external-link safety, local absolute path leaks, plausible secrets, pinned GitHub Actions, pinned development dependencies, root governance files, Python syntax, Python unit tests, Node syntax/tests, and whitespace errors.
+
+The deterministic gate does not make network calls. Run the separate link check when network access is available; failures are reported separately and do not make the offline PR gate flaky:
+
+```bash
+make validate-online
+```
 
 ## Install
 
@@ -64,9 +85,12 @@ Run the local gate before committing or sharing changes:
 
 ```bash
 make validate
+make secrets
 ```
 
-The gate checks skill metadata, docs coverage, relative Markdown links, local absolute path leaks, Python syntax, Python unit tests, Node syntax/tests, and whitespace errors.
+The gate is the CI-equivalent validation path for this repository. It auto-discovers Python test directories and Node test files so newly added tests are not missed.
+
+`diff-check` compares committed changes with `BASE_REF` (default `origin/main`) and also checks the working tree. Override it for a different target branch with `make validate BASE_REF=origin/release`.
 
 For full DOCX renderer and brand-style test coverage, run `make validate` with a Python interpreter that has `python-docx` installed:
 
@@ -76,60 +100,18 @@ make validate PYTHON=/path/to/python-with-python-docx
 
 ## Skill index
 
-### Consumption planning
-
-| Skill | What it does | When to use it | Docs |
+| Skill | Production outcome | Use when | Docs |
 | --- | --- | --- | --- |
-| [estimate-du-units](./estimate-du-units/SKILL.md) | Estimate annual UiPath Document Understanding AI Unit or Platform Unit consumption from customer automation descriptions, especially messy natural-language descriptions involving scanned documents, forms, OCR, classification, extraction, indexing, manual queues, batches, faxes, PDFs, or document routing. | Estimate annual UiPath Document Understanding AI Unit or Platform Unit consumption from customer automation descriptions, especially messy natural-language descriptions involving scanned documents, forms, OCR, classification, extraction, indexing, manual queues, batches, faxes, PDFs, or document routing. Use when Codex needs to decide whether DU applies, infer documents and page volume, source or annualize workload counts, calculate low/base/high consumption, explain assumptions, or produce a planning estimate for a UiPath customer. | [docs](./docs/estimate-du-units.md) |
-
-### Customer operations
-
-| Skill | What it does | When to use it | Docs |
-| --- | --- | --- | --- |
-| [account-meeting-availability](./account-meeting-availability/SKILL.md) | Source, validate, store, edit, and review account meeting contacts for both customer contacts and UiPath team members from a CSV or direct user-provided contact details. | Source, validate, store, edit, and review account meeting contacts for both customer contacts and UiPath team members from a CSV or direct user-provided contact details. Use when the user provides or references an account/contact CSV, asks to add or edit customer or UiPath contacts, asks Codex to maintain an account contact book, fill missing email addresses, verify account contacts, prepare meeting attendees, or identify likely emails from Outlook Email/Calendar evidence without sending messages automatically. | [docs](./docs/account-meeting-availability.md) |
-
-### Decision support
-
-| Skill | What it does | When to use it | Docs |
-| --- | --- | --- | --- |
-| [llm-council](./llm-council/SKILL.md) | Run a structured multi-perspective council for high-stakes decisions using five independent advisor subagents, anonymous peer review, and a chairman verdict with report artifacts. | Run a structured multi-perspective council for high-stakes decisions using five independent advisor subagents, anonymous peer review, and a chairman verdict with report artifacts. Use when the user explicitly invokes $llm-council, says "council this", asks to run a council or multi-agent advisor panel, or wants to stress-test a pivot, pricing, positioning, hiring, launch, strategy, or other expensive-to-get-wrong choice. Do not use for factual lookups, simple content generation, summaries, or tasks with one correct answer. | [docs](./docs/llm-council.md) |
-
-### Delivery handoff
-
-| Skill | What it does | When to use it | Docs |
-| --- | --- | --- | --- |
-| [usecasehandoff](./usecasehandoff/SKILL.md) | Capture, verify, synthesize, package, and route customer or internal automation use case handoffs. | Capture, verify, synthesize, package, and route customer or internal automation use case handoffs. Use when Codex needs to gather known information from chats, email, Slack, Teams, SharePoint, Drive, local files, or web sources; produce executive framing, cited metrics, business impact, solution workflow, delivery plan, enterprise hardening recommendations, AI/UiPath AI Unit consumption opportunities, risk register, next steps, and downloadable artifacts for a professional services or automation delivery team. | [docs](./docs/usecasehandoff.md) |
-
-### Engineering quality
-
-| Skill | What it does | When to use it | Docs |
-| --- | --- | --- | --- |
-| [repo-hardening-sprint](./repo-hardening-sprint/SKILL.md) | Run safe, repository-agnostic cleanup and production-hardening sprints. | Run safe, repository-agnostic cleanup and production-hardening sprints. Use when Codex is asked to review, clean up, refactor, harden, reorganize docs, improve tests, add smoke checks, prepare a repo for commit, or verify that a change can be safely pushed to main without breaking public behavior. | [docs](./docs/repo-hardening-sprint.md) |
-
-### GTM and executive proposals
-
-| Skill | What it does | When to use it | Docs |
-| --- | --- | --- | --- |
-| [gtm-org-proposal-generator](./gtm-org-proposal-generator/SKILL.md) | Build executive-level UiPath automation proposal cards from public organizational research. | Build executive-level UiPath automation proposal cards from public organizational research. Use when Codex is asked to research an organization, agency, department, public company, healthcare system, university, or other institution; analyze budgets, strategic goals, administrative burden, or cost drivers; identify automation use cases; and produce cited GTM, sales, C-suite, public sector, or federal proposal content aligned to a specified industry vertical and UiPath deployment type. | [docs](./docs/gtm-org-proposal-generator.md) |
-| [uipath-agentic-expansion-planner](./uipath-agentic-expansion-planner/SKILL.md) | Produces evidence-backed UiPath Act 2 expansion plans, agentic automation portfolios, top recommendations, POC candidates, and an on-brand verified executive DOCX brief from customer inventories. | Use when the user provides or references a customer inventory spreadsheet, asks for agentic expansion ideas, asks to prioritize UiPath opportunities, or needs a customer-ready proposal grounded in inventory data, public strategy evidence, deployment-aware validation, UiPath brand-aware writing, and Word-ready packaging. | [docs](./docs/uipath-agentic-expansion-planner.md) |
-
-### Public-sector account research
-
-| Skill | What it does | When to use it | Docs |
-| --- | --- | --- | --- |
-| [pubsec-big-rocks-row-research](./pubsec-big-rocks-row-research/SKILL.md) | Research and synthesize evidence for one account row in the PubSec CS Portfolio Big Rocks spreadsheet. | Research and synthesize evidence for one account row in the PubSec CS Portfolio Big Rocks spreadsheet. Use when Codex is asked to fill, review, validate, or provide organized content for a single account/row/record in the PUBSEC Big Rocks workbook, especially columns for utilization, cloud status, AI Units, Agent Units, Test/IXP/Agentic status, FY27 Big Rocks, value tracking, churn/risk, and notes using SharePoint, Slack, OneNote, migration, TAC, Gov SFDC, Wingman/license, and workbook tabs. | [docs](./docs/pubsec-big-rocks-row-research.md) |
-
-### Sales operations
-
-| Skill | What it does | When to use it | Docs |
-| --- | --- | --- | --- |
-| [salesforce-meddpicc-update](./salesforce-meddpicc-update/SKILL.md) | Update MEDDPICC qualification fields and Next Steps on UiPath Salesforce Opportunities through the UiPath Integration Service Salesforce connector. | Update MEDDPICC qualification fields and Next Steps on UiPath Salesforce Opportunities through the UiPath Integration Service Salesforce connector. Use when the user provides or references a Salesforce Opportunity URL or ID and asks to update MEDDPICC, qualification, Metrics, Economic Buyer, Decision Criteria, Decision Process, Paper Process, Identified Pain, Champion, Competition, Compelling Event, or Next Steps. Requires read-before-write, schema describe validation, explicit user confirmation, append-with-date behavior for narrative fields, read-after-write verification, prompt-injection guardrail, fuzzy near-duplicate detection, force-duplicate override, and privacy-safe telemetry logging. | [docs](./docs/salesforce-meddpicc-update.md) |
-
-### UiPath deploy
-
-| Skill | What it does | When to use it | Docs |
-| --- | --- | --- | --- |
-| [uipcodedappdeploy](./uipcodedappdeploy/SKILL.md) | Deploy UiPath coded app projects with the native UiPath CLI. | Deploy UiPath coded app projects with the native UiPath CLI. Use when Codex needs to increment a coded app package version, validate the project, build the app dist, pack it, publish it, and deploy it to UiPath Automation Cloud alpha using `uip codedapp pack`, `uip codedapp publish`, and `uip codedapp deploy`. | [docs](./docs/uipcodedappdeploy.md) |
+| [account-meeting-availability](./account-meeting-availability/SKILL.md) | Maintains a private versioned contact store and ranks common meeting slots from normalized read-only free/busy evidence. | Contact identity, email review, attendee preparation, or deterministic availability ranking is required without sending or scheduling. | [docs](./docs/account-meeting-availability.md) |
+| [estimate-du-units](./estimate-du-units/SKILL.md) | Produces versioned exact and rounded DU consumption scenarios from verified rate inputs. | A customer needs a defensible AI Unit or Platform Unit estimate with applicability rationale and current source dates. | [docs](./docs/estimate-du-units.md) |
+| [gtm-org-proposal-generator](./gtm-org-proposal-generator/SKILL.md) | Validates and renders evidence-backed executive proposal cards from a canonical source and capability ledger. | Public authoritative research must become deployment-aware GTM recommendations without fabricated impact claims. | [docs](./docs/gtm-org-proposal-generator.md) |
+| [llm-council](./llm-council/SKILL.md) | Produces a five-advisor, five-review decision record with deterministic anonymization and sensitivity metadata. | A consequential decision needs independent challenge, disconfirming evidence, and an explicit chairman verdict. | [docs](./docs/llm-council.md) |
+| [pubsec-big-rocks-row-research](./pubsec-big-rocks-row-research/SKILL.md) | Creates a validated preview and local workbook copy from manifest-controlled public-sector account evidence. | One Big Rocks account row needs exact matching, fill-eligible evidence, stale-lead separation, and no in-place source edits. | [docs](./docs/pubsec-big-rocks-row-research.md) |
+| [repo-hardening-sprint](./repo-hardening-sprint/SKILL.md) | Runs a bounded, base-aware repository validation and governance hardening workflow. | A repository needs scoped cleanup, regression tests, safety scans, or PR readiness without changing public contracts casually. | [docs](./docs/repo-hardening-sprint.md) |
+| [salesforce-meddpicc-update](./salesforce-meddpicc-update/SKILL.md) | Builds freshness-bound MEDDPICC transactions, explicit receipts, and read-after-write verification artifacts. | An authorized Salesforce Opportunity update is requested and must pass schema, confirmation, privacy, and retry controls. | [docs](./docs/salesforce-meddpicc-update.md) |
+| [uipath-agentic-expansion-planner](./uipath-agentic-expansion-planner/SKILL.md) | Converts customer inventories into scored, evidence-linked expansion portfolios and an on-brand verified executive brief. | Account strategy requires specific Act 2 recommendations, pilot boundaries, deployment constraints, and value assumptions. | [docs](./docs/uipath-agentic-expansion-planner.md) |
+| [uipcodedappdeploy](./uipcodedappdeploy/SKILL.md) | Generates hashed deployment plans and redacted resumable receipts before any explicit UiPath deployment. | A coded app needs validated versioning, build, package, publish, deploy, and optional URL verification with no default writes. | [docs](./docs/uipcodedappdeploy.md) |
+| [usecasehandoff](./usecasehandoff/SKILL.md) | Builds and validates a nine-file, hash-manifested delivery handoff package with a no-send boundary. | An automation idea must become evidence-backed analysis, delivery work, risks, references, and a concrete first sprint. | [docs](./docs/usecasehandoff.md) |
 
 ## Public repository safety notes
 
@@ -140,3 +122,11 @@ A quick local scan before committing:
 ```bash
 rg -n --hidden -i "(api[_-]?key|secret|password|token|bearer|authorization|client[_-]?secret|private[_-]?key)" .
 ```
+
+## Governance
+
+- License: [Apache-2.0](./LICENSE).
+- Contribution rules: [CONTRIBUTING.md](./CONTRIBUTING.md).
+- Code ownership: [CODEOWNERS](./CODEOWNERS), owned by `@kb-uipath`.
+- Support policy: [SUPPORT.md](./SUPPORT.md).
+- Security reporting: [SECURITY.md](./SECURITY.md), including private advisory guidance.
