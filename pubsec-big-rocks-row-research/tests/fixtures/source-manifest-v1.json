@@ -1,0 +1,23 @@
+{
+  "contract_version": "pubsec-big-rocks-row-research/source-manifest@1",
+  "data_classification": "UiPath Confidential",
+  "retention_until": "2026-12-31",
+  "sources": [
+    {
+      "id": "current-source",
+      "kind": "xlsx",
+      "path": "source-current.xlsx",
+      "required": true,
+      "source_updated_at": "2026-06-20",
+      "freshness_basis": "sharepoint_modified_at"
+    },
+    {
+      "id": "stale-source",
+      "kind": "xlsx",
+      "path": "source-stale.xlsx",
+      "required": true,
+      "source_updated_at": "2025-01-01",
+      "freshness_basis": "source_export_date"
+    }
+  ]
+}
