@@ -1,0 +1,5 @@
+{
+  "connectionId": "conn-fixture-only",
+  "now": "2026-05-20T14:01:00.000Z",
+  "expectedError": "MISSING_FRESHNESS_PROOF"
+}

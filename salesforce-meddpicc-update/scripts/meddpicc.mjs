@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -17,6 +18,17 @@ const OPPORTUNITY_PREFIX = FIELD_MAP.opportunityPrefix || "006";
 const TEXTAREA_TYPES = new Set(["textarea"]);
 const STRING_TYPES = new Set(["string", "phone", "email", "url"]);
 const SECRET_KEYS = new Set(["connection", "connectionId", "accessToken", "token", "authorization", "body"]);
+const SCHEMA_VERSIONS = Object.freeze({
+  draft: "salesforce-meddpicc-draft/v2",
+  confirmation: "salesforce-meddpicc-confirmation/v1",
+  transaction: "salesforce-meddpicc-transaction/v1",
+  patch: "salesforce-meddpicc-patch/v2",
+  verification: "salesforce-meddpicc-verification/v2",
+  auditReceipt: "salesforce-meddpicc-audit-receipt/v1",
+  recovery: "salesforce-meddpicc-recovery/v1",
+  telemetry: "salesforce-meddpicc-telemetry/v1",
+});
+const TRANSACTION_STATES = new Set(["confirmed", "patch_prepared", "recovery_required", "verified"]);
 
 class MeddpiccError extends Error {
   constructor(code, message, options = {}) {
@@ -63,6 +75,141 @@ function canonicalKey(key) {
 function asString(value) {
   if (value === null || value === undefined) return "";
   return String(value).trim();
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .filter((key) => value[key] !== undefined)
+      .map((key) => [key, canonicalize(value[key])]),
+  );
+}
+
+function digest(value) {
+  return createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex");
+}
+
+function operationIdForDraft(draftPayload) {
+  if (draftPayload?.schema_version !== SCHEMA_VERSIONS.draft) {
+    throw new MeddpiccError("UNSUPPORTED_DRAFT_SCHEMA", `Expected draft schema ${SCHEMA_VERSIONS.draft}.`, {
+      recoverable: true,
+      nextAction: "Regenerate the draft with the current `draft` command before confirmation, build, verification, or recovery.",
+    });
+  }
+  const opportunityId = asString(draftPayload?.opportunityId);
+  if (!parseOpportunityId(opportunityId).valid) {
+    throw new MeddpiccError("INVALID_OPPORTUNITY_ID", "A valid draft Opportunity ID is required to derive operation_id.", {
+      recoverable: true,
+      nextAction: "Rebuild the draft from a Salesforce Opportunity ID beginning with 006.",
+    });
+  }
+  const baseLastModifiedDate = asString(draftPayload?.currentLastModifiedDate);
+  if (!baseLastModifiedDate) {
+    throw new MeddpiccError("MISSING_BASE_LAST_MODIFIED_DATE", "The draft is missing the Opportunity LastModifiedDate used for confirmation.", {
+      recoverable: true,
+      nextAction: "Re-read the Opportunity including LastModifiedDate, then rebuild and reconfirm the draft.",
+    });
+  }
+  const proposedFields = draftPayload?.proposedFields || {};
+  if (Object.keys(proposedFields).length === 0) {
+    throw new MeddpiccError("NO_PROPOSED_FIELDS", "No proposed fields to write.", {
+      recoverable: true,
+      nextAction: "Add at least one supported MEDDPICC or Next Steps field before confirming the operation.",
+    });
+  }
+  const hash = digest({
+    schema_version: SCHEMA_VERSIONS.patch,
+    opportunity_id: opportunityId,
+    base_last_modified_date: baseLastModifiedDate,
+    proposed_fields: proposedFields,
+  });
+  return `sfmedd_${hash}`;
+}
+
+function withTransactionDigest(transaction) {
+  const unsigned = { ...transaction };
+  delete unsigned.transaction_digest;
+  return { ...unsigned, transaction_digest: digest(unsigned) };
+}
+
+function createTransaction(fields) {
+  return withTransactionDigest(compactFields({
+    schema_version: SCHEMA_VERSIONS.transaction,
+    operation_id: fields.operationId,
+    state: fields.state,
+    confirmation_digest: fields.confirmationDigest,
+    base_last_modified_date: fields.baseLastModifiedDate,
+    confirmed_at: fields.confirmedAt,
+    prepared_at: fields.preparedAt,
+    verified_at: fields.verifiedAt,
+    recovery_checked_at: fields.recoveryCheckedAt,
+  }));
+}
+
+function transactionError(code, message, nextAction) {
+  return new MeddpiccError(code, message, {
+    recoverable: true,
+    nextAction,
+  });
+}
+
+function validateTransaction(transaction, expectedOperationId, allowedStates) {
+  if (!transaction || typeof transaction !== "object" || Array.isArray(transaction)) {
+    throw transactionError(
+      "TRANSACTION_REQUIRED",
+      "A versioned transaction object is required.",
+      "Generate an approved receipt with `receipt --mode confirmation` and pass its transaction through the write and verification workflow.",
+    );
+  }
+  if (transaction.schema_version !== SCHEMA_VERSIONS.transaction) {
+    throw transactionError(
+      "UNSUPPORTED_TRANSACTION_SCHEMA",
+      `Unsupported transaction schema: ${asString(transaction.schema_version) || "missing"}.`,
+      `Regenerate the transaction using ${SCHEMA_VERSIONS.transaction}.`,
+    );
+  }
+  const unsigned = { ...transaction };
+  const suppliedDigest = asString(unsigned.transaction_digest);
+  delete unsigned.transaction_digest;
+  if (!suppliedDigest || suppliedDigest !== digest(unsigned)) {
+    throw transactionError(
+      "TAMPERED_TRANSACTION",
+      "Transaction integrity validation failed.",
+      "Discard the transaction, re-read Salesforce, rebuild the draft, and obtain a new confirmation.",
+    );
+  }
+  if (transaction.operation_id !== expectedOperationId) {
+    throw transactionError(
+      "TAMPERED_TRANSACTION",
+      "Transaction operation_id does not match the deterministic draft operation.",
+      "Discard the transaction and regenerate the confirmation from the unchanged draft.",
+    );
+  }
+  if (!TRANSACTION_STATES.has(transaction.state)) {
+    throw transactionError(
+      "INVALID_TRANSACTION_STATE",
+      `Unknown transaction state: ${asString(transaction.state) || "missing"}.`,
+      "Stop and recover from the last trusted transaction artifact.",
+    );
+  }
+  if (!allowedStates.includes(transaction.state)) {
+    if (["patch_prepared", "recovery_required", "verified"].includes(transaction.state)) {
+      throw transactionError(
+        "DUPLICATE_OPERATION",
+        `Operation ${expectedOperationId} is already in state ${transaction.state}; another PATCH envelope will not be emitted.`,
+        "Do not retry PATCH. Re-read Salesforce and run recovery or verification with the existing transaction.",
+      );
+    }
+    throw transactionError(
+      "INVALID_TRANSACTION_STATE",
+      `Transaction state ${transaction.state} is not valid for this command.`,
+      "Resume from the last valid artifact instead of changing transaction state manually.",
+    );
+  }
+  return transaction;
 }
 
 function normalizeWhitespace(value) {
@@ -358,6 +505,7 @@ function draft(payload) {
   }
 
   return {
+    schema_version: SCHEMA_VERSIONS.draft,
     opportunityId: parsed.opportunityId,
     opportunityName: current.Name || null,
     author,
@@ -454,35 +602,114 @@ function minutesBetween(startIso, endIso) {
   return (end - start) / 60000;
 }
 
+function confirmationCore(confirmation) {
+  const core = { ...confirmation };
+  delete core.confirmation_digest;
+  delete core.transaction;
+  return core;
+}
+
+function validateConfirmation(confirmation, draftPayload, expectedOperationId) {
+  if (!confirmation || typeof confirmation !== "object" || Array.isArray(confirmation)) {
+    throw new MeddpiccError("CONFIRMATION_REQUIRED", "An approved confidential confirmation receipt is required before build-patch.", {
+      recoverable: true,
+      nextAction: "After explicit user approval, run `receipt --mode confirmation` with `confirmed: true` and pass that artifact as confirmation.",
+    });
+  }
+  if (
+    confirmation.schema_version !== SCHEMA_VERSIONS.confirmation
+    || confirmation.mode !== "confirmation"
+    || confirmation.classification !== "confidential"
+    || confirmation.decision !== "approved"
+  ) {
+    throw new MeddpiccError("INVALID_CONFIRMATION", "Confirmation artifact is not an approved confidential confirmation receipt.", {
+      recoverable: true,
+      nextAction: "Regenerate the artifact with `receipt --mode confirmation` after explicit user approval.",
+    });
+  }
+  if (confirmation.operation_id !== expectedOperationId) {
+    throw new MeddpiccError("TAMPERED_CONFIRMATION", "Confirmation operation_id does not match the deterministic draft operation.", {
+      recoverable: true,
+      nextAction: "Discard the confirmation, restore the approved draft, and obtain confirmation again.",
+    });
+  }
+  if (confirmation.base_last_modified_date !== draftPayload.currentLastModifiedDate) {
+    throw new MeddpiccError("TAMPERED_CONFIRMATION", "Confirmation LastModifiedDate does not match the draft read version.", {
+      recoverable: true,
+      nextAction: "Re-read Salesforce, rebuild the draft, and obtain a new confirmation.",
+    });
+  }
+  const suppliedDigest = asString(confirmation.confirmation_digest);
+  if (!suppliedDigest || suppliedDigest !== digest(confirmationCore(confirmation))) {
+    throw new MeddpiccError("TAMPERED_CONFIRMATION", "Confirmation integrity validation failed.", {
+      recoverable: true,
+      nextAction: "Discard the artifact and regenerate it from the unchanged approved draft.",
+    });
+  }
+  const transaction = validateTransaction(confirmation.transaction, expectedOperationId, ["confirmed"]);
+  if (transaction.confirmation_digest !== suppliedDigest) {
+    throw new MeddpiccError("TAMPERED_CONFIRMATION", "Confirmation and transaction digests do not match.", {
+      recoverable: true,
+      nextAction: "Discard both artifacts and regenerate the confirmation from the approved draft.",
+    });
+  }
+  return transaction;
+}
+
+function freshReadFailure(draftPayload, warnings, message) {
+  return {
+    schema_version: SCHEMA_VERSIONS.patch,
+    operation_id: draftPayload.currentLastModifiedDate && Object.keys(draftPayload.proposedFields || {}).length > 0
+      ? operationIdForDraft(draftPayload)
+      : null,
+    envelope: null,
+    salesforceBody: null,
+    transaction: null,
+    requiresFreshRead: true,
+    warnings: [...warnings, message],
+    skippedFields: draftPayload.skippedFields || [],
+  };
+}
+
 function buildPatch(payload) {
   const draftPayload = payload.draft || payload;
   const proposedFields = draftPayload.proposedFields || {};
   const warnings = [...(draftPayload.warnings || [])];
   const maxAge = Number(payload.maxConfirmationAgeMinutes ?? DEFAULT_STALE_MINUTES);
-  const now = payload.confirmedAt || payload.now || new Date().toISOString();
+  const now = payload.now || new Date().toISOString();
+  const baseLastModifiedDate = asString(draftPayload.currentLastModifiedDate);
+  const freshLastModifiedDate = asString(payload.freshLastModifiedDate);
 
-  if (draftPayload.generatedAt && minutesBetween(draftPayload.generatedAt, now) > maxAge) {
-    return {
-      envelope: null,
-      salesforceBody: null,
-      requiresFreshRead: true,
-      warnings: [...warnings, `Draft is older than ${maxAge} minutes; re-read Salesforce before writing.`],
-      skippedFields: draftPayload.skippedFields || [],
-    };
+  if (!Number.isFinite(maxAge) || maxAge <= 0) {
+    throw new MeddpiccError("INVALID_MAX_CONFIRMATION_AGE", "maxConfirmationAgeMinutes must be a positive finite number.", {
+      recoverable: true,
+      nextAction: `Use a positive age window; the configured default is ${DEFAULT_STALE_MINUTES} minutes.`,
+    });
+  }
+  if (!baseLastModifiedDate || !freshLastModifiedDate) {
+    throw new MeddpiccError("MISSING_FRESHNESS_PROOF", "build-patch now requires both the draft and fresh read LastModifiedDate values.", {
+      recoverable: true,
+      nextAction: "Re-read the Opportunity immediately before build-patch, include LastModifiedDate as freshLastModifiedDate, and rebuild/reconfirm if it changed.",
+    });
+  }
+  if (
+    !Number.isFinite(Date.parse(baseLastModifiedDate))
+    || !Number.isFinite(Date.parse(freshLastModifiedDate))
+    || !Number.isFinite(Date.parse(now))
+    || (draftPayload.generatedAt && !Number.isFinite(Date.parse(draftPayload.generatedAt)))
+  ) {
+    throw new MeddpiccError("INVALID_FRESHNESS_TIMESTAMP", "Freshness timestamps must be valid ISO-8601 or Salesforce timestamps.", {
+      recoverable: true,
+      nextAction: "Re-read the Opportunity and regenerate the draft without editing generatedAt, now, or LastModifiedDate values.",
+    });
   }
 
-  if (
-    payload.freshLastModifiedDate &&
-    draftPayload.currentLastModifiedDate &&
-    payload.freshLastModifiedDate !== draftPayload.currentLastModifiedDate
-  ) {
-    return {
-      envelope: null,
-      salesforceBody: null,
-      requiresFreshRead: true,
-      warnings: [...warnings, "Opportunity LastModifiedDate changed after draft generation; rebuild the draft."],
-      skippedFields: draftPayload.skippedFields || [],
-    };
+  if (draftPayload.generatedAt && minutesBetween(draftPayload.generatedAt, now) > maxAge) {
+    return freshReadFailure(draftPayload, warnings, `Draft is older than ${maxAge} minutes; re-read Salesforce before writing.`);
+  }
+
+  if (freshLastModifiedDate !== baseLastModifiedDate) {
+    return freshReadFailure(draftPayload, warnings, "Opportunity LastModifiedDate changed after draft generation; rebuild and reconfirm the draft.");
   }
 
   if (Object.keys(proposedFields).length === 0) {
@@ -490,6 +717,25 @@ function buildPatch(payload) {
       recoverable: true,
       nextAction: "Add at least one supported MEDDPICC or Next Steps field before building a PATCH.",
     });
+  }
+
+  const operationId = operationIdForDraft(draftPayload);
+  const confirmedTransaction = validateConfirmation(payload.confirmation, draftPayload, operationId);
+  const activeTransaction = validateTransaction(payload.transaction, operationId, ["confirmed"]);
+  if (activeTransaction.confirmation_digest !== payload.confirmation.confirmation_digest) {
+    throw new MeddpiccError("TAMPERED_TRANSACTION", "Active transaction does not belong to the supplied confirmation.", {
+      recoverable: true,
+      nextAction: "Use the transaction embedded in the approved confirmation receipt.",
+    });
+  }
+  if (activeTransaction.transaction_digest !== confirmedTransaction.transaction_digest) {
+    throw new MeddpiccError("TAMPERED_TRANSACTION", "Active transaction differs from the transaction approved in the confirmation receipt.", {
+      recoverable: true,
+      nextAction: "Use the exact transaction embedded in the approved confirmation receipt.",
+    });
+  }
+  if (payload.confirmation.confirmed_at && minutesBetween(payload.confirmation.confirmed_at, now) > maxAge) {
+    return freshReadFailure(draftPayload, warnings, `Confirmation is older than ${maxAge} minutes; re-read Salesforce and obtain a new confirmation.`);
   }
 
   const describeFields = fieldsByName(payload.describe);
@@ -517,6 +763,8 @@ function buildPatch(payload) {
   const apiVersion = payload.apiVersion || DEFAULT_API_VERSION;
   const requestPath = `/services/data/${apiVersion}/sobjects/Opportunity/${opportunityId}`;
   return {
+    schema_version: SCHEMA_VERSIONS.patch,
+    operation_id: operationId,
     envelope: {
       authentication: "connector",
       targetConnector: payload.targetConnector || DEFAULT_CONNECTOR,
@@ -529,16 +777,21 @@ function buildPatch(payload) {
       body: JSON.stringify(salesforceBody),
     },
     salesforceBody,
+    transaction: createTransaction({
+      operationId,
+      state: "patch_prepared",
+      confirmationDigest: payload.confirmation.confirmation_digest,
+      baseLastModifiedDate,
+      confirmedAt: payload.confirmation.confirmed_at,
+      preparedAt: now,
+    }),
     requiresFreshRead: false,
     warnings,
     skippedFields: draftPayload.skippedFields || [],
   };
 }
 
-function verify(payload) {
-  const draftPayload = payload.draft || payload;
-  const proposedFields = draftPayload.proposedFields || {};
-  const readBack = payload.readBack || {};
+function compareReadBack(proposedFields, readBack) {
   const fieldsWritten = [];
   const discrepancies = [];
 
@@ -555,6 +808,36 @@ function verify(payload) {
       discrepancies.push({ field: apiName, expected, actual });
     }
   }
+  return { fieldsWritten, discrepancies };
+}
+
+function nextTransaction(transaction, state, timestampField, timestamp) {
+  return createTransaction({
+    operationId: transaction.operation_id,
+    state,
+    confirmationDigest: transaction.confirmation_digest,
+    baseLastModifiedDate: transaction.base_last_modified_date,
+    confirmedAt: transaction.confirmed_at,
+    preparedAt: transaction.prepared_at,
+    verifiedAt: timestampField === "verifiedAt" ? timestamp : transaction.verified_at,
+    recoveryCheckedAt: timestampField === "recoveryCheckedAt" ? timestamp : transaction.recovery_checked_at,
+  });
+}
+
+function verify(payload) {
+  const draftPayload = payload.draft || payload;
+  const proposedFields = draftPayload.proposedFields || {};
+  const readBack = payload.readBack || {};
+  const operationId = operationIdForDraft(draftPayload);
+  const transaction = validateTransaction(payload.transaction || payload.patch?.transaction, operationId, ["patch_prepared", "recovery_required"]);
+  if (transaction.base_last_modified_date !== draftPayload.currentLastModifiedDate) {
+    throw transactionError(
+      "TAMPERED_TRANSACTION",
+      "Transaction LastModifiedDate does not match the draft read version.",
+      "Discard the transaction and recover from a fresh Salesforce read.",
+    );
+  }
+  const { fieldsWritten, discrepancies } = compareReadBack(proposedFields, readBack);
 
   const response = payload.response || {};
   const warnings = [...(draftPayload.warnings || [])];
@@ -569,18 +852,29 @@ function verify(payload) {
     }
   }
 
+  const verifiedAt = payload.verifiedAt || payload.now || new Date().toISOString();
+  const readBackStatus = discrepancies.length === 0 ? "all_matched" : "mismatch";
+
   return {
+    schema_version: SCHEMA_VERSIONS.verification,
+    operation_id: operationId,
     opportunity: {
       id: draftPayload.opportunityId || readBack.Id || null,
       name: readBack.Name || draftPayload.opportunityName || null,
       lastModifiedDate: readBack.LastModifiedDate || null,
     },
-    readBackStatus: discrepancies.length === 0 ? "all_matched" : "mismatch",
+    readBackStatus,
     fieldsWritten,
     fieldsSkipped: draftPayload.skippedFields || [],
     warnings,
     discrepancies,
     actionItems: [...new Set(actionItems)],
+    transaction: nextTransaction(
+      transaction,
+      readBackStatus === "all_matched" ? "verified" : "recovery_required",
+      readBackStatus === "all_matched" ? "verifiedAt" : "recoveryCheckedAt",
+      verifiedAt,
+    ),
   };
 }
 
@@ -598,26 +892,120 @@ function redact(value) {
   return output;
 }
 
-function receipt(payload) {
+function confirmationReceipt(payload) {
   const draftPayload = payload.draft || payload;
-  const verification = payload.verification || payload.verify || null;
-  const patch = payload.patch || payload.buildPatch || null;
-  return {
-    type: payload.type || (verification ? "verification" : patch ? "patch" : "confirmation"),
+  if (payload.confirmed !== true && payload.approved !== true) {
+    throw new MeddpiccError("EXPLICIT_CONFIRMATION_REQUIRED", "A confirmation receipt can only be created after explicit user approval.", {
+      recoverable: true,
+      nextAction: "Show the exact field-level draft, obtain explicit approval, then rerun with `confirmed: true` and confirmedAt.",
+    });
+  }
+  const confirmedAt = asString(payload.confirmedAt);
+  if (!confirmedAt || !Number.isFinite(Date.parse(confirmedAt))) {
+    throw new MeddpiccError("INVALID_CONFIRMED_AT", "confirmedAt must be a valid ISO-8601 timestamp.", {
+      recoverable: true,
+      nextAction: "Record the explicit approval time as confirmedAt and regenerate the receipt.",
+    });
+  }
+  const operationId = operationIdForDraft(draftPayload);
+  const core = {
+    schema_version: SCHEMA_VERSIONS.confirmation,
+    mode: "confirmation",
+    classification: "confidential",
+    decision: "approved",
+    operation_id: operationId,
+    confirmed_at: confirmedAt,
+    confirmed_by: asString(payload.confirmedBy || draftPayload.author) || null,
+    base_last_modified_date: draftPayload.currentLastModifiedDate,
     opportunity: {
-      id: draftPayload.opportunityId || verification?.opportunity?.id || null,
-      name: draftPayload.opportunityName || verification?.opportunity?.name || null,
-      lastModifiedDate: verification?.opportunity?.lastModifiedDate || draftPayload.currentLastModifiedDate || null,
+      id: draftPayload.opportunityId || null,
+      name: draftPayload.opportunityName || null,
+      lastModifiedDate: draftPayload.currentLastModifiedDate || null,
     },
     proposedFields: redact(draftPayload.proposedFields || {}),
     entries: redact(draftPayload.entries || {}),
-    skippedFields: draftPayload.skippedFields || [],
-    warnings: [...(draftPayload.warnings || []), ...(patch?.warnings || []), ...(verification?.warnings || [])],
-    actionItems: [...new Set([...(draftPayload.actionItems || []), ...(verification?.actionItems || [])])],
-    verificationStatus: verification?.readBackStatus || null,
-    fieldsWritten: verification?.fieldsWritten || [],
-    patch: patch ? redact(patch.envelope || patch) : null,
+    skippedFields: redact(draftPayload.skippedFields || []),
+    warnings: [...(draftPayload.warnings || [])],
+    actionItems: [...(draftPayload.actionItems || [])],
+    retention: "ephemeral_until_verification_or_30_days_max",
   };
+  const confirmationDigest = digest(core);
+  return {
+    ...core,
+    confirmation_digest: confirmationDigest,
+    transaction: createTransaction({
+      operationId,
+      state: "confirmed",
+      confirmationDigest,
+      baseLastModifiedDate: draftPayload.currentLastModifiedDate,
+      confirmedAt,
+    }),
+  };
+}
+
+function auditReceipt(payload) {
+  const draftPayload = payload.draft || payload;
+  const verification = payload.verification || payload.verify || null;
+  const patch = payload.patch || payload.buildPatch || null;
+  const confirmation = payload.confirmation || null;
+  const transaction = payload.transaction || verification?.transaction || patch?.transaction || confirmation?.transaction || null;
+  const operationId = operationIdForDraft(draftPayload);
+  for (const candidate of [confirmation?.operation_id, verification?.operation_id, patch?.operation_id, transaction?.operation_id]) {
+    if (candidate && candidate !== operationId) {
+      throw new MeddpiccError("TAMPERED_AUDIT_SOURCE", "Audit source operation_id values do not match the draft.", {
+        recoverable: true,
+        nextAction: "Discard the inconsistent artifact and rebuild the audit receipt from the last trusted transaction.",
+      });
+    }
+  }
+  if (confirmation) validateConfirmation(confirmation, draftPayload, operationId);
+  if (transaction) validateTransaction(transaction, operationId, [...TRANSACTION_STATES]);
+  const fieldNames = new Set([
+    ...Object.keys(draftPayload.proposedFields || {}),
+    ...(verification?.fieldsWritten || []).map((item) => item.field),
+  ]);
+  return {
+    schema_version: SCHEMA_VERSIONS.auditReceipt,
+    mode: "audit",
+    classification: "internal",
+    operation_id: operationId,
+    transaction_state: transaction?.state || null,
+    proposed_field_names: [...fieldNames].sort(),
+    proposed_field_count: fieldNames.size,
+    skipped_field_count: (draftPayload.skippedFields || []).length,
+    warning_count: new Set([...(draftPayload.warnings || []), ...(patch?.warnings || []), ...(verification?.warnings || [])]).size,
+    action_item_count: new Set([...(draftPayload.actionItems || []), ...(verification?.actionItems || [])]).size,
+    verification_status: verification?.readBackStatus || null,
+    fields_written: (verification?.fieldsWritten || []).map(({ field, matched, expectedLength, actualLength }) => ({
+      field,
+      matched,
+      expected_length: expectedLength,
+      actual_length: actualLength,
+    })),
+    privacy: {
+      narratives_removed: true,
+      names_and_emails_removed: true,
+      connector_ids_removed: true,
+      request_bodies_removed: true,
+      customer_content_removed: true,
+    },
+  };
+}
+
+function receipt(payload, options = {}) {
+  const mode = asString(options.mode || payload.mode);
+  if (!mode) {
+    throw new MeddpiccError("RECEIPT_MODE_REQUIRED", "receipt now requires --mode confirmation or --mode audit.", {
+      recoverable: true,
+      nextAction: "Use confirmation for the confidential approval artifact, or audit for metadata-only retention.",
+    });
+  }
+  if (mode === "confirmation") return confirmationReceipt(payload);
+  if (mode === "audit") return auditReceipt(payload);
+  throw new MeddpiccError("INVALID_RECEIPT_MODE", `Unsupported receipt mode: ${mode}.`, {
+    recoverable: true,
+    nextAction: "Use --mode confirmation or --mode audit.",
+  });
 }
 
 function buildTelemetryPayload(payload) {
@@ -630,7 +1018,8 @@ function buildTelemetryPayload(payload) {
 
   const fieldsTargeted = (verify.fieldsWritten || []).map((f) => f.field);
 
-  const output = {
+  return {
+    schema_version: SCHEMA_VERSIONS.telemetry,
     oppId: opp.id || null,
     runTime: now,
     fieldsTargeted,
@@ -643,25 +1032,43 @@ function buildTelemetryPayload(payload) {
     warningsCount: (verify.warnings || []).length,
     discrepanciesCount: (verify.discrepancies || []).length,
   };
+}
 
-  // Strip forbidden privacy keys (TEL-02)
-  const forbiddenKeys = new Set([
-    "narrativeContent", "fieldContent", "championName", "ebName", "contactEmail", "amount",
-    "_rawContentMustNotLeak"
-  ]);
-
-  // Strip name variants (TEL-03)
-  const nameVariants = new Set([
-    "oppName", "opportunityName", "name", "accountName", "Account__c", "opportunity.name"
-  ]);
-
-  for (const key of Object.keys(payload)) {
-    if (forbiddenKeys.has(key) || nameVariants.has(key)) {
-      delete payload[key];
-    }
+function recover(payload) {
+  const draftPayload = payload.draft || payload;
+  const operationId = operationIdForDraft(draftPayload);
+  const transaction = validateTransaction(payload.transaction || payload.patch?.transaction, operationId, ["patch_prepared", "recovery_required"]);
+  if (!payload.readBack || typeof payload.readBack !== "object" || Array.isArray(payload.readBack)) {
+    throw new MeddpiccError("RECOVERY_READ_REQUIRED", "Recovery requires a fresh Opportunity read; PATCH retry is not allowed.", {
+      recoverable: true,
+      nextAction: "Retry the read if needed, then pass readBack to recover. Do not resend PATCH.",
+    });
   }
-
-  return output;
+  const checkedAt = payload.checkedAt || payload.now || new Date().toISOString();
+  const { fieldsWritten, discrepancies } = compareReadBack(draftPayload.proposedFields || {}, payload.readBack);
+  const allMatched = discrepancies.length === 0;
+  const state = allMatched ? "verified" : "recovery_required";
+  return {
+    schema_version: SCHEMA_VERSIONS.recovery,
+    operation_id: operationId,
+    prior_state: transaction.state,
+    state,
+    resolution: allMatched ? "verified_no_retry" : "fresh_read_redraft_reconfirm",
+    read_retry_allowed: true,
+    patch_retry_allowed: false,
+    field_checks: fieldsWritten.map(({ field, matched, expectedLength, actualLength }) => ({
+      field,
+      matched,
+      expected_length: expectedLength,
+      actual_length: actualLength,
+    })),
+    transaction: nextTransaction(
+      transaction,
+      state,
+      allMatched ? "verifiedAt" : "recoveryCheckedAt",
+      checkedAt,
+    ),
+  };
 }
 
 function classifyError(payload) {
@@ -735,7 +1142,7 @@ function classifyError(payload) {
       message: "A Salesforce field length limit was exceeded.",
       field: body?.[0]?.fields?.[0] || body?.fields?.[0] || null,
       recoverable: true,
-      nextAction: "Shorten the content or split the update before retrying.",
+      nextAction: "Re-read Salesforce, then rebuild and reconfirm with shorter or split content. Do not reuse the old PATCH envelope.",
     };
   }
   if (Number(status) === 204) {
@@ -780,15 +1187,29 @@ function readPayload(argv) {
   return stdin ? JSON.parse(stdin) : {};
 }
 
+function readOption(argv, name) {
+  const index = argv.indexOf(name);
+  if (index === -1) return null;
+  const value = argv[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new MeddpiccError("MISSING_OPTION_VALUE", `${name} requires a value.`, {
+      recoverable: true,
+      nextAction: `Pass ${name} followed by its documented value.`,
+    });
+  }
+  return value;
+}
+
 function printJson(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
 function usage() {
   return [
-    "Usage: node scripts/meddpicc.mjs <parse-id|draft|build-patch|verify|receipt|classify-error> [--input payload.json]",
+    "Usage: node scripts/meddpicc.mjs <parse-id|draft|build-patch|verify|recover|receipt|classify-error> [--input payload.json]",
     "",
     "All commands accept JSON from --input or stdin and emit JSON to stdout.",
+    "receipt requires --mode confirmation or --mode audit.",
   ].join("\n");
 }
 
@@ -807,8 +1228,17 @@ async function main(argv = process.argv.slice(2)) {
     printJson(buildPatch(payload));
   } else if (command === "verify") {
     printJson(verify(payload));
+  } else if (command === "recover") {
+    printJson(recover(payload));
   } else if (command === "receipt") {
-    printJson(receipt(payload));
+    const mode = readOption(argv, "--mode");
+    if (!mode) {
+      throw new MeddpiccError("RECEIPT_MODE_REQUIRED", "receipt now requires --mode confirmation or --mode audit.", {
+        recoverable: true,
+        nextAction: "Use confirmation for the confidential approval artifact, or audit for metadata-only retention.",
+      });
+    }
+    printJson(receipt(payload, { mode }));
   } else if (command === "classify-error") {
     printJson(classifyError(payload));
   } else if (command === "log-run" || command === "build-telemetry") {
@@ -839,6 +1269,7 @@ export {
   FIELD_DEFS,
   FIELD_MAP,
   MeddpiccError,
+  SCHEMA_VERSIONS,
   appendEntry,
   buildPatch,
   buildTelemetryPayload,
@@ -847,7 +1278,9 @@ export {
   duplicateStatus,
   hasDuplicateEntry,
   normalizeIntegrationResponse,
+  operationIdForDraft,
   parseOpportunityId,
+  recover,
   receipt,
   verify,
 };

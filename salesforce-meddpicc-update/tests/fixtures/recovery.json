@@ -1,0 +1,10 @@
+{
+  "checkedAt": "2026-05-20T14:03:00.000Z",
+  "mismatchedReadBack": {
+    "NextStep": "A different value"
+  },
+  "expectedMismatchResolution": "fresh_read_redraft_reconfirm",
+  "expectedMatchResolution": "verified_no_retry",
+  "readRetryAllowed": true,
+  "patchRetryAllowed": false
+}
