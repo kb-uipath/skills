@@ -11,7 +11,7 @@ Use this only when the user is asking for judgment under uncertainty and being w
 
 If the decision is too vague to evaluate, ask exactly one clarifying question, then proceed.
 
-Treat explicit invocations such as `$llm-council`, "council this", "run a council", or "use advisor subagents" as permission to use subagents for this workflow. If subagents are unavailable in the current environment, say so directly and offer a weaker single-agent council simulation. Do not pretend simulated perspectives are independent.
+Treat explicit invocations such as `$llm-council`, "council this", "run a council", or "use advisor subagents" as permission to use subagents for this workflow. If subagents are unavailable in the current environment, say so directly and offer a weaker single-agent council simulation. Do not pretend simulated perspectives are independent; set `execution_mode` to `single_agent_fallback` and record `fallback_reason` in the rendered session payload.
 
 ## Workflow
 
@@ -60,9 +60,23 @@ Lean fully into your assigned angle. The other advisors will cover the angles yo
 Keep your response between 150 and 300 words. No preamble.
 ```
 
-### 3. Run Anonymous Peer Review
+### 3. Prepare the Strict Session Shell
 
-Randomize and anonymize the five advisor responses as `Response A` through `Response E`. Keep the mapping private until the transcript.
+Before peer review, generate or mirror the strict session shell with a stable seed. The seed can be a decision slug plus date, such as `pricing-20260710`. The preparer uses the seed to create a deterministic bijective mapping from `Response A` through `Response E` to the five advisors.
+
+```bash
+python3 <skill-dir>/scripts/render_council_artifacts.py \
+  --prepare-template \
+  --seed "decision-slug-YYYYMMDD" \
+  --original-question "User's raw request" \
+  --framed-question "Neutral framed question" > council-session.json
+```
+
+Keep the mapping private until the transcript is produced.
+
+### 4. Run Anonymous Peer Review
+
+Randomize and anonymize the five advisor responses as `Response A` through `Response E` using the prepared mapping. Do not invent extra labels and do not omit any label.
 
 Spawn five reviewer subagents in parallel. Each reviewer sees the framed question and all anonymized responses, then answers:
 
@@ -86,7 +100,9 @@ Answer these three questions. Be specific. Reference responses by letter.
 Keep your review under 200 words. Be direct.
 ```
 
-### 4. Synthesize the Chairman Verdict
+If reviewer subagents are unavailable, use `execution_mode: single_agent_fallback`, state that reviews are a single-agent simulation, and include a plain-English `fallback_reason`.
+
+### 5. Synthesize the Chairman Verdict
 
 Synthesize locally unless the user explicitly asks for a separate chairman subagent. Use the original question, framed question, de-anonymized advisor responses, peer reviews, and anonymization mapping.
 
@@ -113,7 +129,7 @@ The One Thing to Do First
 [A single concrete next step. Not a list.]
 ```
 
-### 5. Generate Artifacts
+### 6. Generate Artifacts
 
 Every council session produces two files in the working directory unless the user specifies another output folder:
 
@@ -133,13 +149,33 @@ rm "$session_json"
 rmdir "$tmpdir"
 ```
 
-Expected JSON fields:
+The renderer refuses to overwrite existing `council-report-[timestamp].html` or `council-transcript-[timestamp].md` files unless `--overwrite` is supplied. Use `--overwrite` only after confirming the artifact collision is intentional.
+
+Strict JSON contract `llm-council.session.v1`:
 
 ```json
 {
+  "schema_version": "llm-council.session.v1",
   "original_question": "User's raw request",
   "framed_question": "Neutral prompt sent to advisors",
   "chairman_verdict": "COUNCIL VERDICT...",
+  "decision_criteria": ["What the verdict is optimizing for"],
+  "disconfirming_evidence": ["Evidence that would weaken or overturn the recommendation"],
+  "review_date": "2026-07-10",
+  "confidence": {
+    "level": "medium",
+    "rationale": "Why this confidence level is justified"
+  },
+  "execution_mode": "subagents",
+  "fallback_reason": "",
+  "metadata": {
+    "preparer": "codex",
+    "preparer_seed": "decision-slug-YYYYMMDD",
+    "created_at": "2026-07-10T12:00:00Z",
+    "sensitivity": "internal",
+    "permissions": ["local workspace only"],
+    "retention": "User-managed local artifacts; delete when no longer needed."
+  },
   "advisors": {
     "The Contrarian": "Advisor response",
     "The First Principles Thinker": "Advisor response",
@@ -148,7 +184,11 @@ Expected JSON fields:
     "The Executor": "Advisor response"
   },
   "peer_reviews": [
-    {"reviewer": "Reviewer 1", "response": "Review text"}
+    {"reviewer": "Reviewer 1", "response": "Review text"},
+    {"reviewer": "Reviewer 2", "response": "Review text"},
+    {"reviewer": "Reviewer 3", "response": "Review text"},
+    {"reviewer": "Reviewer 4", "response": "Review text"},
+    {"reviewer": "Reviewer 5", "response": "Review text"}
   ],
   "anonymization_mapping": {
     "Response A": "The Outsider",
@@ -166,7 +206,7 @@ Expected JSON fields:
 
 `advisor_positions` is optional, but include it whenever possible because the HTML report uses it as the agreement/disagreement visual. Valid `stance` values are `positive`, `negative`, `mixed`, and `neutral`.
 
-The renderer validates required session fields and the five required advisor responses before writing artifacts. Treat validation failure as a workflow defect; repair the session payload instead of creating a partial report.
+The renderer validates the schema version, exactly five required advisor responses, exactly five peer reviews, a bijective `Response A` through `Response E` mapping, decision criteria, disconfirming evidence, review date, confidence, sensitivity, permissions, and retention before writing artifacts. It adds SHA-256 content hashes to rendered metadata. Treat validation failure as a workflow defect; repair the session payload instead of creating a partial report.
 
 Use `--validate-only` when checking a saved session payload in CI or before handoff without creating HTML or Markdown artifacts.
 
@@ -181,6 +221,9 @@ In the chat response, lead with the recommendation and the one next step. Link t
 - Run advisor subagents in parallel.
 - Run reviewer subagents in parallel.
 - Anonymize before peer review.
+- Use the strict `llm-council.session.v1` contract.
+- Fail closed on legacy payloads; migrate them instead of rendering partial artifacts.
+- Preserve truthful fallback disclosure when only a single agent is available.
 - Do not council trivial questions.
 - Do not let consensus override better reasoning.
 - Create both artifacts for every completed council session.
