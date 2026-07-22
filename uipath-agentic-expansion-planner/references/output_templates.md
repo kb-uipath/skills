@@ -1,247 +1,77 @@
 # Output templates
 
-Use these templates to create consistent outputs for UiPath agentic expansion planning. Build the
-Markdown from validated schema `1.0` evidence and portfolio artifacts when claim certification is
-required. Treat Markdown as the source for the final Word brief or as a supporting artifact; the
-final deliverable is the verified `.docx` unless the user explicitly prohibits file output. Apply
-`brand_and_brief_quality.md` before rendering.
+## Default customer assessment
 
-## Default executive brief structure
+The builder renders this structure deterministically. Do not add sections to the customer document.
 
-Use this structure for the concise Word-source Markdown. Keep it executive-skimmable; if detailed research notes, long source URLs, row-level evidence, or full scoring math are useful, save them as separate supporting Markdown/CSV artifacts instead of loading the main `.docx` with them.
+```markdown
+# Automation portfolio assessment: [customer]
 
-# UiPath agentic expansion proposal for [customer]
+## Source File Summary
 
-## Executive Summary
-
-[3 to 5 sentences. Lead with why this matters now for the customer, state the current automation footprint, the strategic alignment thesis, the strongest expansion themes, and the recommended decision or next step. Be specific and avoid generic AI language.]
-
-## Source and Assumption Note
-
-- Inventory source: [file name, sheets, row count, relevant `INV-*` IDs]
-- Public strategy sources: [source count, `SRC-*` IDs, publication and access dates]
-- Data limitations: [missing fields, unclear statuses, no volume/value data, deployment unknown]
-- Value assumptions: [annualization or labor assumptions, if used]
+- **Inventory reviewed:** [safe basename, record count, sheet names]
+- **Information available:** [detected portfolio fields]
+- **Strategy context reviewed:** [source names, no internal IDs]
+- **Limitations:** [up to three observed field-coverage gaps or unconfirmed planning assumptions; never claim structural completeness]
 
 ## Current Automation Footprint
 
-| Dimension | Finding | Implication |
-|---|---|---|
-| Production density | [finding] | [implication] |
-| Department concentration | [finding] | [implication] |
-| Process families | [finding] | [implication] |
-| Value/volume fields | [finding] | [implication] |
-| Data quality | [finding] | [implication] |
+| Portfolio view | What the inventory shows |
+| --- | --- |
+| Total reviewed | [count] |
+| Lifecycle mix | [detailed status counts] |
+| Process/domain groups | [analyst-mapped group names and automation counts, with explicit customer-confirmation requirement] |
+| Department concentration | [highest department/function counts, excluding duplicate records] |
+| System concentration | [highest system counts, excluding duplicate records] |
+| Unmapped | [count not mapped to a process group] |
+| Assessment boundary | [workload is not savings; read-only workshop proposals authorize no writes or decisions] |
 
-## Public Strategy Alignment
+## Top 3 Recommendations
 
-| Public priority | Evidence summary | Automation relevance |
-|---|---|---|
-| [priority] | [`SRC-*`, source and date] | [relevance] |
+Order basis: [shared strategy, foundation, evidence, and delivery-risk criteria]. Workshop ask: [prerequisite validation and historical pilot decision only]. Owners set proposed thresholds from baselines and tolerances. State that this is not deployment or investment approval. Name material deferred process groups and their reconsideration conditions.
 
-## Prioritized Portfolio
+Account team: CSM [agenda/access artifact by each target]; TAM [product/tenant control note before each charter]; AE [sponsor/funding decision after evidence]; failed prerequisites defer.
 
-| Rank | Opportunity | Category | Score | Confidence | Scoring basis / why now |
-|---:|---|---|---:|---|---|
-| 1 | [name] | [Scale now / Validate next / Pilot first] | [0-100] | [High/Medium/Low] | [strongest and limiting criteria, then decision relevance] |
+Pilot mechanics: data joins frozen exports on confirmed identifiers; Maestro sequences handoffs; Robots prepare deterministic outputs; humans review; unmatched records pause and rerun; final record systems require validation.
 
-If scores tie, state that stable `OPP-*` ID order resolves the tie. Do not imply false precision.
+| Rank | Process | Why this order |
+| --- | --- | --- |
+| 1 | [process] | [recommendation-specific comparison] |
 
-## Top 5 High-Impact Recommendations
+### 1. [Specific end-to-end process]
 
-Use the proposal card format below for each recommendation.
+- **End-to-end process:** Function: [business function]. Start: [trigger]. End: [human-owned completion]. Outcome: [business result].
 
-## Top 3 Low-Friction POC Candidates
+- **Why it matters:** [customer-specific reason or explicitly unvalidated source-derived workload signal]
 
-Use the POC card format below for each candidate.
+- **Existing automation foundation:** [count and names with lifecycle states]
 
-## Value Framing
+- **Pilot path:** Proposed. Input: [numeric historical sample and selection method matching the proceed gate]. Ground truth: [historical reviewer-owned result]. Ground-truth owner: [accountable role]. [Maestro/robot/agent handoffs, join key, and observable output]. [Measurement owner] reports [metric = numerator / denominator with auditable units] [daily, weekly, or per case].
 
-| Opportunity | Primary value levers | Sizing basis | Confidence | Validation needed |
-|---|---|---|---|---|
-| [name] | [labor, cycle time, quality, risk] | [inventory fields or assumption] | [H/M/L] | [question] |
+- **Roles and controls:** [which capabilities apply, need validation, or are excluded], [plain entitlement/deployment/value checks], [human review], [cross-record linkage], [no-write boundary]
 
-## Deployment and Governance Considerations
+- **Decision gate:** Stop when [quantitative failure range or control breach]. Proceed when [sample and quality thresholds pass]. Adjust when [intermediate ranges apply]. Rerun before proceeding. Decision owner: [one customer role]. [Bounded decision only].
 
-| Consideration | Implication | Recommended control |
-|---|---|---|
-| [PII/PHI/data residency/etc.] | [impact] | [control] |
-
-## Facts, Assumptions, and Validation Questions
-
-### Facts
-
-- [Fact grounded in the inventory, public strategy source, or confirmed deployment context.]
-- [Fact grounded in the inventory, public strategy source, or confirmed deployment context.]
-
-### Assumptions
-
-- [Assumption used for scoring, value framing, capability fit, or feasibility.]
-- [Assumption used for scoring, value framing, capability fit, or feasibility.]
-
-### Validation questions
-
-1. [Question needed to validate value, ownership, volume, deployment, governance, or pilot readiness.]
-2. [Question needed to validate value, ownership, volume, deployment, governance, or pilot readiness.]
-3. [Question needed to validate value, ownership, volume, deployment, governance, or pilot readiness.]
-
-## Workshop Prep
-
-Use the workshop agenda template below or a shortened version of it. Keep it focused on validating the evidence, choosing a pilot, and assigning owners.
-
-## Recommended Next Steps
-
-1. [Specific validation action]
-2. [Specific stakeholder or workshop action]
-3. [Specific pilot scoping action]
-
-## Appendix: Source Ledger
-
-| Source ID | Source | Published | Accessed | Type | Relevant priority |
-|---|---|---|---|---|---|
-| [`SRC-*`] | [source] | [date] | [date] | [official plan / annual report / etc.] | [priority] |
-
-## DOCX executive brief structure
-
-Use this AZ DES-style executive portfolio structure when rendering the final Word `.docx` brief. The `.docx` is the required final deliverable every time; chat, Markdown, slide, spreadsheet, or account-plan outputs are supplemental unless the user explicitly prohibits file output. This structure is richer than a compact proposal-card brief and is designed for GTM/account-team use, executive review, and workshop preparation.
-
-1. Title and scope line.
-2. Executive summary.
-3. Source and assumption note.
-4. Current automation footprint.
-5. Public strategy alignment.
-6. Prioritized portfolio.
-7. Top 5 high-impact recommendations.
-8. Top 3 low-friction POC candidates.
-9. Value framing.
-10. Deployment and governance considerations.
-11. Facts, assumptions, and validation questions.
-12. Workshop prep.
-13. Recommended next steps.
-14. Appendix: source ledger.
-
-Use a shorter compact `.docx` brief only when the user explicitly asks for a short executive summary, minimal proposal-card output, or a very concise table-first artifact. Even compact briefs still need a title/scope line, executive summary, ranked prioritization, recommendation cards or compact card table, deployment/governance caveats, validation questions, and a source ledger.
-
-### DOCX table patterns
-
-Use these table patterns unless the user asks for a different format:
-
-| Section | Columns |
-|---|---|
-| Current automation footprint | `Dimension` / `Finding` / `Implication` |
-| Public strategy alignment | `Public priority` / `Evidence summary` / `Automation relevance` |
-| Prioritized portfolio | `Rank` / `Opportunity` / `Category` / `Score` / `Confidence` / `Why it matters` |
-| Value framing | `Opportunity` / `Primary value levers` / `Sizing basis` / `Confidence` / `Validation needed` |
-| Deployment and governance considerations | `Consideration` / `Implication` / `Recommended control` |
-| Workshop prep | `Segment` / `Time` / `Purpose` / `Output` |
-
-Avoid wide Word tables. If a table becomes cramped, shorten cell text before switching orientation. Do not place every inventory field or URL in the main prioritization table; keep the table to executive decision fields and move detail to supporting artifacts or appendix notes.
-
-### DOCX proposal card format
-
-Use the full GTM-ready proposal card format for the Top 5 High-Impact Recommendations:
-
-**Recommendation:** [One sentence stating what to do.]
-
-**Why now:** [Customer need, public strategy, and account context.]
-
-**Inventory evidence:** [Specific `INV-*` process rows, departments, statuses, volume/value fields, or row examples.]
-
-**Agentic enhancement:** [What an agent does beyond baseline RPA: interpret, summarize, retrieve, recommend, route, orchestrate, draft, classify, or handle exceptions.]
-
-**UiPath capability fit:** [Likely capability pattern. Do not claim entitlement unless confirmed.]
-
-**Value levers:** [Labor, cycle time, quality, compliance, experience, risk, reuse.]
-
-**Feasibility:** [Data, systems, process boundary, owner, and integration notes.]
-
-**Governance:** [Human review, auditability, data sensitivity, model governance.]
-
-**Validation questions:**
-
-- [Question 1]
-- [Question 2]
-- [Question 3]
-
-Cards should be detailed enough for GTM use but short enough that executives can skim the section quickly.
-
-Before rendering the Word brief, run the strict cross-check:
-
-```bash
-python3 scripts/validate_executive_brief.py <brief.md> \
-  --evidence-ledger <evidence_ledger.json> \
-  --portfolio <portfolio.json> \
-  --inventory-profile <inventory_profile.json>
+- **Next action:** Target: [YYYY-MM-DD]. Customer: [owner]; UiPath: [account-team owner]. [Data/security approval, access, linkage, sample, product/deployment validation, and fallback action]. Output: [deliverable]. Decision: [YYYY-MM-DD].
 ```
 
-Fix any failure instead of treating the validator as advisory. Omitting the JSON arguments keeps
-the legacy structure-only mode and must not be described as evidence validation.
+Render one to three recommendations in portfolio rank order. If fewer than three qualify, say so and do not add filler.
 
-## Proposal card format
+## Internal package
 
-### [Opportunity name]
+Retain these artifacts separately from the customer DOCX:
 
-**Recommendation:** [One sentence stating what to do.]
+- `inventory_profile.json` and `.md`
+- `evidence_ledger.json`
+- `portfolio.json`
+- `process_map.json`
+- `semantic_review.json`
+- Customer Markdown source
+- Exact PDF used for page verification
+- Build validation receipt
 
-**Why now:** [Public strategy and account context.]
+Use `render_portfolio_markdown.py` only when the account team asks for the legacy detailed analysis. That output may include scores, evidence IDs, value formulas, deployment controls, workshop detail, and source ledger. It is not the default customer deliverable.
 
-**Inventory evidence:** [Specific `INV-*` process rows, departments, statuses, volume/value fields, or row examples.]
+## Final response
 
-**Agentic enhancement:** [What an agent does beyond baseline RPA: interpret, summarize, retrieve, recommend, route, orchestrate, draft, classify, or handle exceptions.]
-
-**UiPath capability fit:** [Likely capability pattern. Do not claim entitlement unless confirmed.]
-
-**Value levers:** [Labor, cycle time, quality, compliance, experience, risk, reuse.]
-
-**Feasibility:** [Data, systems, process boundary, owner, and integration notes.]
-
-**Governance:** [Human review, auditability, data sensitivity, model governance.]
-
-**Validation questions:**
-
-- [Question 1]
-- [Question 2]
-- [Question 3]
-
-## Low-friction POC card format
-
-### [POC name]
-
-**Pilot objective:** [What the pilot proves.]
-
-**Narrow scope:** [Specific process slice, department, document type, queue, case type, or user group.]
-
-**Agent role:** [Specific agent actions.]
-
-**Human role:** [Approvals, review, exception handling.]
-
-**Success metrics:** [Cycle time, accuracy, manual minutes avoided, backlog reduction, adoption, quality.]
-
-**Data needed:** [Inputs, sample records, policies, system access.]
-
-**Exit criteria:** [Decision standard for scale/no-scale.]
-
-## Workshop agenda template
-
-Use this if the output is meant to support a customer workshop.
-
-| Segment | Time | Purpose | Output |
-|---|---:|---|---|
-| Current-state validation | 20 min | Confirm inventory patterns and owners | Validated process clusters |
-| Strategy alignment | 15 min | Confirm executive priorities | Ranked business outcomes |
-| Opportunity review | 30 min | Discuss top recommendations | Shortlist |
-| POC scoping | 30 min | Select one pilot | Pilot charter inputs |
-| Governance review | 15 min | Identify constraints | Risk and control list |
-| Next steps | 10 min | Assign owners and dates | Action plan |
-
-## Tone rules
-
-- Be direct and executive-ready.
-- Start with the customer's need and desired outcome before naming UiPath capabilities.
-- State the decision ask, workshop ask, or pilot next step in the executive summary.
-- Use evidence-backed claims.
-- Separate facts, assumptions, and inferences.
-- Avoid hype words such as revolutionary, game-changing, or guaranteed.
-- Avoid generic use-case language.
-- Use specific workflow names, departments, and value levers whenever possible.
-- Do not create unofficial logos, lockups, badges, avatar art, or decorative pixel treatments in generated artifacts.
+Link the DOCX and its verified PDF, then report readiness, page count, recommendation count, and whether semantic, brand, and layout checks passed. Never call a draft customer-ready.

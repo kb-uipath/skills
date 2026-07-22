@@ -1,120 +1,64 @@
-# Agentic Expansion Executive Word Briefing Rules
+# Customer automation portfolio DOCX rules
 
-Use these rules when `uipath-agentic-expansion-planner` produces its final Word `.docx` executive brief. The final artifact is always a rendered AZ DES-style executive portfolio `.docx` unless file creation is impossible or the user explicitly prohibits file output.
+## Default document
 
-## Document Shape
+The final customer artifact is a portrait, one-to-two-page Word assessment with exactly three sections:
 
-Create a concise Markdown briefing from validated schema `1.0` evidence and portfolio artifacts,
-cross-check it with `scripts/validate_executive_brief.py`, then render it with
-`scripts/render_executive_docx.py` and verify it with `scripts/verify_executive_docx.py`. Portrait
-orientation is mandatory unless the user explicitly asks for landscape.
+1. Source File Summary.
+2. Current Automation Footprint.
+3. Top 3 Recommendations.
 
-Recommended sections:
+Use one compact footprint table and one to three recommendation headings. Do not add an executive-summary section, score table, separate POC section, governance appendix, workshop agenda, or source ledger to the customer document.
 
-1. Title and scope line.
-2. Executive summary.
-3. Source and assumption note.
-4. Current automation footprint.
-5. Public strategy alignment.
-6. Prioritized portfolio.
-7. Top 5 high-impact recommendations.
-8. Top 3 low-friction POC candidates.
-9. Value framing.
-10. Deployment and governance considerations.
-11. Facts, assumptions, and validation questions.
-12. Workshop prep.
-13. Recommended next steps.
-14. Appendix: source ledger.
+## Rendering
 
-Do not paste the full research narrative into Word. The brief should be executive-skimmable and GTM/workshop-ready, with the source ledger kept in the appendix so it does not dominate the opening pages. If the analysis Markdown is too long, create a separate concise Word-source Markdown and keep the longer analysis as a supporting artifact. Use a shorter compact `.docx` brief only when the user explicitly asks for a short executive summary, minimal proposal-card output, or a very concise table-first artifact.
-
-## Executive Style Rules
-
-- Write for executive skimming and GTM/workshop preparation.
-- Lead with the customer's "why now" and the decision or workshop ask.
-- Prefer short paragraphs of 2-4 sentences.
-- Prefer direct headings over clever titles.
-- Keep proposal cards direct but GTM-usable: recommendation, why now, inventory evidence, agentic enhancement, capability fit, value levers, feasibility, governance, and validation questions.
-- Put assumptions next to estimates, not in a buried footnote.
-- Prefer ranges or qualitative sizing. When a supported deterministic formula produces a point
-  estimate, label it as a planning estimate and show the assumption IDs that require validation.
-- Preserve confidence ratings and downgrade reasons.
-- Put dirty-data caveats plainly in the main body when they affect priority or value.
-- Move URLs and long source details to the source ledger or appendix.
-- Apply `brand_and_brief_quality.md`; avoid hype, generic agentic claims, product-first summaries, and unofficial brand assets.
-
-## Table Rules
-
-Use these table patterns unless the user asks otherwise:
-
-| Section | Columns |
-| --- | --- |
-| Current automation footprint | `Dimension` / `Finding` / `Implication` |
-| Public strategy alignment | `Public priority` / `Evidence summary` / `Automation relevance` |
-| Prioritized portfolio | `Rank` / `Opportunity` / `Category` / `Score` / `Confidence` / `Why it matters` |
-| Value framing | `Opportunity` / `Primary value levers` / `Sizing basis` / `Confidence` / `Validation needed` |
-| Deployment and governance considerations | `Consideration` / `Implication` / `Recommended control` |
-| Workshop prep | `Segment` / `Time` / `Purpose` / `Output` |
-
-Avoid wide, overloaded tables in Word. If a table becomes cramped, shorten cell text before switching to landscape.
-
-## Rendering Command
-
-Run the quality gate first:
+Use the standard builder:
 
 ```bash
-python3 scripts/validate_executive_brief.py <brief.md> \
+python3 scripts/build_customer_assessment.py \
+  --inventory-profile <inventory_profile.json> \
   --evidence-ledger <evidence_ledger.json> \
   --portfolio <portfolio.json> \
-  --inventory-profile <inventory_profile.json>
+  --process-map <process_map.json> \
+  --semantic-review <semantic_review.json> \
+  --supporting-source <strategy-context.md> \
+  --output outputs/<customer>-automation-portfolio-assessment.docx
 ```
 
-Without the JSON arguments, this command performs legacy structural checks only. It does not
-certify names, scores, evidence IDs, dates, deployment constraints, value math, or entitlements.
+The builder renders Markdown, creates the DOCX with the `customer-assessment` style profile, converts it to PDF with `soffice`, verifies one or two pages with `pypdf`, publishes that exact PDF beside the DOCX, and writes a validation receipt.
 
-Use:
+Customer-ready builds require `python-docx`, `pypdf`, and `soffice`. `--draft-without-page-check` is an explicit exploratory fallback and adds a draft title.
 
-```bash
-python3 scripts/render_executive_docx.py <brief.md> <brief.docx> --portrait
-```
+## Styling
 
-Optional flags:
+- Robotic Orange `#FA4616` for title emphasis.
+- Deep Blue `#182126` for structural headings and table headers.
+- Agentic Teal `#0BA2B3` for recommendation headings.
+- Arial for shared-document compatibility.
+- Compact margins, a narrow label column, short labeled recommendation bullets, page numbers, and no wide tables.
+- Customer name as the title; document type, readiness, and prepared date in the subtitle.
 
-```bash
-python3 scripts/render_executive_docx.py <brief.md> <brief.docx> --portrait --title "Customer Agentic Expansion Brief" --subtitle "Executive briefing"
-python3 scripts/render_executive_docx.py <brief.md> <brief.docx> --auto-landscape
-```
-
-If `python3` or `python-docx` is missing, call `load_workspace_dependencies` and use the bundled Python runtime.
-
-## Required Verification Command
-
-After rendering, run:
-
-```bash
-python3 scripts/verify_executive_docx.py <brief.docx> --require-output-dir --require-brand-style
-```
-
-If verification fails, fix the source Markdown, rerender the `.docx`, and rerun verification. Do not deliver a `.docx` that fails this script unless the failure is explicitly explained and accepted by the user.
-
-## Brand-safe Word styling
-
-The generated Word brief should use restrained UiPath-derived styling: Robotic Orange for title emphasis, Deep Blue for structure and table headers, Agentic Teal for agentic recommendation accents, Bright White and neutral greys for readability, and Arial as the shared-document fallback font. Do not add unofficial logos, lockups, Otto graphics, badges, or decorative pixel treatments unless the user supplies an approved template or asset.
+Do not add unofficial logos, lockups, Otto graphics, badges, or decorative pixel art.
 
 ## Verification
 
-The verification script checks the core structural requirements. If verifying manually, cover at least these checks:
+The customer profile verifies:
 
-- The document has a non-empty title.
-- The document is portrait unless the user explicitly asked for landscape.
-- The Markdown source passed `scripts/validate_executive_brief.py`.
-- Expected AZ DES-style section headings are present: Executive Summary, Source and Assumption Note, Current Automation Footprint, Public Strategy Alignment, Prioritized Portfolio, Top 5 High-Impact Recommendations, Top 3 Low-Friction POC Candidates, Value Framing, Deployment and Governance Considerations, Facts/Assumptions/Validation Questions, Workshop Prep, Recommended Next Steps, and Appendix/Source Ledger.
-- Prioritized Portfolio includes at least one ranked table.
-- Top 5 High-Impact Recommendations render as proposal-card headings.
-- Top 3 Low-Friction POC Candidates render as headings or a compact table.
-- Deployment/governance, Workshop Prep, and Source Ledger sections are present.
-- Long source ledgers are not dominating the first pages.
-- Brand-style verification passes when `--require-brand-style` is used.
-- The file path is in the user-facing `outputs/` directory when that directory exists.
-- Final chat response links to the generated `.docx`; Markdown or chat text is never treated as the final deliverable.
-- If the Documents skill renderer is available, render the `.docx` to page PNGs and visually inspect for clipping, cramped tables, and broken headings before delivery.
+- Portrait orientation.
+- Exact three-section heading contract.
+- One to three recommendation headings.
+- At least one footprint table.
+- No internal IDs.
+- Approved colors and Arial, with no legacy Office blue or Aptos.
+- A supplied rendered PDF containing one or two pages.
+
+The validation receipt reports readiness, word count, page count, recommendation count, contract,
+semantic, language, brand, and layout verification; exact input hashes; raw inventory and optional
+local supporting-source basenames and hashes; the latest valid source record date separately from
+the ledger, portfolio, review, and build dates; recommendation-to-evidence bindings; and the name and hash of the
+published PDF used for page inspection. Absolute local paths are never emitted. If layout or
+semantic verification fails, do not deliver the file as customer-ready.
+
+## Legacy detailed mode
+
+`render_portfolio_markdown.py`, `validate_executive_brief.py`, and the renderer's backward-compatible `detailed` profile remain available for internal analysis. Their longer section contract is not the skill's customer default.

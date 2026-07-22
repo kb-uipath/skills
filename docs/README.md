@@ -22,7 +22,7 @@ All 10 remaining skills meet the package-quality Org Baseline, but no live-write
 | 2 | llm-council | 9.4 | 9.1 | Offline workflow validated |
 | 3 | usecasehandoff | 9.3 | 9.1 | Offline workflow validated |
 
-Run `make validate` from the repo root before sharing changes. Use a Python runtime with `python-docx` installed for full DOCX renderer coverage.
+Run `make validate` from the repo root before sharing changes. Use a Python runtime with `python-docx` and `pypdf`, plus `soffice` on `PATH`, for full customer-DOCX layout coverage.
 
 | Skill | Category | Docs |
 | --- | --- | --- |

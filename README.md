@@ -92,10 +92,10 @@ The gate is the CI-equivalent validation path for this repository. It auto-disco
 
 `diff-check` compares committed changes with `BASE_REF` (default `origin/main`) and also checks the working tree. Override it for a different target branch with `make validate BASE_REF=origin/release`.
 
-For full DOCX renderer and brand-style test coverage, run `make validate` with a Python interpreter that has `python-docx` installed:
+For full DOCX renderer, brand-style, and page-count coverage, use a Python interpreter with `python-docx` and `pypdf` plus `soffice` on `PATH`:
 
 ```bash
-make validate PYTHON=/path/to/python-with-python-docx
+make validate PYTHON=/path/to/python-with-document-dependencies
 ```
 
 ## Skill index
@@ -109,7 +109,7 @@ make validate PYTHON=/path/to/python-with-python-docx
 | [pubsec-big-rocks-row-research](./pubsec-big-rocks-row-research/SKILL.md) | Creates a validated preview and local workbook copy from manifest-controlled public-sector account evidence. | One Big Rocks account row needs exact matching, fill-eligible evidence, stale-lead separation, and no in-place source edits. | [docs](./docs/pubsec-big-rocks-row-research.md) |
 | [repo-hardening-sprint](./repo-hardening-sprint/SKILL.md) | Runs a bounded, base-aware repository validation and governance hardening workflow. | A repository needs scoped cleanup, regression tests, safety scans, or PR readiness without changing public contracts casually. | [docs](./docs/repo-hardening-sprint.md) |
 | [salesforce-meddpicc-update](./salesforce-meddpicc-update/SKILL.md) | Builds freshness-bound MEDDPICC transactions, explicit receipts, and read-after-write verification artifacts. | An authorized Salesforce Opportunity update is requested and must pass schema, confirmation, privacy, and retry controls. | [docs](./docs/salesforce-meddpicc-update.md) |
-| [uipath-agentic-expansion-planner](./uipath-agentic-expansion-planner/SKILL.md) | Reconciles customer inventory evidence into scored portfolios and a concise, on-brand, verified executive brief. | Account strategy requires specific Act 2 recommendations, pilot boundaries, deployment constraints, and value assumptions. | [docs](./docs/uipath-agentic-expansion-planner.md) |
+| [uipath-agentic-expansion-planner](./uipath-agentic-expansion-planner/SKILL.md) | Produces a one-to-two-page customer portfolio assessment backed by an analyst-confirmed process map, semantic review, and internal evidence artifacts. | A CSM, TAM, or AE needs the current automation footprint and up to three actionable opportunities with explicit customer-confirmation needs. | [docs](./docs/uipath-agentic-expansion-planner.md) |
 | [uipcodedappdeploy](./uipcodedappdeploy/SKILL.md) | Generates hashed deployment plans and redacted resumable receipts before any explicit UiPath deployment. | A coded app needs validated versioning, build, package, publish, deploy, and optional URL verification with no default writes. | [docs](./docs/uipcodedappdeploy.md) |
 | [usecasehandoff](./usecasehandoff/SKILL.md) | Builds a nine-file handoff with package hashes, local-source integrity checks, and a no-send boundary. | An automation idea must become evidence-backed analysis, delivery work, risks, references, and a concrete first sprint. | [docs](./docs/usecasehandoff.md) |
 

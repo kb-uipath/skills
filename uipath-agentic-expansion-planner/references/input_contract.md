@@ -1,6 +1,6 @@
 # Input contract for full-quality output
 
-Use this reference when deciding whether the user has provided enough information to produce a full executive-quality UiPath agentic expansion proposal.
+Use this reference when deciding whether the user has provided enough information to produce a customer-ready UiPath automation portfolio assessment and its internal evidence package.
 
 ## Minimum viable inputs
 
@@ -65,6 +65,13 @@ Strongly required for high-confidence prioritization:
 - Complexity, risk, feasibility, or priority fields if present.
 - Dates, such as submitted, approved, go-live, last updated, or retired.
 
+For source freshness, prefer one populated record-update column with ISO dates or another
+unambiguous date format. Profile `1.1` normalizes valid row dates and reports invalid or missing
+values. When any valid record dates exist, the evidence-ledger `as_of_date` must equal the latest
+valid source record date. A run date, assessment date, review date, or file-modified timestamp is
+not a substitute. If no reliable record date exists, state that limitation in the customer
+assessment and confirm lifecycle state before acting on the recommendations.
+
 Weak inventory signals that reduce output quality:
 
 - Only process titles, no descriptions.
@@ -112,27 +119,42 @@ If public research is used, prioritize official sources and cite all public fact
 Record each source as a dated `SRC-*` entry and every planning assumption as an `ASM-*` entry.
 Confirmed entitlement claims require matching ledger evidence.
 
+When a strategy or account-context source is local, pass it to the customer builder with repeatable `--supporting-source` arguments. The receipt stores only the safe basename and SHA-256, never the local path. Public URL sources remain dated ledger entries.
+
+A dated customer-confirmed account source can supply a narrowly scoped operational fact omitted by
+the inventory, including a cross-record identifier, accountable outcome owner, or available sample.
+Record that fact in the evidence ledger and bind the source in the receipt. The process map and
+customer assessment must still say that the inventory omitted the field. Do not infer the fact from
+shared systems or adjacent descriptions, and do not use one confirmation to imply product
+availability, deployment compatibility, entitlement, baseline, value, funding, or pilot approval.
+
 ### 6. Output expectations
 
 Required:
 
 - Target audience: C-suite, business sponsor, CoE lead, AE/CSM internal planning, solution consultant, or mixed.
 - Desired supplemental output, if any: chat excerpt, Markdown source, slide outline, spreadsheet prioritization, proposal cards, or account plan section. These do not replace the final `.docx` deliverable.
-- Desired depth: concise executive summary, full portfolio analysis, or workshop-ready recommendations.
+- Whether the default customer assessment or legacy internal detailed analysis is needed.
 - Number of recommendations if different from default.
 
 Default output if the user does not specify:
 
-- Rendered and verified `.docx` Word executive brief in `outputs/` when available.
-- Top 5 high-impact agentic expansion opportunities.
-- Top 3 low-friction POC candidates.
-- Executive summary.
-- Inventory footprint summary.
-- Public strategy alignment summary.
-- Value assumptions and caveats.
-- Deployment and governance validation questions.
+- One-to-two-page rendered and verified customer `.docx` in `outputs/`, plus the exact verified PDF.
+- Source file summary and limitations.
+- Exact current automation footprint, analyst-mapped process groups with explicit customer-confirmation needs, and traceable selection or deferral decisions.
+- Up to three evidence-backed end-to-end process recommendations.
+- Named process groups with automation counts. Source-reported volume and handling time may appear only as separate, unvalidated workload signals; aggregation and value math stay internal until units and linkage are confirmed.
+- One accountable next step per recommendation.
+- A measurable read-only pilot for each recommendation: numeric sample selection, reviewer-owned
+  ground truth with a named accountable owner, at least two numerator/denominator formulas using
+  comparable units for ratio metrics, review cadence, one measurement owner, and correction plus
+  rerun before any proceed decision.
+- Named customer decision ownership, data/security approval ownership, UiPath product and
+  deployment validation ownership, prerequisite fallback, and absolute kickoff and decision
+  dates.
+- Separate internal profile, evidence, portfolio, process-map, semantic-review, and receipt artifacts.
 
-Full-quality output requires enough context to write a concise `.docx` scope line: customer, vertical, deployment context, source inventory name, target audience, and whether the brief is internal planning or customer-ready.
+Full-quality output requires enough context to confirm process boundaries and produce an independent or human semantic review. Without that review, output remains exploratory.
 
 ## Optional inputs that improve quality
 

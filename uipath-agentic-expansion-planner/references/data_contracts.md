@@ -1,51 +1,112 @@
 # Versioned data contracts
 
-The machine-readable planning path uses two strict JSON artifacts:
+The customer-assessment path uses five artifacts:
 
-- `evidence_ledger.json`, governed by [`contracts/evidence_ledger.v1.schema.json`](contracts/evidence_ledger.v1.schema.json).
-- `portfolio.json`, governed by [`contracts/portfolio.v1.schema.json`](contracts/portfolio.v1.schema.json).
+- Profile `1.1` from `inventory_profiler.py`.
+- [`evidence_ledger.json`](contracts/evidence_ledger.v1.schema.json) `1.0`.
+- [`portfolio.json`](contracts/portfolio.v1.schema.json) `1.0`.
+- [`process_map.json`](contracts/process_map.v1.schema.json) `1.0`.
+- [`semantic_review.json`](contracts/semantic_review.v1.schema.json) `1.0`.
 
-Both artifacts require `schema_version: "1.0"`. Unknown fields, unsupported versions, dangling IDs, stale scores, invalid value calculations, deployment gaps, placeholder pilot owners, unsafe official-source URLs, and unsupported entitlement claims fail validation. The Python runtime uses the same contract rules without requiring a JSON Schema package.
+The detailed legacy path continues to accept profile `1.0`. Customer-ready output requires profile `1.1` and all five artifacts.
 
-## Evidence ledger v1
+## Profile 1.1
 
-Use one stable ID namespace per customer analysis:
+Profile `1.1` preserves the existing stable `INV-*` identifiers and adds:
 
-- `INV-*` for inventory rows. Generate these IDs with `inventory_profiler.py`; do not use row names as keys because names can be duplicated or edited.
-- `SRC-*` for public sources. Record publication and access dates separately.
-- `ASM-*` for planning assumptions. Mark each assumption `unvalidated`, `validated`, or `rejected`.
+- Safe source basename and source SHA-256. Profile `1.1` does not retain the local source path.
+- Raw status and detailed lifecycle status.
+- Lifecycle counts for deployed, pipeline, paused, retired, cancelled, rejected, duplicate, idea, unknown, and other.
+- Sheet, physical row, field-coverage, department, owner, system, and metric summaries.
+- Per-sheet field mappings so valid aliases on different workbook sheets remain distinct.
+- Normalized `source_date` on each row plus a `source_date_summary` containing mapped date columns, valid/invalid/nonblank counts, and earliest/latest valid dates.
 
-The ledger also records deployment model, data classification, GenAI policy, human-approval requirements, and entitlement status. A `confirmed` entitlement requires a public source or validated assumption reference. `unknown` is the safe default.
+When valid source dates exist, `evidence_ledger.inventory_profile.as_of_date` must equal the profile's latest valid source record date. Do not substitute the profile generation date, assessment date, or review date for source freshness. If no valid source date exists, keep the summary explicit and state that limitation in the customer assessment.
 
-When an inventory profile is supplied, validation reconciles each ledger row against the generated
-profile for name, normalized description, status, department, owner, systems, physical source row,
-and detected metric values. Official public sources require HTTPS and a public, non-reserved host;
-synthetic fixture URLs must not be marked official.
+Never add an absolute source path to the profile, customer document, or public fixture.
 
-## Portfolio v1
+## Evidence and portfolio 1.0
 
-Each `OPP-*` opportunity must cite inventory IDs and public source IDs. Assumption IDs are required whenever an assumption affects value, feasibility, deployment, or entitlement reasoning. Criteria scores are integers from 0 to 5; the scripts calculate both high-impact and POC scores with scoring model `1.0`.
+Use `INV-*` for source rows, `SRC-*` for public sources, `ASM-*` for assumptions, and `OPP-*` for opportunities. Unknown fields, dangling references, stale scores, excluded evidence, unsupported value math, placeholder owners, unsafe URLs, deployment gaps, and entitlement overclaims fail validation.
 
-An active opportunity must name an accountable pilot person or role. Placeholder values such as
-`TBD` and `unassigned` fail. Each opportunity lists only materially applicable deployment
-constraints, while the active portfolio must collectively address every ledger constraint.
-Narrative fields have bounded word counts so deterministic rendering remains executive-usable.
-
-Calculated value supports only these deterministic formulas:
+Supported calculated-value formulas remain:
 
 - `volume_minutes_rate_v1`: `annual_volume * minutes_saved_per_case / 60 * loaded_hourly_rate`.
 - `hours_rate_v1`: `annual_hours * loaded_hourly_rate`.
 
-Do not put arbitrary expressions in JSON. Use `qualitative` value framing when evidence is incomplete.
+Use qualitative value framing when evidence is incomplete.
 
-## Migration from legacy artifacts
+## Process map 1.0
 
-Unversioned JSON is rejected. Do not add `schema_version` to an old file and assume it is valid.
+`process_map.json` binds to the profile source SHA-256 and must cover every inventory ID exactly once through an analyst-mapped process or an explicit unmapped record.
 
-1. Regenerate `inventory_profile.json` to obtain stable `INV-*` IDs.
-2. Build `evidence_ledger.json` with explicit `INV-*`, `SRC-*`, and `ASM-*` records.
-3. Convert recommendations to `portfolio.json` with `OPP-*` IDs and evidence references.
-4. Run `score_portfolio.py` into a new output path.
-5. Run `validate_portfolio.py` before rendering Markdown or DOCX.
+Each process requires:
 
-The legacy Markdown-only validator remains available for structural checks. It does not certify evidence, scores, dates, deployment fit, value math, or entitlements unless the JSON cross-check options are supplied.
+- `PROC-*` ID, name, and business function.
+- Start condition, end condition, and business outcome.
+- Inventory membership and rationale.
+- Linkage status, rationale, and validation step. Multi-automation processes cannot use `not_applicable`; single-automation processes must.
+
+`prioritization` requires:
+
+- A plain-language method and at least three supported criteria.
+- One decision for every process: `selected`, `deferred`, or `not_prioritized`.
+- Consecutive ranks for selected and deferred processes; `not_prioritized` uses a null rank.
+- Strategy-alignment status and comparative rationale for every decision.
+- `observed_evidence`: one or more source-supported facts. Assumptions, proposed controls, and validation tasks fail this field.
+- `validation_needed`: evidence or owner decisions still required. It cannot be empty for a selected or deferred non-official planning priority.
+- Selected ranks that exactly match deterministic portfolio recommendation order.
+
+Reserve `strategy_alignment: confirmed` for customer-confirmed or authoritative evidence. Use `validation_required` for non-official planning context and carry that limitation into the customer comparison.
+
+Every selected rationale explains why that process outranks alternatives. Every deferred rationale explains why it ranks lower and what must occur before reconsideration. This is a decision-quality control, not customer-facing score narration. It prevents a stated strategy priority or material workload signal from disappearing without an explicit tradeoff and prevents a proposed baseline from being mislabeled as observed evidence.
+
+Each selected `OPP-*` requires an orchestration record with:
+
+- Existing automation IDs.
+- `stitch_existing`, `extend_single`, or `net_new` pattern.
+- Consecutive ordered stages with monotonic `current_state`, `pilot`, and `future_state` phases.
+- Separate applicability and roles for Maestro, agentic support, GenAI, robots, and human review.
+- `measurement_plan` with a numeric selection method that matches the proceed gate, reviewer-owned ground truth, a non-placeholder `ground_truth_owner`, at least two named numerator/denominator formulas, `daily`, `weekly`, or `per_case` cadence, and a measurement owner matching the pilot and next-step owner. Accuracy, agreement, coverage, linkage, precision, and recall ratios must use comparable numerator and denominator units; for example, use `reviewed cases with complete evidence / reviewed cases`, not `complete fields / reviewed cases`.
+- A mixed-result action that requires correction and rerun and prohibits proceeding until every gate passes.
+- Customer owner, UiPath account-team owner, next action, deliverable, and target from 1 to 30 days.
+- Pilot exit criterion in exact stop-first order: `Stop if ... . Go if ... . Revise if ... .` The go condition names a quantitative success range, the revise condition names the intermediate range, and the stop condition covers the remaining quantitative failure range plus critical control breaches.
+- A shadow-pilot phase contains no system-changing action. Any later write is `future_state`, follows human review, requires separate authorization, and records only a human-confirmed or human-approved result.
+- A historical read-only shadow cannot use live cycle-time reduction as a go or revise measure. Use record-observable quality or coverage metrics and reserve live outcomes for a separately authorized test.
+
+The rendered next action converts the semantic-review date plus `target_days` into an absolute target kickoff date, then adds `pilot.timeline_days` for the decision date. The date is a workshop target, not an approved launch commitment. Do not expose unanchored `day 14` or `day 21` language. The action must identify data/security approval, product/deployment validation, and what happens when access or linkage prerequisites fail.
+
+`analyst_confirmed` is mandatory for workshop-ready output, but it confirms the analyst's mapping, not customer agreement. The customer assessment labels those groups as analyst-mapped and requiring customer confirmation.
+
+`linkage.status: confirmed` may be supported by an inventory field or by a dated, hash-bound
+customer-confirmed source that names the join field and covered exports. The latter does not erase
+the inventory omission: `linkage.rationale` must state both the omission and the supporting source
+fact, and `validation_step` must require an analyst sample check. Ownership and sample availability
+follow the same narrow rule. Confirmation does not cascade to deployment, entitlement, baseline,
+value, funding, or pilot authorization.
+
+## Semantic review 1.0
+
+`semantic_review.json` binds exact hashes of the profile, evidence ledger, portfolio, and process map. It reviews each selected recommendation for inventory support, strategy support, process coherence, agentic need, capability fit, value logic, pilot realism, and customer language.
+
+Reviewer modes:
+
+- `human`
+- `independent_agent`
+- `single_agent_fallback`
+
+A fallback review cannot exceed `exploratory`. Review freshness is 30 days by default and the review cannot predate a bound artifact.
+
+The `agentic_need` claim evaluates whether evidence supports the declared
+agentic applicability. It may pass when `agentic` is `not_needed`; never treat
+the claim name as a requirement to add an agent.
+
+## Migration
+
+1. Regenerate the profile to produce `1.1` source and lifecycle metadata.
+2. Keep valid evidence-ledger and portfolio `1.0` artifacts; rerun scoring if the profile changed inventory IDs or fields.
+3. Create and validate `process_map.json`.
+4. Run a human or independent semantic review against the exact artifact hashes.
+5. Use `build_customer_assessment.py` for the concise DOCX.
+
+Do not add a version field to an old artifact and assume it is migrated. Regenerate or reconcile all IDs and hashes deliberately.

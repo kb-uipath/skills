@@ -17,6 +17,8 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
+from validate_customer_assessment import markdown_word_count
+
 
 UIPATH_ORANGE = RGBColor(250, 70, 22)
 UIPATH_DEEP_BLUE = RGBColor(24, 33, 38)
@@ -54,8 +56,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-words",
         type=int,
-        default=3200,
-        help="Warn when the Markdown exceeds this word count",
+        default=None,
+        help="Word ceiling; defaults to 900 for customer-assessment and 3200 otherwise",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=("detailed", "customer-assessment"),
+        default="detailed",
+        help="Document density and footer profile",
     )
     return parser.parse_args()
 
@@ -213,59 +221,91 @@ def add_inline_markdown(paragraph, text: str, *, font_size: float | None = None)
             run.font.size = Pt(font_size)
 
 
-def style_document(document: Document, *, landscape: bool) -> None:
+def style_document(document: Document, *, landscape: bool, profile: str = "detailed") -> None:
     section = document.sections[0]
     if landscape:
         section.orientation = WD_ORIENT.LANDSCAPE
         section.page_width, section.page_height = section.page_height, section.page_width
-    section.top_margin = Inches(0.6)
-    section.bottom_margin = Inches(0.55)
-    section.left_margin = Inches(0.55 if landscape else 0.7)
-    section.right_margin = Inches(0.55 if landscape else 0.7)
+    compact = profile == "customer-assessment"
+    section.top_margin = Inches(0.45 if compact else 0.6)
+    section.bottom_margin = Inches(0.42 if compact else 0.55)
+    section.left_margin = Inches(0.55 if compact or landscape else 0.7)
+    section.right_margin = Inches(0.55 if compact or landscape else 0.7)
 
     styles = document.styles
     normal = styles["Normal"]
     normal.font.name = BRAND_FONT
-    normal.font.size = Pt(9.5)
+    normal.font.size = Pt(10 if compact else 9.5)
 
     for style_name, size, color in [
-        ("Heading 1", 16, UIPATH_ORANGE),
-        ("Heading 2", 12, UIPATH_DEEP_BLUE),
-        ("Heading 3", 10.5, UIPATH_AGENTIC_TEAL),
+        ("Heading 1", 14 if compact else 16, UIPATH_ORANGE),
+        ("Heading 2", 10.5 if compact else 12, UIPATH_DEEP_BLUE),
+        ("Heading 3", 9.5 if compact else 10.5, UIPATH_AGENTIC_TEAL),
     ]:
         style = styles[style_name]
         style.font.name = BRAND_FONT
         style.font.size = Pt(size)
         style.font.bold = True
         style.font.color.rgb = color
-        style.paragraph_format.space_before = Pt(10)
-        style.paragraph_format.space_after = Pt(4)
+        style.paragraph_format.space_before = Pt(6 if compact else 10)
+        style.paragraph_format.space_after = Pt(2 if compact else 4)
 
     footer = section.footer.paragraphs[0]
-    footer.text = "Agentic expansion briefing"
-    footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    footer.runs[0].font.size = Pt(8)
-    footer.runs[0].font.color.rgb = UIPATH_GRAY_TEXT
-    set_font(footer.runs[0])
+    footer.text = ""
+    footer.alignment = (
+        WD_ALIGN_PARAGRAPH.CENTER if compact else WD_ALIGN_PARAGRAPH.RIGHT
+    )
+    label = footer.add_run(
+        "Page "
+        if compact
+        else "Agentic expansion briefing | Page "
+    )
+    label.font.size = Pt(8)
+    label.font.color.rgb = UIPATH_GRAY_TEXT
+    set_font(label)
+    begin_run = footer.add_run()
+    begin = OxmlElement("w:fldChar")
+    begin.set(qn("w:fldCharType"), "begin")
+    begin_run._r.append(begin)
+    instruction_run = footer.add_run()
+    instruction = OxmlElement("w:instrText")
+    instruction.set(qn("xml:space"), "preserve")
+    instruction.text = " PAGE "
+    instruction_run._r.append(instruction)
+    separate_run = footer.add_run()
+    separate = OxmlElement("w:fldChar")
+    separate.set(qn("w:fldCharType"), "separate")
+    separate_run._r.append(separate)
+    result = footer.add_run("1")
+    result.font.size = Pt(8)
+    result.font.color.rgb = UIPATH_GRAY_TEXT
+    set_font(result)
+    end_run = footer.add_run()
+    end = OxmlElement("w:fldChar")
+    end.set(qn("w:fldCharType"), "end")
+    end_run._r.append(end)
 
 
-def add_title_block(document: Document, title: str, subtitle: str) -> None:
+def add_title_block(
+    document: Document, title: str, subtitle: str, *, profile: str = "detailed"
+) -> None:
+    compact = profile == "customer-assessment"
     title_para = document.add_paragraph()
     title_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
     title_run = title_para.add_run(title)
     title_run.bold = True
-    title_run.font.size = Pt(20)
+    title_run.font.size = Pt(17 if compact else 20)
     title_run.font.color.rgb = UIPATH_ORANGE
     set_font(title_run)
 
     subtitle_para = document.add_paragraph()
     subtitle_run = subtitle_para.add_run(subtitle)
-    subtitle_run.font.size = Pt(9.5)
+    subtitle_run.font.size = Pt(8.5 if compact else 9.5)
     subtitle_run.font.color.rgb = UIPATH_GRAY_TEXT
     set_font(subtitle_run)
 
     rule = document.add_paragraph()
-    rule.paragraph_format.space_after = Pt(8)
+    rule.paragraph_format.space_after = Pt(4 if compact else 8)
     run = rule.add_run(" ")
     run.font.size = Pt(1)
     p_pr = rule._p.get_or_add_pPr()
@@ -279,63 +319,122 @@ def add_title_block(document: Document, title: str, subtitle: str) -> None:
     p_pr.append(border)
 
 
-def add_table(document: Document, rows: Sequence[Sequence[str]]) -> None:
+def add_table(
+    document: Document, rows: Sequence[Sequence[str]], *, profile: str = "detailed"
+) -> None:
     if not rows:
         return
     column_count = max(len(row) for row in rows)
     table = document.add_table(rows=len(rows), cols=column_count)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.style = "Table Grid"
-    table.autofit = True
+    table.autofit = not (
+        profile == "customer-assessment" and column_count in {2, 3}
+    )
+    if profile == "customer-assessment" and column_count in {2, 3}:
+        section = document.sections[0]
+        usable_width = section.page_width - section.left_margin - section.right_margin
+        ratios = (0.24, 0.76) if column_count == 2 else (0.08, 0.28, 0.64)
+        for column_index, ratio in enumerate(ratios):
+            column_width = int(usable_width * ratio)
+            table.columns[column_index].width = column_width
+            for cell in table.columns[column_index].cells:
+                cell.width = column_width
 
     for row_index, row in enumerate(rows):
         for col_index in range(column_count):
             text = row[col_index] if col_index < len(row) else ""
             cell = table.cell(row_index, col_index)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
-            set_cell_margins(cell)
+            set_cell_margins(cell, top=45, start=55, bottom=45, end=55) if profile == "customer-assessment" else set_cell_margins(cell)
             if row_index == 0:
                 set_cell_shading(cell, UIPATH_DEEP_BLUE_HEX)
             elif row_index % 2 == 0:
                 set_cell_shading(cell, UIPATH_ROW_ALT)
             paragraph = cell.paragraphs[0]
             paragraph.paragraph_format.space_after = Pt(0)
-            add_inline_markdown(paragraph, text, font_size=7.8 if column_count > 5 else 8.5)
+            font_size = (
+                (7.8 if column_count == 3 else 8.3)
+                if profile == "customer-assessment"
+                else 7.8 if column_count > 5 else 8.5
+            )
+            add_inline_markdown(paragraph, text, font_size=font_size)
             for run in paragraph.runs:
                 if row_index == 0:
                     run.bold = True
                     run.font.color.rgb = RGBColor(255, 255, 255)
+                elif profile == "customer-assessment" and col_index == 0:
+                    run.bold = True
+                    run.font.color.rgb = UIPATH_DEEP_BLUE
 
-    document.add_paragraph()
+    spacer = document.add_paragraph()
+    spacer.paragraph_format.space_after = Pt(0 if profile == "customer-assessment" else 4)
 
 
-def render_blocks(document: Document, blocks: Iterable[tuple[str, object]], title: str) -> None:
+def render_blocks(
+    document: Document,
+    blocks: Iterable[tuple[str, object]],
+    title: str,
+    *,
+    profile: str = "detailed",
+) -> None:
+    compact = profile == "customer-assessment"
     first_h1_skipped = False
-    for block_type, value in blocks:
+    block_list = list(blocks)
+    recommendation_count = sum(
+        1
+        for block_type, value in block_list
+        if block_type == "heading" and value[0] == 3
+    )
+    recommendation_index = 0
+    for block_type, value in block_list:
         if block_type == "heading":
             level, text = value
-            if level == 1 and text.strip() == title.strip() and not first_h1_skipped:
+            if (
+                level == 1
+                and not first_h1_skipped
+                and (compact or text.strip() == title.strip())
+            ):
                 first_h1_skipped = True
                 continue
             style = "Heading 1" if level <= 1 else "Heading 2" if level == 2 else "Heading 3"
-            document.add_paragraph(text, style=style)
+            paragraph = document.add_paragraph(text, style=style)
+            if compact and level == 2 and text.strip() == "Top 3 Recommendations":
+                paragraph.paragraph_format.keep_with_next = True
+            if compact and level == 3:
+                recommendation_index += 1
+                paragraph.paragraph_format.keep_with_next = True
+                if (
+                    recommendation_count == 3
+                    and recommendation_index == 1
+                ) or (
+                    recommendation_count == 2
+                    and recommendation_index == 2
+                ):
+                    paragraph.paragraph_format.page_break_before = True
         elif block_type == "paragraph":
             paragraph = document.add_paragraph()
-            paragraph.paragraph_format.space_after = Pt(5)
-            paragraph.paragraph_format.line_spacing = 1.05
+            paragraph.paragraph_format.space_after = Pt(2 if compact else 5)
+            paragraph.paragraph_format.line_spacing = 1.0 if compact else 1.05
             add_inline_markdown(paragraph, value)
         elif block_type == "bullets":
             for item in value:
                 paragraph = document.add_paragraph(style="List Bullet")
-                paragraph.paragraph_format.space_after = Pt(2)
+                paragraph.paragraph_format.space_after = Pt(2 if compact else 2)
+                if compact:
+                    paragraph.paragraph_format.left_indent = Inches(0.16)
+                    paragraph.paragraph_format.first_line_indent = Inches(-0.11)
+                    paragraph.paragraph_format.line_spacing = 1.0
                 add_inline_markdown(paragraph, item)
+                if compact and paragraph.runs and paragraph.runs[0].bold:
+                    paragraph.runs[0].font.color.rgb = UIPATH_DEEP_BLUE
         elif block_type == "numbers":
             for item in value:
                 paragraph = document.add_paragraph(style="List Number")
-                paragraph.paragraph_format.space_after = Pt(2)
+                paragraph.paragraph_format.space_after = Pt(1 if compact else 2)
                 add_inline_markdown(paragraph, item)
         elif block_type == "table":
-            add_table(document, value)
+            add_table(document, value, profile=profile)
 
 
 def first_heading_one(blocks: Sequence[tuple[str, object]]) -> str | None:
@@ -357,8 +456,18 @@ def has_wide_table(blocks: Sequence[tuple[str, object]]) -> bool:
 def main() -> int:
     args = parse_args()
     markdown_text = args.markdown.read_text(encoding="utf-8")
-    word_count = len(re.findall(r"\b\w+\b", markdown_text))
-    if word_count > args.max_words:
+    word_count = markdown_word_count(markdown_text)
+    max_words = args.max_words or (900 if args.profile == "customer-assessment" else 3200)
+    if args.profile == "customer-assessment" and max_words > 900:
+        print("FAIL: customer-assessment --max-words cannot exceed 900.")
+        return 1
+    if word_count > max_words and args.profile == "customer-assessment":
+        print(
+            f"FAIL: {args.markdown} has {word_count} words; customer-assessment maximum is "
+            f"{max_words}."
+        )
+        return 1
+    if word_count > max_words:
         print(
             f"Warning: {args.markdown} has {word_count} words. "
             "For executive .docx output, consider shortening before sharing."
@@ -369,9 +478,9 @@ def main() -> int:
 
     document = Document()
     use_landscape = has_wide_table(blocks) and args.auto_landscape and not args.portrait
-    style_document(document, landscape=use_landscape)
-    add_title_block(document, title, args.subtitle)
-    render_blocks(document, blocks, title)
+    style_document(document, landscape=use_landscape, profile=args.profile)
+    add_title_block(document, title, args.subtitle, profile=args.profile)
+    render_blocks(document, blocks, title, profile=args.profile)
 
     args.docx.parent.mkdir(parents=True, exist_ok=True)
     document.save(args.docx)

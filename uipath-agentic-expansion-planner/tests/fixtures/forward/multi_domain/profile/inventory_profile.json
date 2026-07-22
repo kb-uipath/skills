@@ -1,0 +1,1451 @@
+{
+  "schema_version": "1.1",
+  "metadata": {
+    "source_file": "inventory.csv",
+    "source_name": "inventory.csv",
+    "source_sha256": "c951f3f322663c2b6dcef2a58b94b69a5744b8cd55a031163b10c5e2a89ce24f",
+    "generated_at_utc": "2026-07-21T21:57:33Z",
+    "sheet_count": 1,
+    "total_rows": 12,
+    "total_columns": 11,
+    "source_date_summary": {
+      "columns": [
+        "Last Updated"
+      ],
+      "nonblank_count": 12,
+      "valid_count": 12,
+      "invalid_count": 0,
+      "earliest_date": "2025-11-07",
+      "latest_date": "2026-07-02"
+    }
+  },
+  "sheets": [
+    {
+      "sheet": "inventory",
+      "rows": 12,
+      "columns": [
+        "Automation Name",
+        "Business Problem",
+        "Lifecycle Status",
+        "Department",
+        "Process Owner",
+        "Applications",
+        "Annual Volume",
+        "Average Handling Minutes",
+        "Priority Band",
+        "Last Updated",
+        "Data Gap Notes"
+      ],
+      "column_count": 11
+    }
+  ],
+  "detected_columns": {
+    "use_case_name": {
+      "best": "Automation Name",
+      "score": 10,
+      "alternates": []
+    },
+    "description": {
+      "best": "Business Problem",
+      "score": 10,
+      "alternates": []
+    },
+    "status": {
+      "best": "Lifecycle Status",
+      "score": 8,
+      "alternates": []
+    },
+    "department": {
+      "best": "Department",
+      "score": 10,
+      "alternates": []
+    },
+    "owner": {
+      "best": "Process Owner",
+      "score": 10,
+      "alternates": []
+    },
+    "systems": {
+      "best": "Applications",
+      "score": 10,
+      "alternates": []
+    },
+    "volume": {
+      "best": "Annual Volume",
+      "score": 10,
+      "alternates": []
+    },
+    "annual_volume": {
+      "best": "Annual Volume",
+      "score": 10,
+      "alternates": []
+    },
+    "handling_time": {
+      "best": "Average Handling Minutes",
+      "score": 10,
+      "alternates": []
+    },
+    "priority": {
+      "best": "Priority Band",
+      "score": 8,
+      "alternates": []
+    },
+    "date": {
+      "best": "Last Updated",
+      "score": 10,
+      "alternates": []
+    }
+  },
+  "detected_columns_by_sheet": {
+    "inventory": {
+      "use_case_name": {
+        "best": "Automation Name",
+        "score": 10,
+        "alternates": []
+      },
+      "description": {
+        "best": "Business Problem",
+        "score": 10,
+        "alternates": []
+      },
+      "status": {
+        "best": "Lifecycle Status",
+        "score": 8,
+        "alternates": []
+      },
+      "department": {
+        "best": "Department",
+        "score": 10,
+        "alternates": []
+      },
+      "owner": {
+        "best": "Process Owner",
+        "score": 10,
+        "alternates": []
+      },
+      "systems": {
+        "best": "Applications",
+        "score": 10,
+        "alternates": []
+      },
+      "volume": {
+        "best": "Annual Volume",
+        "score": 10,
+        "alternates": []
+      },
+      "annual_volume": {
+        "best": "Annual Volume",
+        "score": 10,
+        "alternates": []
+      },
+      "handling_time": {
+        "best": "Average Handling Minutes",
+        "score": 10,
+        "alternates": []
+      },
+      "priority": {
+        "best": "Priority Band",
+        "score": 8,
+        "alternates": []
+      },
+      "date": {
+        "best": "Last Updated",
+        "score": 10,
+        "alternates": []
+      }
+    }
+  },
+  "core_field_mapping": {
+    "use_case_name": "Automation Name",
+    "description": "Business Problem",
+    "status": "Lifecycle Status",
+    "department": "Department",
+    "owner": "Process Owner",
+    "systems": "Applications",
+    "volume": "Annual Volume",
+    "weekly_volume": null,
+    "annual_volume": "Annual Volume",
+    "handling_time": "Average Handling Minutes",
+    "hours_saved": null,
+    "value": null,
+    "priority": "Priority Band",
+    "date": "Last Updated"
+  },
+  "sheet_field_mappings": {
+    "inventory": {
+      "use_case_name": "Automation Name",
+      "description": "Business Problem",
+      "status": "Lifecycle Status",
+      "department": "Department",
+      "owner": "Process Owner",
+      "systems": "Applications",
+      "volume": "Annual Volume",
+      "weekly_volume": null,
+      "annual_volume": "Annual Volume",
+      "handling_time": "Average Handling Minutes",
+      "hours_saved": null,
+      "value": null,
+      "priority": "Priority Band",
+      "date": "Last Updated"
+    }
+  },
+  "data_quality": {
+    "missing_core_fields_for_full_quality": [],
+    "no_value_or_volume_fields_detected": false,
+    "field_coverage": {
+      "use_case_name": {
+        "column": "Automation Name",
+        "nonblank": 12,
+        "coverage_pct": 100.0
+      },
+      "description": {
+        "column": "Business Problem",
+        "nonblank": 12,
+        "coverage_pct": 100.0
+      },
+      "status": {
+        "column": "Lifecycle Status",
+        "nonblank": 12,
+        "coverage_pct": 100.0
+      },
+      "department": {
+        "column": "Department",
+        "nonblank": 12,
+        "coverage_pct": 100.0
+      },
+      "owner": {
+        "column": "Process Owner",
+        "nonblank": 8,
+        "coverage_pct": 66.7
+      },
+      "systems": {
+        "column": "Applications",
+        "nonblank": 11,
+        "coverage_pct": 91.7
+      },
+      "volume": {
+        "column": "Annual Volume",
+        "nonblank": 10,
+        "coverage_pct": 83.3
+      },
+      "weekly_volume": {
+        "column": null,
+        "nonblank": 0,
+        "coverage_pct": 0.0
+      },
+      "annual_volume": {
+        "column": "Annual Volume",
+        "nonblank": 10,
+        "coverage_pct": 83.3
+      },
+      "handling_time": {
+        "column": "Average Handling Minutes",
+        "nonblank": 11,
+        "coverage_pct": 91.7
+      },
+      "hours_saved": {
+        "column": null,
+        "nonblank": 0,
+        "coverage_pct": 0.0
+      },
+      "value": {
+        "column": null,
+        "nonblank": 0,
+        "coverage_pct": 0.0
+      },
+      "priority": {
+        "column": "Priority Band",
+        "nonblank": 12,
+        "coverage_pct": 100.0
+      },
+      "date": {
+        "column": "Last Updated",
+        "nonblank": 12,
+        "coverage_pct": 100.0
+      }
+    },
+    "duplicate_name_groups": []
+  },
+  "status_summary": {
+    "normalized_status_counts": {
+      "production": 4,
+      "pipeline": 3,
+      "excluded": 4,
+      "idea": 1
+    },
+    "lifecycle_status_counts": {
+      "deployed": 4,
+      "pipeline": 3,
+      "retired": 1,
+      "paused": 1,
+      "duplicate": 1,
+      "idea": 1,
+      "cancelled": 1
+    },
+    "raw_status_top_values": [
+      {
+        "value": "Live - unattended",
+        "count": 1
+      },
+      {
+        "value": "Pilot / UAT",
+        "count": 1
+      },
+      {
+        "value": "Retired after ERP patch",
+        "count": 1
+      },
+      {
+        "value": "Production",
+        "count": 1
+      },
+      {
+        "value": "Approved backlog",
+        "count": 1
+      },
+      {
+        "value": "Paused - ERP migration",
+        "count": 1
+      },
+      {
+        "value": "Deployed",
+        "count": 1
+      },
+      {
+        "value": "UAT",
+        "count": 1
+      },
+      {
+        "value": "Duplicate of quarterly access evidence pull",
+        "count": 1
+      },
+      {
+        "value": "Operational",
+        "count": 1
+      },
+      {
+        "value": "Idea - requested",
+        "count": 1
+      },
+      {
+        "value": "Cancelled",
+        "count": 1
+      }
+    ]
+  },
+  "owner_department_summary": {
+    "department_top_values": [
+      {
+        "value": "Finance",
+        "count": 2
+      },
+      {
+        "value": "IT/CIO Assurance",
+        "count": 2
+      },
+      {
+        "value": "Human Resources",
+        "count": 2
+      },
+      {
+        "value": "Finance Assurance",
+        "count": 1
+      },
+      {
+        "value": "Procurement",
+        "count": 1
+      },
+      {
+        "value": "Procurement Risk",
+        "count": 1
+      },
+      {
+        "value": "Procurement Operations",
+        "count": 1
+      },
+      {
+        "value": "IT Operations",
+        "count": 1
+      },
+      {
+        "value": "People Operations",
+        "count": 1
+      }
+    ],
+    "owner_top_values": [
+      {
+        "value": "blank",
+        "count": 4
+      },
+      {
+        "value": "Finance Operations Lead",
+        "count": 1
+      },
+      {
+        "value": "Finance Controls Manager",
+        "count": 1
+      },
+      {
+        "value": "Supplier Enablement Lead",
+        "count": 1
+      },
+      {
+        "value": "Supplier Risk Lead",
+        "count": 1
+      },
+      {
+        "value": "Access Governance Manager",
+        "count": 1
+      },
+      {
+        "value": "Security Assurance Lead",
+        "count": 1
+      },
+      {
+        "value": "HR Onboarding Manager",
+        "count": 1
+      },
+      {
+        "value": "Employee Services Manager",
+        "count": 1
+      }
+    ]
+  },
+  "systems_summary": {
+    "systems_top_values": [
+      {
+        "value": "Document Repository",
+        "count": 4
+      },
+      {
+        "value": "ERP Finance",
+        "count": 3
+      },
+      {
+        "value": "Supplier Portal",
+        "count": 2
+      },
+      {
+        "value": "Policy Library",
+        "count": 2
+      },
+      {
+        "value": "Identity Governance",
+        "count": 2
+      },
+      {
+        "value": "Directory",
+        "count": 2
+      },
+      {
+        "value": "Ticketing",
+        "count": 2
+      },
+      {
+        "value": "Shared Mailbox",
+        "count": 1
+      },
+      {
+        "value": "Procurement Portal",
+        "count": 1
+      },
+      {
+        "value": "Procurement Queue",
+        "count": 1
+      },
+      {
+        "value": "ERP Vendor Master",
+        "count": 1
+      },
+      {
+        "value": "Evidence Repository",
+        "count": 1
+      },
+      {
+        "value": "Legacy BI",
+        "count": 1
+      },
+      {
+        "value": "HR Case Portal",
+        "count": 1
+      },
+      {
+        "value": "HRIS",
+        "count": 1
+      },
+      {
+        "value": "Facilities Queue",
+        "count": 1
+      }
+    ]
+  },
+  "numeric_profiles": {
+    "Annual Volume": {
+      "count": 10,
+      "min": 400.0,
+      "median": 3200.0,
+      "max": 26400.0,
+      "sum": 74350.0,
+      "parseable_coverage_of_nonblank": 1.0
+    },
+    "Average Handling Minutes": {
+      "count": 11,
+      "min": 2.0,
+      "median": 12.0,
+      "max": 35.0,
+      "sum": 147.0,
+      "parseable_coverage_of_nonblank": 1.0
+    },
+    "Last Updated": {
+      "count": 12,
+      "min": 2025.0,
+      "median": 2026.0,
+      "max": 2026.0,
+      "sum": 24310.0,
+      "parseable_coverage_of_nonblank": 1.0
+    }
+  },
+  "text_patterns": {
+    "frequent_terms_from_name_description": [
+      {
+        "term": "evidence",
+        "count": 6
+      },
+      {
+        "term": "access",
+        "count": 5
+      },
+      {
+        "term": "intake",
+        "count": 4
+      },
+      {
+        "term": "onboarding",
+        "count": 4
+      },
+      {
+        "term": "supplier",
+        "count": 3
+      },
+      {
+        "term": "invoices",
+        "count": 3
+      },
+      {
+        "term": "checks",
+        "count": 3
+      },
+      {
+        "term": "fields",
+        "count": 3
+      },
+      {
+        "term": "vendor",
+        "count": 3
+      },
+      {
+        "term": "privileged",
+        "count": 3
+      },
+      {
+        "term": "invoice",
+        "count": 2
+      },
+      {
+        "term": "mailbox",
+        "count": 2
+      },
+      {
+        "term": "required",
+        "count": 2
+      },
+      {
+        "term": "submissions",
+        "count": 2
+      },
+      {
+        "term": "queue",
+        "count": 2
+      },
+      {
+        "term": "match",
+        "count": 2
+      },
+      {
+        "term": "exception",
+        "count": 2
+      },
+      {
+        "term": "worklist",
+        "count": 2
+      },
+      {
+        "term": "reviewer",
+        "count": 2
+      },
+      {
+        "term": "posting",
+        "count": 2
+      },
+      {
+        "term": "tax",
+        "count": 2
+      },
+      {
+        "term": "before",
+        "count": 2
+      },
+      {
+        "term": "submitted",
+        "count": 2
+      },
+      {
+        "term": "routes",
+        "count": 2
+      },
+      {
+        "term": "exceptions",
+        "count": 2
+      },
+      {
+        "term": "master",
+        "count": 2
+      },
+      {
+        "term": "quarterly",
+        "count": 2
+      },
+      {
+        "term": "pull",
+        "count": 2
+      },
+      {
+        "term": "legacy",
+        "count": 2
+      },
+      {
+        "term": "benefits",
+        "count": 2
+      },
+      {
+        "term": "checklist",
+        "count": 2
+      },
+      {
+        "term": "reads",
+        "count": 1
+      },
+      {
+        "term": "shared",
+        "count": 1
+      },
+      {
+        "term": "places",
+        "count": 1
+      },
+      {
+        "term": "complete",
+        "count": 1
+      },
+      {
+        "term": "erp",
+        "count": 1
+      },
+      {
+        "term": "builds",
+        "count": 1
+      },
+      {
+        "term": "fail",
+        "count": 1
+      },
+      {
+        "term": "two",
+        "count": 1
+      },
+      {
+        "term": "three",
+        "count": 1
+      }
+    ]
+  },
+  "top_rows_by_detected_metrics": {
+    "Annual Volume": [
+      {
+        "metric_value": 26400.0,
+        "inventory_id": "INV-INVENTORY-R00008",
+        "sheet": "inventory",
+        "row_number": 8,
+        "Automation Name": "Quarterly access evidence pull",
+        "Business Problem": "Extracts account and entitlement evidence for quarterly privileged-access certification.",
+        "Lifecycle Status": "Deployed",
+        "Department": "IT/CIO Assurance",
+        "Process Owner": "Access Governance Manager",
+        "Applications": "Identity Governance;Directory;Evidence Repository"
+      },
+      {
+        "metric_value": 18000.0,
+        "inventory_id": "INV-INVENTORY-R00002",
+        "sheet": "inventory",
+        "row_number": 2,
+        "Automation Name": "Supplier invoice mailbox intake",
+        "Business Problem": "Reads shared-mailbox invoices, checks required fields, and places complete submissions in the ERP intake queue.",
+        "Lifecycle Status": "Live - unattended",
+        "Department": "Finance",
+        "Process Owner": "Finance Operations Lead",
+        "Applications": "Shared Mailbox;ERP Finance;Document Repository"
+      },
+      {
+        "metric_value": 18000.0,
+        "inventory_id": "INV-INVENTORY-R00004",
+        "sheet": "inventory",
+        "row_number": 4,
+        "Automation Name": "Invoice posting confirmation archive",
+        "Business Problem": "Stores posting confirmations and payment-run evidence for resolved invoices.",
+        "Lifecycle Status": "Retired after ERP patch",
+        "Department": "Finance Assurance",
+        "Process Owner": "Finance Controls Manager",
+        "Applications": "ERP Finance;Document Repository"
+      },
+      {
+        "metric_value": 4200.0,
+        "inventory_id": "INV-INVENTORY-R00003",
+        "sheet": "inventory",
+        "row_number": 3,
+        "Automation Name": "PO match exception worklist",
+        "Business Problem": "Builds a reviewer queue for invoices that fail two- or three-way match and attaches purchase order context.",
+        "Lifecycle Status": "Pilot / UAT",
+        "Department": "Finance",
+        "Process Owner": "",
+        "Applications": "ERP Finance;Procurement Portal"
+      },
+      {
+        "metric_value": 3200.0,
+        "inventory_id": "INV-INVENTORY-R00011",
+        "sheet": "inventory",
+        "row_number": 11,
+        "Automation Name": "New-hire packet completeness check",
+        "Business Problem": "Checks submitted onboarding forms for required fields before HR operations review.",
+        "Lifecycle Status": "Operational",
+        "Department": "Human Resources",
+        "Process Owner": "HR Onboarding Manager",
+        "Applications": "HR Case Portal;Document Repository"
+      },
+      {
+        "metric_value": 1400.0,
+        "inventory_id": "INV-INVENTORY-R00005",
+        "sheet": "inventory",
+        "row_number": 5,
+        "Automation Name": "Vendor onboarding request intake",
+        "Business Problem": "Captures supplier requests and checks tax, banking, and contact fields before procurement review.",
+        "Lifecycle Status": "Production",
+        "Department": "Procurement",
+        "Process Owner": "Supplier Enablement Lead",
+        "Applications": "Supplier Portal;Procurement Queue"
+      },
+      {
+        "metric_value": 1200.0,
+        "inventory_id": "INV-INVENTORY-R00009",
+        "sheet": "inventory",
+        "row_number": 9,
+        "Automation Name": "Privileged access exception narrative",
+        "Business Problem": "Prepares a reviewer worklist and evidence bundle for privileged-access exceptions.",
+        "Lifecycle Status": "UAT",
+        "Department": "IT/CIO Assurance",
+        "Process Owner": "Security Assurance Lead",
+        "Applications": "Identity Governance;Ticketing;Policy Library"
+      },
+      {
+        "metric_value": 900.0,
+        "inventory_id": "INV-INVENTORY-R00006",
+        "sheet": "inventory",
+        "row_number": 6,
+        "Automation Name": "Vendor risk evidence review",
+        "Business Problem": "Compares submitted insurance, tax, and policy documents against onboarding requirements and routes exceptions.",
+        "Lifecycle Status": "Approved backlog",
+        "Department": "Procurement Risk",
+        "Process Owner": "Supplier Risk Lead",
+        "Applications": "Supplier Portal;Document Repository;Policy Library"
+      },
+      {
+        "metric_value": 650.0,
+        "inventory_id": "INV-INVENTORY-R00012",
+        "sheet": "inventory",
+        "row_number": 12,
+        "Automation Name": "Benefits life-event intake",
+        "Business Problem": "Classifies incoming benefits change requests and routes incomplete submissions for follow-up.",
+        "Lifecycle Status": "Idea - requested",
+        "Department": "Human Resources",
+        "Process Owner": "",
+        "Applications": ""
+      },
+      {
+        "metric_value": 400.0,
+        "inventory_id": "INV-INVENTORY-R00013",
+        "sheet": "inventory",
+        "row_number": 13,
+        "Automation Name": "Termination checklist tracker",
+        "Business Problem": "Tracks completion of offboarding checklist steps across HR, facilities, and IT.",
+        "Lifecycle Status": "Cancelled",
+        "Department": "People Operations",
+        "Process Owner": "Employee Services Manager",
+        "Applications": "HRIS;Ticketing;Facilities Queue"
+      }
+    ],
+    "Average Handling Minutes": [
+      {
+        "metric_value": 35.0,
+        "inventory_id": "INV-INVENTORY-R00006",
+        "sheet": "inventory",
+        "row_number": 6,
+        "Automation Name": "Vendor risk evidence review",
+        "Business Problem": "Compares submitted insurance, tax, and policy documents against onboarding requirements and routes exceptions.",
+        "Lifecycle Status": "Approved backlog",
+        "Department": "Procurement Risk",
+        "Process Owner": "Supplier Risk Lead",
+        "Applications": "Supplier Portal;Document Repository;Policy Library"
+      },
+      {
+        "metric_value": 25.0,
+        "inventory_id": "INV-INVENTORY-R00009",
+        "sheet": "inventory",
+        "row_number": 9,
+        "Automation Name": "Privileged access exception narrative",
+        "Business Problem": "Prepares a reviewer worklist and evidence bundle for privileged-access exceptions.",
+        "Lifecycle Status": "UAT",
+        "Department": "IT/CIO Assurance",
+        "Process Owner": "Security Assurance Lead",
+        "Applications": "Identity Governance;Ticketing;Policy Library"
+      },
+      {
+        "metric_value": 18.0,
+        "inventory_id": "INV-INVENTORY-R00003",
+        "sheet": "inventory",
+        "row_number": 3,
+        "Automation Name": "PO match exception worklist",
+        "Business Problem": "Builds a reviewer queue for invoices that fail two- or three-way match and attaches purchase order context.",
+        "Lifecycle Status": "Pilot / UAT",
+        "Department": "Finance",
+        "Process Owner": "",
+        "Applications": "ERP Finance;Procurement Portal"
+      },
+      {
+        "metric_value": 15.0,
+        "inventory_id": "INV-INVENTORY-R00013",
+        "sheet": "inventory",
+        "row_number": 13,
+        "Automation Name": "Termination checklist tracker",
+        "Business Problem": "Tracks completion of offboarding checklist steps across HR, facilities, and IT.",
+        "Lifecycle Status": "Cancelled",
+        "Department": "People Operations",
+        "Process Owner": "Employee Services Manager",
+        "Applications": "HRIS;Ticketing;Facilities Queue"
+      },
+      {
+        "metric_value": 14.0,
+        "inventory_id": "INV-INVENTORY-R00012",
+        "sheet": "inventory",
+        "row_number": 12,
+        "Automation Name": "Benefits life-event intake",
+        "Business Problem": "Classifies incoming benefits change requests and routes incomplete submissions for follow-up.",
+        "Lifecycle Status": "Idea - requested",
+        "Department": "Human Resources",
+        "Process Owner": "",
+        "Applications": ""
+      },
+      {
+        "metric_value": 12.0,
+        "inventory_id": "INV-INVENTORY-R00005",
+        "sheet": "inventory",
+        "row_number": 5,
+        "Automation Name": "Vendor onboarding request intake",
+        "Business Problem": "Captures supplier requests and checks tax, banking, and contact fields before procurement review.",
+        "Lifecycle Status": "Production",
+        "Department": "Procurement",
+        "Process Owner": "Supplier Enablement Lead",
+        "Applications": "Supplier Portal;Procurement Queue"
+      },
+      {
+        "metric_value": 10.0,
+        "inventory_id": "INV-INVENTORY-R00011",
+        "sheet": "inventory",
+        "row_number": 11,
+        "Automation Name": "New-hire packet completeness check",
+        "Business Problem": "Checks submitted onboarding forms for required fields before HR operations review.",
+        "Lifecycle Status": "Operational",
+        "Department": "Human Resources",
+        "Process Owner": "HR Onboarding Manager",
+        "Applications": "HR Case Portal;Document Repository"
+      },
+      {
+        "metric_value": 9.0,
+        "inventory_id": "INV-INVENTORY-R00007",
+        "sheet": "inventory",
+        "row_number": 7,
+        "Automation Name": "Vendor master record creation",
+        "Business Problem": "Creates approved supplier master records after onboarding review.",
+        "Lifecycle Status": "Paused - ERP migration",
+        "Department": "Procurement Operations",
+        "Process Owner": "",
+        "Applications": "ERP Vendor Master"
+      },
+      {
+        "metric_value": 4.0,
+        "inventory_id": "INV-INVENTORY-R00002",
+        "sheet": "inventory",
+        "row_number": 2,
+        "Automation Name": "Supplier invoice mailbox intake",
+        "Business Problem": "Reads shared-mailbox invoices, checks required fields, and places complete submissions in the ERP intake queue.",
+        "Lifecycle Status": "Live - unattended",
+        "Department": "Finance",
+        "Process Owner": "Finance Operations Lead",
+        "Applications": "Shared Mailbox;ERP Finance;Document Repository"
+      },
+      {
+        "metric_value": 3.0,
+        "inventory_id": "INV-INVENTORY-R00008",
+        "sheet": "inventory",
+        "row_number": 8,
+        "Automation Name": "Quarterly access evidence pull",
+        "Business Problem": "Extracts account and entitlement evidence for quarterly privileged-access certification.",
+        "Lifecycle Status": "Deployed",
+        "Department": "IT/CIO Assurance",
+        "Process Owner": "Access Governance Manager",
+        "Applications": "Identity Governance;Directory;Evidence Repository"
+      }
+    ],
+    "Last Updated": [
+      {
+        "metric_value": 2026.0,
+        "inventory_id": "INV-INVENTORY-R00002",
+        "sheet": "inventory",
+        "row_number": 2,
+        "Automation Name": "Supplier invoice mailbox intake",
+        "Business Problem": "Reads shared-mailbox invoices, checks required fields, and places complete submissions in the ERP intake queue.",
+        "Lifecycle Status": "Live - unattended",
+        "Department": "Finance",
+        "Process Owner": "Finance Operations Lead",
+        "Applications": "Shared Mailbox;ERP Finance;Document Repository"
+      },
+      {
+        "metric_value": 2026.0,
+        "inventory_id": "INV-INVENTORY-R00003",
+        "sheet": "inventory",
+        "row_number": 3,
+        "Automation Name": "PO match exception worklist",
+        "Business Problem": "Builds a reviewer queue for invoices that fail two- or three-way match and attaches purchase order context.",
+        "Lifecycle Status": "Pilot / UAT",
+        "Department": "Finance",
+        "Process Owner": "",
+        "Applications": "ERP Finance;Procurement Portal"
+      },
+      {
+        "metric_value": 2026.0,
+        "inventory_id": "INV-INVENTORY-R00005",
+        "sheet": "inventory",
+        "row_number": 5,
+        "Automation Name": "Vendor onboarding request intake",
+        "Business Problem": "Captures supplier requests and checks tax, banking, and contact fields before procurement review.",
+        "Lifecycle Status": "Production",
+        "Department": "Procurement",
+        "Process Owner": "Supplier Enablement Lead",
+        "Applications": "Supplier Portal;Procurement Queue"
+      },
+      {
+        "metric_value": 2026.0,
+        "inventory_id": "INV-INVENTORY-R00006",
+        "sheet": "inventory",
+        "row_number": 6,
+        "Automation Name": "Vendor risk evidence review",
+        "Business Problem": "Compares submitted insurance, tax, and policy documents against onboarding requirements and routes exceptions.",
+        "Lifecycle Status": "Approved backlog",
+        "Department": "Procurement Risk",
+        "Process Owner": "Supplier Risk Lead",
+        "Applications": "Supplier Portal;Document Repository;Policy Library"
+      },
+      {
+        "metric_value": 2026.0,
+        "inventory_id": "INV-INVENTORY-R00007",
+        "sheet": "inventory",
+        "row_number": 7,
+        "Automation Name": "Vendor master record creation",
+        "Business Problem": "Creates approved supplier master records after onboarding review.",
+        "Lifecycle Status": "Paused - ERP migration",
+        "Department": "Procurement Operations",
+        "Process Owner": "",
+        "Applications": "ERP Vendor Master"
+      },
+      {
+        "metric_value": 2026.0,
+        "inventory_id": "INV-INVENTORY-R00008",
+        "sheet": "inventory",
+        "row_number": 8,
+        "Automation Name": "Quarterly access evidence pull",
+        "Business Problem": "Extracts account and entitlement evidence for quarterly privileged-access certification.",
+        "Lifecycle Status": "Deployed",
+        "Department": "IT/CIO Assurance",
+        "Process Owner": "Access Governance Manager",
+        "Applications": "Identity Governance;Directory;Evidence Repository"
+      },
+      {
+        "metric_value": 2026.0,
+        "inventory_id": "INV-INVENTORY-R00009",
+        "sheet": "inventory",
+        "row_number": 9,
+        "Automation Name": "Privileged access exception narrative",
+        "Business Problem": "Prepares a reviewer worklist and evidence bundle for privileged-access exceptions.",
+        "Lifecycle Status": "UAT",
+        "Department": "IT/CIO Assurance",
+        "Process Owner": "Security Assurance Lead",
+        "Applications": "Identity Governance;Ticketing;Policy Library"
+      },
+      {
+        "metric_value": 2026.0,
+        "inventory_id": "INV-INVENTORY-R00011",
+        "sheet": "inventory",
+        "row_number": 11,
+        "Automation Name": "New-hire packet completeness check",
+        "Business Problem": "Checks submitted onboarding forms for required fields before HR operations review.",
+        "Lifecycle Status": "Operational",
+        "Department": "Human Resources",
+        "Process Owner": "HR Onboarding Manager",
+        "Applications": "HR Case Portal;Document Repository"
+      },
+      {
+        "metric_value": 2026.0,
+        "inventory_id": "INV-INVENTORY-R00012",
+        "sheet": "inventory",
+        "row_number": 12,
+        "Automation Name": "Benefits life-event intake",
+        "Business Problem": "Classifies incoming benefits change requests and routes incomplete submissions for follow-up.",
+        "Lifecycle Status": "Idea - requested",
+        "Department": "Human Resources",
+        "Process Owner": "",
+        "Applications": ""
+      },
+      {
+        "metric_value": 2026.0,
+        "inventory_id": "INV-INVENTORY-R00013",
+        "sheet": "inventory",
+        "row_number": 13,
+        "Automation Name": "Termination checklist tracker",
+        "Business Problem": "Tracks completion of offboarding checklist steps across HR, facilities, and IT.",
+        "Lifecycle Status": "Cancelled",
+        "Department": "People Operations",
+        "Process Owner": "Employee Services Manager",
+        "Applications": "HRIS;Ticketing;Facilities Queue"
+      }
+    ]
+  },
+  "representative_rows": [
+    {
+      "inventory_id": "INV-INVENTORY-R00002",
+      "sheet": "inventory",
+      "row_number": 2,
+      "Automation Name": "Supplier invoice mailbox intake",
+      "Business Problem": "Reads shared-mailbox invoices, checks required fields, and places complete submissions in the ERP intake queue.",
+      "Lifecycle Status": "Live - unattended",
+      "Department": "Finance",
+      "Process Owner": "Finance Operations Lead",
+      "Applications": "Shared Mailbox;ERP Finance;Document Repository"
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00003",
+      "sheet": "inventory",
+      "row_number": 3,
+      "Automation Name": "PO match exception worklist",
+      "Business Problem": "Builds a reviewer queue for invoices that fail two- or three-way match and attaches purchase order context.",
+      "Lifecycle Status": "Pilot / UAT",
+      "Department": "Finance",
+      "Process Owner": "",
+      "Applications": "ERP Finance;Procurement Portal"
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00004",
+      "sheet": "inventory",
+      "row_number": 4,
+      "Automation Name": "Invoice posting confirmation archive",
+      "Business Problem": "Stores posting confirmations and payment-run evidence for resolved invoices.",
+      "Lifecycle Status": "Retired after ERP patch",
+      "Department": "Finance Assurance",
+      "Process Owner": "Finance Controls Manager",
+      "Applications": "ERP Finance;Document Repository"
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00005",
+      "sheet": "inventory",
+      "row_number": 5,
+      "Automation Name": "Vendor onboarding request intake",
+      "Business Problem": "Captures supplier requests and checks tax, banking, and contact fields before procurement review.",
+      "Lifecycle Status": "Production",
+      "Department": "Procurement",
+      "Process Owner": "Supplier Enablement Lead",
+      "Applications": "Supplier Portal;Procurement Queue"
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00006",
+      "sheet": "inventory",
+      "row_number": 6,
+      "Automation Name": "Vendor risk evidence review",
+      "Business Problem": "Compares submitted insurance, tax, and policy documents against onboarding requirements and routes exceptions.",
+      "Lifecycle Status": "Approved backlog",
+      "Department": "Procurement Risk",
+      "Process Owner": "Supplier Risk Lead",
+      "Applications": "Supplier Portal;Document Repository;Policy Library"
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00007",
+      "sheet": "inventory",
+      "row_number": 7,
+      "Automation Name": "Vendor master record creation",
+      "Business Problem": "Creates approved supplier master records after onboarding review.",
+      "Lifecycle Status": "Paused - ERP migration",
+      "Department": "Procurement Operations",
+      "Process Owner": "",
+      "Applications": "ERP Vendor Master"
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00008",
+      "sheet": "inventory",
+      "row_number": 8,
+      "Automation Name": "Quarterly access evidence pull",
+      "Business Problem": "Extracts account and entitlement evidence for quarterly privileged-access certification.",
+      "Lifecycle Status": "Deployed",
+      "Department": "IT/CIO Assurance",
+      "Process Owner": "Access Governance Manager",
+      "Applications": "Identity Governance;Directory;Evidence Repository"
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00009",
+      "sheet": "inventory",
+      "row_number": 9,
+      "Automation Name": "Privileged access exception narrative",
+      "Business Problem": "Prepares a reviewer worklist and evidence bundle for privileged-access exceptions.",
+      "Lifecycle Status": "UAT",
+      "Department": "IT/CIO Assurance",
+      "Process Owner": "Security Assurance Lead",
+      "Applications": "Identity Governance;Ticketing;Policy Library"
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00010",
+      "sheet": "inventory",
+      "row_number": 10,
+      "Automation Name": "Access evidence pull - legacy",
+      "Business Problem": "Legacy duplicate extract retained during dashboard migration; details are no longer maintained.",
+      "Lifecycle Status": "Duplicate of quarterly access evidence pull",
+      "Department": "IT Operations",
+      "Process Owner": "",
+      "Applications": "Directory;Legacy BI"
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00011",
+      "sheet": "inventory",
+      "row_number": 11,
+      "Automation Name": "New-hire packet completeness check",
+      "Business Problem": "Checks submitted onboarding forms for required fields before HR operations review.",
+      "Lifecycle Status": "Operational",
+      "Department": "Human Resources",
+      "Process Owner": "HR Onboarding Manager",
+      "Applications": "HR Case Portal;Document Repository"
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00012",
+      "sheet": "inventory",
+      "row_number": 12,
+      "Automation Name": "Benefits life-event intake",
+      "Business Problem": "Classifies incoming benefits change requests and routes incomplete submissions for follow-up.",
+      "Lifecycle Status": "Idea - requested",
+      "Department": "Human Resources",
+      "Process Owner": "",
+      "Applications": ""
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00013",
+      "sheet": "inventory",
+      "row_number": 13,
+      "Automation Name": "Termination checklist tracker",
+      "Business Problem": "Tracks completion of offboarding checklist steps across HR, facilities, and IT.",
+      "Lifecycle Status": "Cancelled",
+      "Department": "People Operations",
+      "Process Owner": "Employee Services Manager",
+      "Applications": "HRIS;Ticketing;Facilities Queue"
+    }
+  ],
+  "inventory_items": [
+    {
+      "inventory_id": "INV-INVENTORY-R00002",
+      "name": "Supplier invoice mailbox intake",
+      "description": "Reads shared-mailbox invoices, checks required fields, and places complete submissions in the ERP intake queue.",
+      "status": "production",
+      "raw_status": "Live - unattended",
+      "lifecycle_status": "deployed",
+      "department": "Finance",
+      "owner": "Finance Operations Lead",
+      "systems": "Shared Mailbox;ERP Finance;Document Repository",
+      "source_date": "2026-06-30",
+      "sheet": "inventory",
+      "row_number": 2,
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 18000.0
+        },
+        {
+          "name": "handling_time",
+          "value": 4.0
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00003",
+      "name": "PO match exception worklist",
+      "description": "Builds a reviewer queue for invoices that fail two- or three-way match and attaches purchase order context.",
+      "status": "pipeline",
+      "raw_status": "Pilot / UAT",
+      "lifecycle_status": "pipeline",
+      "department": "Finance",
+      "owner": "",
+      "systems": "ERP Finance;Procurement Portal",
+      "source_date": "2026-06-18",
+      "sheet": "inventory",
+      "row_number": 3,
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 4200.0
+        },
+        {
+          "name": "handling_time",
+          "value": 18.0
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00004",
+      "name": "Invoice posting confirmation archive",
+      "description": "Stores posting confirmations and payment-run evidence for resolved invoices.",
+      "status": "excluded",
+      "raw_status": "Retired after ERP patch",
+      "lifecycle_status": "retired",
+      "department": "Finance Assurance",
+      "owner": "Finance Controls Manager",
+      "systems": "ERP Finance;Document Repository",
+      "source_date": "2025-12-19",
+      "sheet": "inventory",
+      "row_number": 4,
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 18000.0
+        },
+        {
+          "name": "handling_time",
+          "value": 2.0
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00005",
+      "name": "Vendor onboarding request intake",
+      "description": "Captures supplier requests and checks tax, banking, and contact fields before procurement review.",
+      "status": "production",
+      "raw_status": "Production",
+      "lifecycle_status": "deployed",
+      "department": "Procurement",
+      "owner": "Supplier Enablement Lead",
+      "systems": "Supplier Portal;Procurement Queue",
+      "source_date": "2026-06-25",
+      "sheet": "inventory",
+      "row_number": 5,
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 1400.0
+        },
+        {
+          "name": "handling_time",
+          "value": 12.0
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00006",
+      "name": "Vendor risk evidence review",
+      "description": "Compares submitted insurance, tax, and policy documents against onboarding requirements and routes exceptions.",
+      "status": "pipeline",
+      "raw_status": "Approved backlog",
+      "lifecycle_status": "pipeline",
+      "department": "Procurement Risk",
+      "owner": "Supplier Risk Lead",
+      "systems": "Supplier Portal;Document Repository;Policy Library",
+      "source_date": "2026-06-20",
+      "sheet": "inventory",
+      "row_number": 6,
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 900.0
+        },
+        {
+          "name": "handling_time",
+          "value": 35.0
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00007",
+      "name": "Vendor master record creation",
+      "description": "Creates approved supplier master records after onboarding review.",
+      "status": "excluded",
+      "raw_status": "Paused - ERP migration",
+      "lifecycle_status": "paused",
+      "department": "Procurement Operations",
+      "owner": "",
+      "systems": "ERP Vendor Master",
+      "source_date": "2026-04-11",
+      "sheet": "inventory",
+      "row_number": 7,
+      "metrics": [
+        {
+          "name": "handling_time",
+          "value": 9.0
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00008",
+      "name": "Quarterly access evidence pull",
+      "description": "Extracts account and entitlement evidence for quarterly privileged-access certification.",
+      "status": "production",
+      "raw_status": "Deployed",
+      "lifecycle_status": "deployed",
+      "department": "IT/CIO Assurance",
+      "owner": "Access Governance Manager",
+      "systems": "Identity Governance;Directory;Evidence Repository",
+      "source_date": "2026-07-02",
+      "sheet": "inventory",
+      "row_number": 8,
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 26400.0
+        },
+        {
+          "name": "handling_time",
+          "value": 3.0
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00009",
+      "name": "Privileged access exception narrative",
+      "description": "Prepares a reviewer worklist and evidence bundle for privileged-access exceptions.",
+      "status": "pipeline",
+      "raw_status": "UAT",
+      "lifecycle_status": "pipeline",
+      "department": "IT/CIO Assurance",
+      "owner": "Security Assurance Lead",
+      "systems": "Identity Governance;Ticketing;Policy Library",
+      "source_date": "2026-06-28",
+      "sheet": "inventory",
+      "row_number": 9,
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 1200.0
+        },
+        {
+          "name": "handling_time",
+          "value": 25.0
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00010",
+      "name": "Access evidence pull - legacy",
+      "description": "Legacy duplicate extract retained during dashboard migration; details are no longer maintained.",
+      "status": "excluded",
+      "raw_status": "Duplicate of quarterly access evidence pull",
+      "lifecycle_status": "duplicate",
+      "department": "IT Operations",
+      "owner": "",
+      "systems": "Directory;Legacy BI",
+      "source_date": "2025-11-07",
+      "sheet": "inventory",
+      "row_number": 10,
+      "metrics": []
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00011",
+      "name": "New-hire packet completeness check",
+      "description": "Checks submitted onboarding forms for required fields before HR operations review.",
+      "status": "production",
+      "raw_status": "Operational",
+      "lifecycle_status": "deployed",
+      "department": "Human Resources",
+      "owner": "HR Onboarding Manager",
+      "systems": "HR Case Portal;Document Repository",
+      "source_date": "2026-06-14",
+      "sheet": "inventory",
+      "row_number": 11,
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 3200.0
+        },
+        {
+          "name": "handling_time",
+          "value": 10.0
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00012",
+      "name": "Benefits life-event intake",
+      "description": "Classifies incoming benefits change requests and routes incomplete submissions for follow-up.",
+      "status": "idea",
+      "raw_status": "Idea - requested",
+      "lifecycle_status": "idea",
+      "department": "Human Resources",
+      "owner": "",
+      "systems": "",
+      "source_date": "2026-05-09",
+      "sheet": "inventory",
+      "row_number": 12,
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 650.0
+        },
+        {
+          "name": "handling_time",
+          "value": 14.0
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00013",
+      "name": "Termination checklist tracker",
+      "description": "Tracks completion of offboarding checklist steps across HR, facilities, and IT.",
+      "status": "excluded",
+      "raw_status": "Cancelled",
+      "lifecycle_status": "cancelled",
+      "department": "People Operations",
+      "owner": "Employee Services Manager",
+      "systems": "HRIS;Ticketing;Facilities Queue",
+      "source_date": "2026-02-27",
+      "sheet": "inventory",
+      "row_number": 13,
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 400.0
+        },
+        {
+          "name": "handling_time",
+          "value": 15.0
+        }
+      ]
+    }
+  ]
+}

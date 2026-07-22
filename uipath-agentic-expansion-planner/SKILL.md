@@ -1,214 +1,258 @@
 ---
 name: uipath-agentic-expansion-planner
-description: analyze detailed customer automation or use-case inventories to produce evidence-backed uipath act 2 expansion plans, agentic automation portfolios, top 5 high-impact recommendations, top 3 low-friction poc candidates, and a final on-brand verified executive .docx Word brief every run. use when the user provides or references a customer inventory spreadsheet, asks for agentic expansion ideas, asks to prioritize uipath opportunities, or needs a customer-ready proposal grounded in inventory data, public strategy evidence, deployment-aware validation, UiPath brand-aware executive writing, and Word-ready packaging.
+description: analyze customer automation or use-case inventories and produce a concise, evidence-backed UiPath automation portfolio assessment. use when a CSM, TAM, AE, or customer needs a clear current automation footprint, analyst-mapped end-to-end process groups with explicit customer-confirmation needs, and up to three actionable Act 2, Maestro, agentic, GenAI, robot, and human-review recommendations in a branded one-to-two-page DOCX. preserve detailed evidence and scoring as internal artifacts, require independent semantic review for customer-ready output, and never invent recommendations to fill a quota.
 ---
 
 # UiPath Agentic Expansion Planner
 
 ## Purpose
 
-Transform a detailed customer automation/use-case inventory into a defensible UiPath agentic expansion portfolio and a polished, on-brand, verified executive `.docx` briefing as the final deliverable every time. Anchor recommendations in two evidence sources: the customer's actual inventory and current public strategy evidence. Do not produce generic AI brainstorming.
+Turn one customer automation inventory into two layers:
 
-## Required inputs
+1. A one-to-two-page customer-ready automation portfolio assessment.
+2. An internal evidence package containing the profile, ledger, scored portfolio, process map, semantic review, and validation receipt.
 
-Use `references/input_contract.md` to assess input quality.
+The customer document is simple but specific. It shows the source reviewed, current footprint, and up to three end-to-end process recommendations. It must not read like generic AI brainstorming or expose internal evidence IDs and scoring mechanics.
 
-Minimum viable inputs:
+## Required Inputs
 
-1. Customer name and sector/industry.
-2. Detailed use-case or automation inventory as `.xlsx`, `.xlsm`, `.csv`, `.tsv`, or pasted table.
-3. Target audience, depth, or account objective. The final output format is always a rendered `.docx`; requested chat, Markdown, slide, spreadsheet, or table formats are supplemental unless the user explicitly prohibits file output.
+Minimum inputs:
 
-Full-quality output requires:
+- Customer name and sector.
+- One primary `.csv`, `.tsv`, `.xlsx`, or `.xlsm` inventory. Multi-sheet workbooks are supported; multi-file consolidation is not.
+- Target audience and account objective.
 
-- Use-case name, description, status, department/owner, and production/pipeline indicators.
-- Systems/applications, volume, handling time, hours saved, benefit, value, ROI, priority, complexity, or similar fields where available.
-- Deployment context: cloud/on-prem/hybrid/FedRAMP/public sector cloud, security constraints, GenAI policy, human approval needs, integration constraints, and governance model.
-- UiPath footprint: known products, entitlements, CoE maturity, and existing capability usage.
-- Permission to use public research, or user-provided strategy sources.
-- Target audience, output depth, and whether the `.docx` brief is internal planning or customer-ready.
+Full-quality inputs:
 
-The auditable machine path also requires versioned `evidence_ledger.json` and `portfolio.json`
-artifacts. Use `references/data_contracts.md`. Unversioned JSON and unsupported versions fail
-closed; do not treat legacy JSON or Markdown-only validation as evidence certification.
+- Automation name, description, lifecycle status, department, owner, systems, and available volume/value fields.
+- Deployment model, data classification, GenAI policy, human-approval rules, and integration constraints.
+- Known UiPath footprint and entitlements, using `unknown` when unconfirmed.
+- Current authoritative public strategy evidence, customer-confirmed account context, or permission to research.
 
-If the inventory or customer name is missing, ask for it before full analysis. If deployment, value, or entitlement details are missing, proceed only with explicit caveats.
+Read `references/input_contract.md` before proceeding. If the inventory or customer identity is missing, stop and ask for it. If value, deployment, or entitlement details are missing, continue only with explicit validation requirements.
 
-## Execution workflow
+## Standard Workflow
 
-Follow this sequence:
+1. Profile the primary inventory with `scripts/inventory_profiler.py`.
+2. Read both generated profile files and correct ambiguous field mappings.
+3. Build schema `1.0` `evidence_ledger.json` and deterministically scored `portfolio.json`.
+4. Create schema `1.0` `process_map.json`, mapping every inventory ID once and recording observed evidence, comparative rationale, and validation needs for every selected or deferred process.
+5. Require an account analyst to confirm the mapping as analysis. Keep customer confirmation separate and explicit.
+6. Use a human or independent agent to create schema `1.0` `semantic_review.json` without giving the reviewer an expected answer.
+7. Run the customer-assessment builder. It validates contracts, review freshness, plain language, branding, and the rendered two-page limit.
+8. Deliver the DOCX plus the internal evidence package. Do not represent an exploratory draft as customer-ready.
 
-1. Intake gate: confirm minimum viable inputs and note missing full-quality inputs.
-2. Inventory profiling: run `scripts/inventory_profiler.py` for spreadsheet/csv inventories.
-3. Inventory normalization: classify production, pipeline, idea, unknown, and excluded rows; preserve generated `INV-*` IDs.
-4. Public strategy ledger: research current customer strategy using authoritative sources unless the user says not to browse; assign dated `SRC-*` IDs.
-5. Assumption ledger: record every planning assumption with an `ASM-*` ID and validation status.
-6. Strategy-to-inventory crosswalk: map public priorities to inventory clusters by ID.
-7. Candidate generation: create specific `OPP-*` opportunities from strong crosswalks.
-8. Agentic suitability test: reject deterministic, low-value, or unsupported candidates.
-9. Deterministic scoring and validation: run `scripts/score_portfolio.py`, then `scripts/validate_portfolio.py`.
-10. Value framing: use supported deterministic formulas or qualitative sizing; never invent arithmetic.
-11. Capability and deployment validation: map likely capability fit without entitlement overclaims; assign each applicable deployment constraint to at least one active opportunity so the portfolio covers every constraint without repeating irrelevant controls.
-12. Executive packaging: require accountable pilot owners, render Markdown with visible score rationale and deterministic tie handling, cross-check it with `scripts/validate_executive_brief.py` plus the JSON artifacts, then preserve the DOCX render and brand-verification flow.
+No step performs live writes to UiPath, SharePoint, Salesforce, Outlook, or another external system.
 
-## Inventory profiling script
+## Inventory Profile
 
-For uploaded inventory files, run:
+Run:
 
 ```bash
-python scripts/inventory_profiler.py --input work/planner/inventory.xlsx --outdir work/planner/profile
+python3 scripts/inventory_profiler.py \
+  --input work/planner/inventory.xlsx \
+  --outdir work/planner/profile
 ```
 
-For a specific worksheet:
+Profile `1.1` adds:
 
-```bash
-python scripts/inventory_profiler.py --input work/planner/inventory.xlsx --sheet "Sheet Name" --outdir work/planner/profile
-```
+- Safe source basename and source SHA-256.
+- Normalized per-record source dates plus earliest/latest, valid, invalid, and nonblank date counts. When valid source dates exist, the ledger `as_of_date` must equal the latest one.
+- Sheet and physical row counts, plus per-sheet field mappings for mixed header aliases.
+- Field coverage.
+- Raw status plus detailed lifecycle categories: deployed, pipeline, paused, retired, cancelled, rejected, duplicate, idea, unknown, and other.
+- Stable `INV-*` IDs and normalized metrics.
 
-Read both outputs before recommending:
+Profile `1.0` remains valid for the legacy detailed renderer. Customer-ready builds require `1.1`.
 
-- `inventory_profile.md`: analyst-readable summary.
-- `inventory_profile.json`: structured detected columns, data quality, status counts, numeric fields, and top metric rows.
+## Evidence And Portfolio
 
-Profile schema `1.0` also emits `inventory_items` with stable IDs in the form
-`INV-<SHEET>-R<ROW>`, canonical profile fields, and detected metric values. Shorthand quantities
-such as `~24k` are normalized numerically. Inserting rows or renaming a sheet changes IDs;
-regenerate the profile and deliberately migrate ledger references instead of silently reusing
-stale IDs. Strict validation reconciles name, description, status, department, owner, systems,
-source row, and detected metrics against the ledger.
-
-Use the script output as a starting point, not final truth. Validate suspicious mappings manually when column names are ambiguous.
-
-## Evidence rules
-
-- Treat inventory rows as operational signals, not audited facts.
-- Treat production/live rows as strongest evidence.
-- Exclude retired, cancelled, rejected, duplicate, archived, and decommissioned rows from primary value calculations unless the user asks for historical analysis.
-- Do not treat idea backlog as production demand.
-- Use public sources for strategy alignment and cite public facts.
-- Prioritize official strategic plans, annual reports, budgets, performance reports, regulatory filings, official dashboards, and official press releases.
-- Use secondary sources only as support.
-- Separate facts, assumptions, and inferences.
-- Cite inventory facts with `INV-*`, public facts with `SRC-*`, and planning assumptions with `ASM-*`.
-- Do not use excluded inventory IDs as recommendation evidence.
-- Record publication and access dates for every public source.
-- Mark synthetic sources as non-official. Official sources require HTTPS and cannot use reserved,
-  local, private, or non-resolving placeholder hosts.
-- A confirmed entitlement claim requires matching confirmed ledger evidence; otherwise say `likely fit`.
-
-## Versioned portfolio pipeline
-
-Use schema version `1.0` and score model `1.0`:
+Use `references/data_contracts.md` and `references/scoring_model.md`.
 
 ```bash
 python3 scripts/score_portfolio.py \
-  --evidence-ledger evidence_ledger.json \
-  --portfolio portfolio_draft.json \
-  --output portfolio.json
+  --evidence-ledger work/planner/evidence_ledger.json \
+  --portfolio work/planner/portfolio_draft.json \
+  --output work/planner/portfolio.json
 
 python3 scripts/validate_portfolio.py \
-  --evidence-ledger evidence_ledger.json \
-  --portfolio portfolio.json \
-  --inventory-profile inventory_profile.json
+  --evidence-ledger work/planner/evidence_ledger.json \
+  --portfolio work/planner/portfolio.json \
+  --inventory-profile work/planner/profile/inventory_profile.json
+```
 
+Keep inventory facts, public sources, and assumptions separate as `INV-*`, `SRC-*`, and `ASM-*`. Excluded inventory cannot support an active recommendation. Value math must use supported formulas and referenced inputs. Capability fit is not an entitlement claim.
+
+A dated, hash-bound customer-confirmed account source may resolve a specific inventory omission such
+as a join field, outcome owner, or available historical sample. Cite that source, retain the
+inventory omission in the narrative, and do not extend the confirmation to deployment,
+entitlement, baseline, value, funding, or approval claims that the source does not establish.
+
+## Process Map
+
+The process map is a semantic artifact, not keyword clustering. For each process, define:
+
+- Business function.
+- Start condition, end condition, and business outcome.
+- Exact inventory membership.
+- Membership rationale.
+- Cross-record linkage as `confirmed`, `validation_required`, or `not_applicable`, with the exact pre-launch validation step. Never infer shared cases from common systems alone.
+- Selection status, rank when selected or deferred, strategy alignment, and a comparative plain-language rationale.
+- `observed_evidence`: source-supported facts only. Never place an assumption, proposed design, or validation task here.
+- `validation_needed`: the customer evidence or decision still required.
+
+`confirmed` linkage requires either the inventory join field or a dated, hash-bound customer source
+that names the join field and covered records. When the second path is used, state that the inventory
+omits the field and require an analyst sample check before the workshop.
+
+Define one prioritization method using at least three supported criteria. Compare strategy alignment, available workload signals, the existing automation foundation, process coherence, delivery risk, and evidence quality as applicable. Selected ranks must match the deterministic portfolio order. Every selected rationale must explain why that process outranks alternatives. Every deferral must explain why it is lower and what would trigger reconsideration. A stated strategy priority or material workload signal must never disappear silently.
+
+The customer layer states one bounded workshop ask: validate prerequisites and historical pilots,
+set final thresholds from customer baselines and control tolerances, and make no deployment or
+investment approval. Name material deferred process groups and why they remain deferred.
+
+The customer comparison must account for every process and every unmapped record. Do not label a proposed label set, historical sample, approval-history field, checklist, or threshold as evidence unless the source actually contains it.
+
+Use `strategy_alignment: confirmed` only for customer-confirmed or authoritative strategy evidence. A supplied account note or non-official planning source is `validation_required`; the customer document must call it a planning priority to confirm.
+
+For each selected recommendation, define:
+
+- Existing automation foundation.
+- `stitch_existing`, `extend_single`, or `net_new` pattern.
+- Ordered stages labeled `current_state`, `pilot`, or `future_state`.
+- A `measurement_plan` with numeric sample selection, reviewer-owned ground truth, a named ground-truth owner, at least two numerator/denominator formulas with comparable units for ratio metrics, review cadence, measurement owner, and a rerun/no-proceed rule for mixed results.
+- An explicit join or linkage test for multi-automation processes and an observable pilot output.
+- Separate applicability and plain-language roles for Maestro, agentic support, GenAI, robots, and human review.
+- One customer decision owner, one UiPath account-team owner, data/security approval ownership, product/deployment validation ownership, a fallback when prerequisites fail, a deliverable, preparation target within 30 days, and absolute target and decision dates in the rendered assessment.
+- A bounded, stop-first pilot gate using `Stop if ... . Go if ... . Revise if ... .` The go outcome needs a quantitative sample or quality measure, the revise outcome must name an intermediate range, and the stop outcome must cover the remaining quantitative failure range.
+
+Future orchestration stages are proposed design, not observed current state. A shadow pilot cannot contain a system-changing action. Any later system-changing robot or system-of-record stage is `future_state`, follows human review, requires separate authorization, and says that it records only a human-confirmed or human-approved result. Thresholds are workshop proposals until the named customer owner confirms the baseline, measurement protocol, error cost, and final thresholds.
+
+A historical read-only shadow may measure agreement, coverage, precision, recall, and source-data baselines. It cannot claim actual live cycle-time reduction; reserve that outcome for a separately authorized live test.
+
+Validate it:
+
+```bash
+python3 scripts/validate_process_map.py \
+  --inventory-profile work/planner/profile/inventory_profile.json \
+  --portfolio work/planner/portfolio.json \
+  --process-map work/planner/process_map.json
+```
+
+Customer-ready output requires `analyst_confirmed`. Suggestions may remain exploratory.
+
+## Semantic Review
+
+The semantic review binds exact SHA-256 hashes for the profile, ledger, portfolio, and process map. Review every selected recommendation for:
+
+- Inventory support.
+- Strategy support.
+- Process coherence.
+- Genuine agentic need.
+- Capability fit.
+- Value logic.
+- Pilot realism.
+- Customer language.
+
+Readiness levels:
+
+- `exploratory`: unconfirmed map, single-agent fallback, failed critical claim, blocking finding, or incomplete evidence.
+- `workshop_ready`: analyst-confirmed map, independent or human review, concrete existing foundation, and all critical claims passed. Capability or value details may remain clearly marked for validation.
+- `pilot_authorizable`: every review passed, assumptions validated, deployment compatible, capability claims supported, and pilot controls complete.
+
+A review must not predate any bound artifact and must be no more than 30 days old.
+
+`agentic_need: pass` means the evidence supports the declared `applies` or
+`not_needed` decision. It does not mean an agent must be present. Marking a
+deterministic process `not_needed` is the correct outcome when judgment,
+ambiguity, or adaptive reasoning is not established.
+
+```bash
+python3 scripts/validate_semantic_review.py \
+  --inventory-profile work/planner/profile/inventory_profile.json \
+  --evidence-ledger work/planner/evidence_ledger.json \
+  --portfolio work/planner/portfolio.json \
+  --process-map work/planner/process_map.json \
+  --semantic-review work/planner/semantic_review.json \
+  --required-readiness workshop_ready
+```
+
+## Customer-Ready Build
+
+Use the standard entrypoint:
+
+```bash
+python3 scripts/build_customer_assessment.py \
+  --inventory-profile work/planner/profile/inventory_profile.json \
+  --evidence-ledger work/planner/evidence_ledger.json \
+  --portfolio work/planner/portfolio.json \
+  --process-map work/planner/process_map.json \
+  --semantic-review work/planner/semantic_review.json \
+  --supporting-source work/planner/strategy-context.md \
+  --output outputs/customer-automation-portfolio-assessment.docx
+```
+
+The builder requires `python-docx`, `pypdf`, and `soffice`. Repeat `--supporting-source` for local strategy or account-context files that must be hash-bound; only safe basenames and SHA-256 values enter the receipt. The builder publishes the DOCX, its Markdown source, the exact PDF used for page verification, and a validation receipt. It fails unless the final DOCX:
+
+- Is in an `outputs/` directory.
+- Contains exactly `Source File Summary`, `Current Automation Footprint`, and `Top 3 Recommendations` sections.
+- Contains one to three recommendations in deterministic portfolio order.
+- Is no more than 900 words and two rendered pages.
+- Uses UiPath-derived brand colors and Arial.
+- Contains no internal IDs, score narration, schema language, hype, or oversized prose.
+
+The builder discovers LibreOffice on `PATH` and in common install locations; use `--soffice` for a custom executable. `--draft-without-page-check` is allowed only for an internal exploratory artifact. It adds a draft title and cannot produce customer-ready readiness. Output paths must not collide with any input or supporting source, even with `--force`.
+
+## Customer Document Content
+
+The three sections must communicate:
+
+1. Source basename, tables or sheets, records, available fields, observed field-coverage gaps, and the three most material limitations or unconfirmed planning assumptions.
+2. Exact lifecycle mix, named analyst-mapped process groups with automation counts and a customer-confirmation label, department/system concentrations, and the unmapped count.
+3. A rank comparison, bounded workshop ask, and material deferrals followed by up to three scan-oriented recommendations. Each recommendation includes business function plus explicit Start/End/Outcome boundaries, separate source-reported workload signals when units or linkage are unconfirmed, automation count and named foundation with raw lifecycle status, a read-only pilot input and selection method, ground truth plus its accountable owner, linkage method, observable output, metric formulas with auditable units, review cadence and measurement owner, qualified capability roles and validation needs, no-write controls, a measurable stop/proceed/adjust gate with one decision owner, and one dated next action with fallback.
+
+The recommendation preamble also assigns shared account artifacts and timing: the CSM delivers the
+agenda and access by each target, the TAM delivers a product/tenant control note before each charter,
+and the AE delivers a sponsor/funding decision after evidence. Failed prerequisites defer.
+It also separates data correlation from product roles: frozen exports join on confirmed identifiers,
+Maestro sequences handoffs, Robots prepare deterministic outputs, humans review, unmatched records
+pause and rerun, and the final record system remains a validation item.
+
+When capability, product availability, deployment, or value evidence is incomplete, add a plain validation statement in the recommendation controls. Do not hide that limitation in the internal package.
+
+Use customer language. Lead with the business process and outcome; name products only to explain their role. Never add weak recommendations to reach three.
+
+## Internal Detailed Mode
+
+The existing detailed path remains available for analysts:
+
+```bash
 python3 scripts/render_portfolio_markdown.py \
-  --evidence-ledger evidence_ledger.json \
-  --portfolio portfolio.json \
-  --inventory-profile inventory_profile.json \
-  --output brief.md
+  --evidence-ledger work/planner/evidence_ledger.json \
+  --portfolio work/planner/portfolio.json \
+  --inventory-profile work/planner/profile/inventory_profile.json \
+  --output work/planner/detailed-brief.md
 ```
 
-The scorer refuses in-place overwrite. Validation rejects unknown fields, missing versions,
-dangling evidence, excluded evidence, stale scores/ranks, unsupported value math, missing
-deployment controls, rejected assumptions, and entitlement overclaims. Follow the migration
-steps in `references/data_contracts.md`; do not weaken a failure into a warning.
+This detailed Markdown is supporting analysis. It is not the default customer deliverable.
 
-Active pilots require an accountable person or role; `TBD`, `unassigned`, and similar placeholders
-fail validation. Narrative fields are bounded for executive use, the renderer refuses briefs above
-3,500 words by default, and the prioritized table exposes scoring strengths and limiting criteria.
+## Final Response
 
-## Recommendation rules
+Link the final DOCX and its verified PDF, then state:
 
-A recommendation must include:
+- Readiness level.
+- Page count.
+- Recommendation count.
+- Whether brand, semantic, and layout verification passed.
 
-- Specific use-case name.
-- Inventory evidence.
-- Public strategy alignment.
-- The customer "why now" and the decision ask or next step.
-- Agentic enhancement beyond baseline RPA.
-- UiPath capability fit stated as likely fit, not entitlement.
-- Value levers.
-- Feasibility notes.
-- Governance notes.
-- Validation questions.
+If any required check was unavailable or failed, label the artifact exploratory and do not call it customer-ready.
 
-Reject or downgrade recommendations that are generic, unsupported by inventory, unsupported by strategy, deterministic with no agentic need, high-risk without human review, or dependent on invented ROI.
+## References
 
-Before rendering, apply `references/brand_and_brief_quality.md`. Reject vendor-brochure language, hype terms, or product-first summaries that do not start from the customer's need.
-
-## Default outputs
-
-Unless the user asks for something else, produce:
-
-1. Versioned `evidence_ledger.json` and deterministically scored `portfolio.json`.
-2. Executive summary.
-3. Source and assumption note.
-4. Current automation footprint.
-5. Public strategy alignment summary.
-6. Prioritized portfolio table.
-7. Top 5 high-impact agentic recommendations.
-8. Top 3 low-friction POC candidates.
-9. Value framing and assumptions.
-10. Deployment and governance considerations.
-11. Facts, assumptions, and validation questions.
-12. Workshop prep.
-13. Recommended next steps.
-14. Appendix: source ledger.
-
-The final artifact is always a structurally verified `.docx` Word executive brief in `outputs/` when that directory exists. If the user asks for chat, Markdown, slide, spreadsheet, proposal-card, or account-plan content, provide it only as a supporting artifact or excerpt; do not treat it as the final output unless `.docx` creation is impossible or the user explicitly prohibits file output.
-
-## Word executive briefing output
-
-For every run:
-
-1. Write a concise Markdown briefing first. Do not render raw research notes directly to Word.
-2. Follow `references/brand_and_brief_quality.md` and `references/executive_docx.md` for executive voice, default AZ DES-style executive portfolio structure, table patterns, proposal-card density, workshop prep, brand-safe styling, and verification. If the analysis draft is long, create a separate concise Word-source Markdown rather than rendering raw research notes.
-3. Validate the Markdown quality gate with:
-
-```bash
-python3 scripts/validate_executive_brief.py <brief.md> \
-  --evidence-ledger <evidence_ledger.json> \
-  --portfolio <portfolio.json> \
-  --inventory-profile <inventory_profile.json>
-```
-
-The JSON arguments are required for evidence-certified output. Calling the validator without
-them performs legacy structural checks only and must not be represented as claim certification.
-
-4. Render the Markdown with:
-
-```bash
-python scripts/render_executive_docx.py <brief.md> <brief.docx> --portrait
-```
-
-5. Save the final `.docx` under the user-facing `outputs/` directory when that directory exists.
-6. Verify the resulting document with structural and brand-style checks:
-
-```bash
-python scripts/verify_executive_docx.py <brief.docx> --require-output-dir --require-brand-style
-```
-
-7. If the environment has the Documents skill renderer available, render the `.docx` to page images and visually inspect them before delivery. If visual rendering is unavailable, state that only structural verification was completed.
-8. Final chat responses must link to the generated `.docx` and summarize the verification result. Do not stop with Markdown, CSV, slide outline, or chat text as the final deliverable.
-
-The default Word brief must be executive-skimmable and GTM/workshop-ready. It should contain the executive thesis, current footprint, strategy alignment, ranked portfolio, top 5 high-impact recommendations, top 3 low-friction POC candidates, value framing, deployment/governance considerations, facts/assumptions/validation questions, workshop prep, recommended next steps, and a concise appendix source ledger. Use a shorter compact brief only when the user explicitly asks for a short executive summary, minimal proposal-card output, or a very concise table-first artifact. It should not include raw research notes or every row-level detail.
-
-## Reference loading guide
-
-- Use `references/input_contract.md` when assessing whether inputs are sufficient.
-- Use `references/methodology.md` for the complete workflow and evidence gates.
-- Use `references/scoring_model.md` for ranking, weighting, confidence, and rejection criteria.
-- Use `references/data_contracts.md` for v1 evidence, portfolio, migration, and value-formula rules.
-- Use `references/output_templates.md` for executive briefs, proposal cards, POC cards, source ledger, and workshop agenda.
-- Use `references/brand_and_brief_quality.md` before writing the final Markdown and before rendering any Word brief.
-- Use `references/executive_docx.md` when the output is a Word executive brief or `.docx`.
+- `references/input_contract.md`: input sufficiency.
+- `references/data_contracts.md`: versioned artifacts and migration.
+- `references/methodology.md`: evidence-first analysis.
+- `references/scoring_model.md`: deterministic ranking.
+- `references/output_templates.md`: customer and internal output patterns.
+- `references/brand_and_brief_quality.md`: voice and visual rules.
+- `references/executive_docx.md`: DOCX rendering and inspection.

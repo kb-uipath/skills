@@ -22,6 +22,11 @@ jobs:
           node-version: "22"
       - name: Install Python test dependencies
         run: python -m pip install -r requirements-dev.txt
+      - name: Install required DOCX page renderer
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes libreoffice-writer
+          soffice --version
       - name: Run validation gate
         run: make validate
       - name: Run explicit secret scan

@@ -190,6 +190,44 @@ Report sensitive findings through a private advisory.
     def test_valid_minimal_repo_passes(self) -> None:
         self.assertEqual([], self.run_validator())
 
+    def test_public_doc_accepts_any_iso_last_verified_date(self) -> None:
+        def mutate(root: Path) -> None:
+            path = root / "docs" / "repo-hardening-sprint.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "Last verified: 2026-07-10", "Last verified: 2027-01-02"
+                ),
+                encoding="utf-8",
+            )
+
+        self.assertEqual([], self.run_validator(mutate))
+
+    def test_root_doc_accepts_any_valid_iso_last_verified_date(self) -> None:
+        def mutate(root: Path) -> None:
+            path = root / "docs" / "production-readiness-evaluation.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "Last verified: 2026-07-10", "Last verified: 2027-01-02"
+                ),
+                encoding="utf-8",
+            )
+
+        self.assertEqual([], self.run_validator(mutate))
+
+    def test_root_doc_rejects_invalid_last_verified_date(self) -> None:
+        def mutate(root: Path) -> None:
+            path = root / "docs" / "production-readiness-evaluation.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    "Last verified: 2026-07-10", "Last verified: 2027-99-02"
+                ),
+                encoding="utf-8",
+            )
+
+        self.assert_error_contains(
+            self.run_validator(mutate), "missing valid ISO last-verified date"
+        )
+
     def test_rejects_invalid_yaml(self) -> None:
         def mutate(root: Path) -> None:
             self.write(root, "repo-hardening-sprint/agents/openai.yaml", "interface: [broken\n")

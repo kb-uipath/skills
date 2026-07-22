@@ -1,0 +1,275 @@
+{
+  "schema_version": "1.0",
+  "review_id": "REVIEW-NORTHSTAR-MULTI-DOMAIN-20260721-CODEX",
+  "portfolio_id": "PORTFOLIO-NORTHSTAR-MULTI-DOMAIN-001",
+  "process_map_id": "PROCESS-MAP-NORTHSTAR-MULTI-DOMAIN-001",
+  "reviewed_at": "2026-07-21",
+  "reviewer": {
+    "mode": "independent_agent",
+    "id": "OpenAI Codex (GPT-5)"
+  },
+  "artifact_hashes": {
+    "inventory_profile_sha256": "7d4abf51428fa309dccb0bf21e1c144f65a45f7f0ad5cf66c888bee141fe1463",
+    "evidence_ledger_sha256": "04d4f6af0c94c9ee132796276e493ac5badb8836107d742c82340630bbc6192c",
+    "portfolio_sha256": "470a1dfc67f02ff62e7eef36dba89d3667d637f738f7d8fd2f8e64fec573cb40",
+    "process_map_sha256": "45b5a462afc91d23a7827664df59bd9a1d274fb5faa06dfd3bce2587492bc9a4"
+  },
+  "opportunity_reviews": [
+    {
+      "opportunity_id": "OPP-ACCESS-ASSURANCE",
+      "claim_reviews": [
+        {
+          "claim_type": "inventory_support",
+          "judgment": "pass",
+          "evidence_refs": [
+            "INV-INVENTORY-R00008",
+            "INV-INVENTORY-R00009"
+          ],
+          "rationale": "The deployed evidence pull and UAT exception worklist directly support a stitched assurance flow, while their incompatible volume units remain separate."
+        },
+        {
+          "claim_type": "strategy_support",
+          "judgment": "pass",
+          "evidence_refs": [
+            "SRC-SYNTHETIC-ASSURANCE-PRIORITIES"
+          ],
+          "rationale": "The customer-confirmed CIO record explicitly prioritizes privileged-access evidence completeness and human-owned certification decisions."
+        },
+        {
+          "claim_type": "process_coherence",
+          "judgment": "pass",
+          "evidence_refs": [
+            "PROC-ACCESS-ASSURANCE",
+            "ASM-ACCESS-LINKAGE"
+          ],
+          "rationale": "The boundary runs from campaign opening through a human certification decision, and customer-confirmed campaign and entitlement keys coherently join the two automations."
+        },
+        {
+          "claim_type": "agentic_need",
+          "judgment": "pass",
+          "evidence_refs": [
+            "PROC-ACCESS-ASSURANCE",
+            "INV-INVENTORY-R00008",
+            "INV-INVENTORY-R00009"
+          ],
+          "rationale": "The declared not_needed decision is supported because the pilot compiles fields and applies deterministic evidence checks while assurance reviewers retain every routing and certification judgment."
+        },
+        {
+          "claim_type": "capability_fit",
+          "judgment": "needs_validation",
+          "evidence_refs": [
+            "PROC-ACCESS-ASSURANCE",
+            "ASM-ENTITLEMENTS-UNCONFIRMED",
+            "ASM-DEPLOYMENT-UNCONFIRMED"
+          ],
+          "rationale": "Maestro, Robots, and human review are plausible orchestration roles, but entitlement, deployment, connectivity, and product availability remain unconfirmed."
+        },
+        {
+          "claim_type": "value_logic",
+          "judgment": "needs_validation",
+          "evidence_refs": [
+            "INV-INVENTORY-R00008",
+            "INV-INVENTORY-R00009",
+            "ASM-VALUE-BASELINES",
+            "SRC-SYNTHETIC-ASSURANCE-PRIORITIES"
+          ],
+          "rationale": "Evidence completeness and traceability are credible directional levers, but 26,400 entitlement lines and 1,200 exceptions are nonadditive and no validated value baseline or funded case exists."
+        },
+        {
+          "claim_type": "pilot_realism",
+          "judgment": "pass",
+          "evidence_refs": [
+            "PROC-ACCESS-ASSURANCE",
+            "SRC-SYNTHETIC-ASSURANCE-PRIORITIES",
+            "ASM-ENTITLEMENTS-UNCONFIRMED",
+            "ASM-DEPLOYMENT-UNCONFIRMED",
+            "ASM-VALUE-BASELINES"
+          ],
+          "rationale": "The proposed 120-case historical shadow has confirmed identifiers, an accountable truth-set owner, measurable gates, and human review. Execution still requires data access, approved baselines and tolerances, product and deployment validation, and pilot authorization."
+        },
+        {
+          "claim_type": "customer_language",
+          "judgment": "pass",
+          "evidence_refs": [
+            "SRC-SYNTHETIC-ASSURANCE-PRIORITIES",
+            "INV-INVENTORY-R00008",
+            "INV-INVENTORY-R00009"
+          ],
+          "rationale": "The portfolio separates customer-confirmed priorities, identifiers, ownership, and conditional sample availability from proposed UiPath roles and unapproved execution."
+        }
+      ],
+      "blocking_findings": []
+    },
+    {
+      "opportunity_id": "OPP-INVOICE-EXCEPTION",
+      "claim_reviews": [
+        {
+          "claim_type": "inventory_support",
+          "judgment": "pass",
+          "evidence_refs": [
+            "INV-INVENTORY-R00002",
+            "INV-INVENTORY-R00003"
+          ],
+          "rationale": "The live mailbox intake and UAT purchase-order exception worklist directly support the stated invoice-exception opportunity, with their distinct volumes kept separate."
+        },
+        {
+          "claim_type": "strategy_support",
+          "judgment": "pass",
+          "evidence_refs": [
+            "SRC-SYNTHETIC-OPERATING-PRIORITIES"
+          ],
+          "rationale": "The customer-confirmed strategy record explicitly prioritizes Finance throughput while preserving human control over exceptions and payments."
+        },
+        {
+          "claim_type": "process_coherence",
+          "judgment": "pass",
+          "evidence_refs": [
+            "PROC-INVOICE-EXCEPTION",
+            "ASM-INVOICE-LINKAGE"
+          ],
+          "rationale": "The mapped boundary connects mailbox intake to Finance disposition and payment-review handoff, with customer-confirmed invoice identifiers joining the frozen records."
+        },
+        {
+          "claim_type": "agentic_need",
+          "judgment": "pass",
+          "evidence_refs": [
+            "PROC-INVOICE-EXCEPTION",
+            "INV-INVENTORY-R00002",
+            "INV-INVENTORY-R00003"
+          ],
+          "rationale": "The declared not_needed decision is supported because structured invoice evidence and approved exception rules can be tested deterministically while Finance retains every disposition."
+        },
+        {
+          "claim_type": "capability_fit",
+          "judgment": "needs_validation",
+          "evidence_refs": [
+            "PROC-INVOICE-EXCEPTION",
+            "ASM-ENTITLEMENTS-UNCONFIRMED",
+            "ASM-DEPLOYMENT-UNCONFIRMED"
+          ],
+          "rationale": "Maestro, Robots, and human review are plausible orchestration roles, but entitlement, deployment, connectivity, and product availability remain unconfirmed."
+        },
+        {
+          "claim_type": "value_logic",
+          "judgment": "needs_validation",
+          "evidence_refs": [
+            "INV-INVENTORY-R00002",
+            "INV-INVENTORY-R00003",
+            "ASM-VALUE-BASELINES",
+            "SRC-SYNTHETIC-OPERATING-PRIORITIES"
+          ],
+          "rationale": "Reviewer capacity, consistency, and auditability are credible directional levers, but 18,000 submissions and 4,200 exceptions cannot be combined and no validated savings or funded case exists."
+        },
+        {
+          "claim_type": "pilot_realism",
+          "judgment": "pass",
+          "evidence_refs": [
+            "PROC-INVOICE-EXCEPTION",
+            "SRC-SYNTHETIC-OPERATING-PRIORITIES",
+            "ASM-ENTITLEMENTS-UNCONFIRMED",
+            "ASM-DEPLOYMENT-UNCONFIRMED",
+            "ASM-VALUE-BASELINES"
+          ],
+          "rationale": "The proposed 100-case historical shadow has a confirmed join key, accountable truth-set owner, measurable gates, and human review. Execution still requires data access, approved baselines and tolerances, product and deployment validation, and pilot authorization."
+        },
+        {
+          "claim_type": "customer_language",
+          "judgment": "pass",
+          "evidence_refs": [
+            "SRC-SYNTHETIC-OPERATING-PRIORITIES",
+            "INV-INVENTORY-R00002",
+            "INV-INVENTORY-R00003"
+          ],
+          "rationale": "The portfolio separates customer-confirmed Finance priorities, linkage, ownership, and conditional sample availability from proposed UiPath roles and unapproved execution."
+        }
+      ],
+      "blocking_findings": []
+    },
+    {
+      "opportunity_id": "OPP-VENDOR-ONBOARDING",
+      "claim_reviews": [
+        {
+          "claim_type": "inventory_support",
+          "judgment": "pass",
+          "evidence_refs": [
+            "INV-INVENTORY-R00005",
+            "INV-INVENTORY-R00006"
+          ],
+          "rationale": "The production supplier intake and approved-backlog risk review directly support one onboarding evidence-readiness opportunity while preserving their distinct workload measures."
+        },
+        {
+          "claim_type": "strategy_support",
+          "judgment": "pass",
+          "evidence_refs": [
+            "SRC-SYNTHETIC-OPERATING-PRIORITIES"
+          ],
+          "rationale": "The customer-confirmed strategy record explicitly prioritizes supplier onboarding evidence and risk-review controls."
+        },
+        {
+          "claim_type": "process_coherence",
+          "judgment": "pass",
+          "evidence_refs": [
+            "PROC-VENDOR-ONBOARDING",
+            "ASM-VENDOR-LINKAGE"
+          ],
+          "rationale": "The mapped boundary connects supplier intake to the Supplier Risk Lead's review outcome, with a customer-confirmed request identifier joining the frozen records."
+        },
+        {
+          "claim_type": "agentic_need",
+          "judgment": "pass",
+          "evidence_refs": [
+            "PROC-VENDOR-ONBOARDING",
+            "INV-INVENTORY-R00005",
+            "INV-INVENTORY-R00006"
+          ],
+          "rationale": "The declared not_needed decision is supported for the first pilot because the approved taxonomy can be tested with deterministic rules before considering adaptive support."
+        },
+        {
+          "claim_type": "capability_fit",
+          "judgment": "needs_validation",
+          "evidence_refs": [
+            "PROC-VENDOR-ONBOARDING",
+            "ASM-ENTITLEMENTS-UNCONFIRMED",
+            "ASM-DEPLOYMENT-UNCONFIRMED"
+          ],
+          "rationale": "Maestro, Robots, and human review are plausible orchestration roles, but entitlement, deployment, connectivity, and product availability remain unconfirmed."
+        },
+        {
+          "claim_type": "value_logic",
+          "judgment": "needs_validation",
+          "evidence_refs": [
+            "INV-INVENTORY-R00005",
+            "INV-INVENTORY-R00006",
+            "ASM-VALUE-BASELINES",
+            "SRC-SYNTHETIC-OPERATING-PRIORITIES"
+          ],
+          "rationale": "Evidence completeness, consistency, and reduced rework are credible directional levers, but 1,400 intake requests and 900 reviews may overlap and no validated savings or funded case exists."
+        },
+        {
+          "claim_type": "pilot_realism",
+          "judgment": "pass",
+          "evidence_refs": [
+            "PROC-VENDOR-ONBOARDING",
+            "SRC-SYNTHETIC-OPERATING-PRIORITIES",
+            "ASM-ENTITLEMENTS-UNCONFIRMED",
+            "ASM-DEPLOYMENT-UNCONFIRMED",
+            "ASM-VALUE-BASELINES"
+          ],
+          "rationale": "The proposed 80-file redacted historical shadow has a confirmed join key, approved taxonomy owner, measurable gates, and human review. Execution still requires data-access and redaction approval, approved baselines and tolerances, product and deployment validation, and pilot authorization."
+        },
+        {
+          "claim_type": "customer_language",
+          "judgment": "pass",
+          "evidence_refs": [
+            "SRC-SYNTHETIC-OPERATING-PRIORITIES",
+            "INV-INVENTORY-R00005",
+            "INV-INVENTORY-R00006"
+          ],
+          "rationale": "The portfolio separates customer-confirmed supplier priorities, linkage, ownership, taxonomy, and conditional sample availability from proposed UiPath roles and unapproved execution."
+        }
+      ],
+      "blocking_findings": []
+    }
+  ],
+  "overall_readiness": "workshop_ready"
+}

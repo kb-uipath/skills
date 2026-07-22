@@ -1,0 +1,511 @@
+{
+  "schema_version": "1.0",
+  "ledger_id": "LEDGER-NORTHSTAR-MULTI-DOMAIN-001",
+  "customer": {
+    "name": "Northstar Shared Services Cooperative - Synthetic",
+    "sector": "Synthetic multi-domain public services",
+    "deployment": {
+      "model": "unknown",
+      "constraints": [
+        "Pilots must be read-only and use historical records",
+        "Production writes require separate process-owner authorization",
+        "GenAI use requires privacy and security review"
+      ],
+      "genai_policy": "restricted",
+      "data_classification": "mixed",
+      "human_approval_required": true
+    },
+    "entitlements": [
+      {
+        "capability": "UiPath Maestro",
+        "status": "unknown",
+        "evidence_refs": [
+          "ASM-ENTITLEMENTS-UNCONFIRMED"
+        ]
+      },
+      {
+        "capability": "UiPath Agents",
+        "status": "unknown",
+        "evidence_refs": [
+          "ASM-ENTITLEMENTS-UNCONFIRMED"
+        ]
+      },
+      {
+        "capability": "UiPath GenAI capabilities",
+        "status": "unknown",
+        "evidence_refs": [
+          "ASM-ENTITLEMENTS-UNCONFIRMED"
+        ]
+      },
+      {
+        "capability": "UiPath Robots",
+        "status": "unknown",
+        "evidence_refs": [
+          "ASM-ENTITLEMENTS-UNCONFIRMED"
+        ]
+      },
+      {
+        "capability": "UiPath Action Center",
+        "status": "unknown",
+        "evidence_refs": [
+          "ASM-ENTITLEMENTS-UNCONFIRMED"
+        ]
+      }
+    ]
+  },
+  "inventory_profile": {
+    "source_name": "inventory.csv",
+    "as_of_date": "2026-07-02",
+    "inventory_ids": [
+      "INV-INVENTORY-R00002",
+      "INV-INVENTORY-R00003",
+      "INV-INVENTORY-R00004",
+      "INV-INVENTORY-R00005",
+      "INV-INVENTORY-R00006",
+      "INV-INVENTORY-R00007",
+      "INV-INVENTORY-R00008",
+      "INV-INVENTORY-R00009",
+      "INV-INVENTORY-R00010",
+      "INV-INVENTORY-R00011",
+      "INV-INVENTORY-R00012",
+      "INV-INVENTORY-R00013"
+    ]
+  },
+  "inventory_evidence": [
+    {
+      "inventory_id": "INV-INVENTORY-R00002",
+      "name": "Supplier invoice mailbox intake",
+      "description": "Reads shared-mailbox invoices, checks required fields, and places complete submissions in the ERP intake queue.",
+      "status": "production",
+      "department": "Finance",
+      "owner": "Finance Operations Lead",
+      "systems": [
+        "Shared Mailbox",
+        "ERP Finance",
+        "Document Repository"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 2
+      },
+      "facts": [
+        "The raw lifecycle status is Live - unattended.",
+        "The source lists partial exception-reason coverage and no exported invoice linkage field."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 18000.0,
+          "unit": "invoices/year"
+        },
+        {
+          "name": "handling_time",
+          "value": 4.0,
+          "unit": "minutes/invoice"
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00003",
+      "name": "PO match exception worklist",
+      "description": "Builds a reviewer queue for invoices that fail two- or three-way match and attaches purchase order context.",
+      "status": "pipeline",
+      "department": "Finance",
+      "owner": "",
+      "systems": [
+        "ERP Finance",
+        "Procurement Portal"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 3
+      },
+      "facts": [
+        "The raw lifecycle status is Pilot / UAT.",
+        "The process-owner field is blank in the source."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 4200.0,
+          "unit": "exceptions/year"
+        },
+        {
+          "name": "handling_time",
+          "value": 18.0,
+          "unit": "minutes/exception"
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00004",
+      "name": "Invoice posting confirmation archive",
+      "description": "Stores posting confirmations and payment-run evidence for resolved invoices.",
+      "status": "excluded",
+      "department": "Finance Assurance",
+      "owner": "Finance Controls Manager",
+      "systems": [
+        "ERP Finance",
+        "Document Repository"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 4
+      },
+      "facts": [
+        "The raw lifecycle status is Retired after ERP patch.",
+        "The source does not name the replacement process."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 18000.0,
+          "unit": "confirmations/year"
+        },
+        {
+          "name": "handling_time",
+          "value": 2.0,
+          "unit": "minutes/confirmation"
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00005",
+      "name": "Vendor onboarding request intake",
+      "description": "Captures supplier requests and checks tax, banking, and contact fields before procurement review.",
+      "status": "production",
+      "department": "Procurement",
+      "owner": "Supplier Enablement Lead",
+      "systems": [
+        "Supplier Portal",
+        "Procurement Queue"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 5
+      },
+      "facts": [
+        "The raw lifecycle status is Production.",
+        "The source flags bank-detail sensitivity and does not document a common case identifier."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 1400.0,
+          "unit": "requests/year"
+        },
+        {
+          "name": "handling_time",
+          "value": 12.0,
+          "unit": "minutes/request"
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00006",
+      "name": "Vendor risk evidence review",
+      "description": "Compares submitted insurance, tax, and policy documents against onboarding requirements and routes exceptions.",
+      "status": "pipeline",
+      "department": "Procurement Risk",
+      "owner": "Supplier Risk Lead",
+      "systems": [
+        "Supplier Portal",
+        "Document Repository",
+        "Policy Library"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 6
+      },
+      "facts": [
+        "The raw lifecycle status is Approved backlog.",
+        "The source says document labels vary by business unit and no exception taxonomy is present."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 900.0,
+          "unit": "reviews/year"
+        },
+        {
+          "name": "handling_time",
+          "value": 35.0,
+          "unit": "minutes/review"
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00007",
+      "name": "Vendor master record creation",
+      "description": "Creates approved supplier master records after onboarding review.",
+      "status": "excluded",
+      "department": "Procurement Operations",
+      "owner": "",
+      "systems": [
+        "ERP Vendor Master"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 7
+      },
+      "facts": [
+        "The raw lifecycle status is Paused - ERP migration.",
+        "The source omits the restart date, process owner, annual volume, and write-access detail."
+      ],
+      "metrics": [
+        {
+          "name": "handling_time",
+          "value": 9.0,
+          "unit": "minutes/record"
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00008",
+      "name": "Quarterly access evidence pull",
+      "description": "Extracts account and entitlement evidence for quarterly privileged-access certification.",
+      "status": "production",
+      "department": "IT/CIO Assurance",
+      "owner": "Access Governance Manager",
+      "systems": [
+        "Identity Governance",
+        "Directory",
+        "Evidence Repository"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 8
+      },
+      "facts": [
+        "The raw lifecycle status is Deployed.",
+        "The source defines volume as entitlement lines rather than review cases."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 26400.0,
+          "unit": "entitlement lines/year"
+        },
+        {
+          "name": "handling_time",
+          "value": 3.0,
+          "unit": "minutes/line"
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00009",
+      "name": "Privileged access exception narrative",
+      "description": "Prepares a reviewer worklist and evidence bundle for privileged-access exceptions.",
+      "status": "pipeline",
+      "department": "IT/CIO Assurance",
+      "owner": "Security Assurance Lead",
+      "systems": [
+        "Identity Governance",
+        "Ticketing",
+        "Policy Library"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 9
+      },
+      "facts": [
+        "The raw lifecycle status is UAT.",
+        "The source says exception narratives are free text and reviewer disposition remains final."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 1200.0,
+          "unit": "exceptions/year"
+        },
+        {
+          "name": "handling_time",
+          "value": 25.0,
+          "unit": "minutes/exception"
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00010",
+      "name": "Access evidence pull - legacy",
+      "description": "Legacy duplicate extract retained during dashboard migration; details are no longer maintained.",
+      "status": "excluded",
+      "department": "IT Operations",
+      "owner": "",
+      "systems": [
+        "Directory",
+        "Legacy BI"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 10
+      },
+      "facts": [
+        "The raw lifecycle status marks this row as a duplicate of the quarterly access evidence pull.",
+        "The source has no owner, annual volume, or handling-time value."
+      ],
+      "metrics": []
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00011",
+      "name": "New-hire packet completeness check",
+      "description": "Checks submitted onboarding forms for required fields before HR operations review.",
+      "status": "production",
+      "department": "Human Resources",
+      "owner": "HR Onboarding Manager",
+      "systems": [
+        "HR Case Portal",
+        "Document Repository"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 11
+      },
+      "facts": [
+        "The raw lifecycle status is Operational.",
+        "The source says packet types vary by worker class and gives no error-cost baseline."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 3200.0,
+          "unit": "packets/year"
+        },
+        {
+          "name": "handling_time",
+          "value": 10.0,
+          "unit": "minutes/packet"
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00012",
+      "name": "Benefits life-event intake",
+      "description": "Classifies incoming benefits change requests and routes incomplete submissions for follow-up.",
+      "status": "idea",
+      "department": "Human Resources",
+      "owner": "",
+      "systems": [],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 12
+      },
+      "facts": [
+        "The raw lifecycle status is Idea - requested.",
+        "The source leaves the system destination and owner blank."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 650.0,
+          "unit": "requests/year"
+        },
+        {
+          "name": "handling_time",
+          "value": 14.0,
+          "unit": "minutes/request"
+        }
+      ]
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00013",
+      "name": "Termination checklist tracker",
+      "description": "Tracks completion of offboarding checklist steps across HR, facilities, and IT.",
+      "status": "excluded",
+      "department": "People Operations",
+      "owner": "Employee Services Manager",
+      "systems": [
+        "HRIS",
+        "Ticketing",
+        "Facilities Queue"
+      ],
+      "source": {
+        "sheet": "inventory",
+        "row_number": 13
+      },
+      "facts": [
+        "The raw lifecycle status is Cancelled.",
+        "The source attributes cancellation to a budget hold and gives no restart trigger."
+      ],
+      "metrics": [
+        {
+          "name": "annual_volume",
+          "value": 400.0,
+          "unit": "cases/year"
+        },
+        {
+          "name": "handling_time",
+          "value": 15.0,
+          "unit": "minutes/case"
+        }
+      ]
+    }
+  ],
+  "public_sources": [
+    {
+      "source_id": "SRC-SYNTHETIC-OPERATING-PRIORITIES",
+      "title": "Synthetic Customer-Confirmed Strategy Workshop Record",
+      "publisher": "Northstar Executive Working Group - Synthetic",
+      "url": "https://example.org/synthetic/northstar-shared-services-priorities-2026",
+      "published_date": "2026-06-12",
+      "accessed_date": "2026-07-21",
+      "official": false,
+      "evidence_summary": "The synthetic customer workshop confirms finance throughput and supplier onboarding priorities; invoice_id and supplier_request_id across frozen exports; Finance Operations Lead and Supplier Risk Lead ownership of approved historical outcomes; and available 100-case and 80-file samples after data-access approval."
+    },
+    {
+      "source_id": "SRC-SYNTHETIC-ASSURANCE-PRIORITIES",
+      "title": "Synthetic Customer-Confirmed CIO Assurance Workshop Record",
+      "publisher": "Northstar CIO Working Group - Synthetic",
+      "url": "https://example.net/synthetic/northstar-cio-assurance-note-2026",
+      "published_date": "2026-06-19",
+      "accessed_date": "2026-07-21",
+      "official": false,
+      "evidence_summary": "The synthetic customer CIO workshop confirms privileged-access evidence completeness, campaign_id and entitlement_id across frozen exports, Access Governance Manager ownership of the approved checklist and outcomes, and 120 available completed exceptions after data-access approval."
+    }
+  ],
+  "assumptions": [
+    {
+      "assumption_id": "ASM-ENTITLEMENTS-UNCONFIRMED",
+      "statement": "No UiPath capability entitlement has been supplied for this synthetic forward-test customer.",
+      "category": "entitlement",
+      "status": "unvalidated"
+    },
+    {
+      "assumption_id": "ASM-DEPLOYMENT-UNCONFIRMED",
+      "statement": "Deployment model, data residency, and environment connectivity remain unconfirmed beyond the stated read-only planning constraints.",
+      "category": "deployment",
+      "status": "unvalidated"
+    },
+    {
+      "assumption_id": "ASM-INVOICE-LINKAGE",
+      "statement": "The inventory omits linkage fields, but the customer workshop confirms invoice_id across frozen intake and exception exports plus Finance Operations Lead ownership of final outcomes.",
+      "category": "feasibility",
+      "status": "validated"
+    },
+    {
+      "assumption_id": "ASM-VENDOR-LINKAGE",
+      "statement": "The inventory omits linkage fields, but the customer workshop confirms supplier_request_id across frozen intake and risk-review exports plus Supplier Risk Lead ownership of taxonomy and outcomes.",
+      "category": "feasibility",
+      "status": "validated"
+    },
+    {
+      "assumption_id": "ASM-ACCESS-LINKAGE",
+      "statement": "The inventory omits linkage fields, but the customer CIO workshop confirms campaign_id and entitlement_id across frozen evidence and exception exports plus Access Governance Manager ownership of checklist and outcomes.",
+      "category": "feasibility",
+      "status": "validated"
+    },
+    {
+      "assumption_id": "ASM-HR-BOUNDARY",
+      "statement": "Onboarding and benefits requests may share one employee-service intake model, but the inventory does not establish a common owner or case boundary.",
+      "category": "feasibility",
+      "status": "unvalidated"
+    },
+    {
+      "assumption_id": "ASM-VALUE-BASELINES",
+      "statement": "Loaded labor rates, error costs, rework rates, and validated time-savings baselines have not been supplied.",
+      "category": "value",
+      "status": "unvalidated"
+    }
+  ]
+}

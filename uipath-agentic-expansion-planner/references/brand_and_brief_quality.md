@@ -1,81 +1,72 @@
-# Brand and brief quality rules
+# Brand and customer-assessment quality
 
-Use these rules when preparing the final executive brief. They are derived from UiPath brand guidance, but this repo must not store internal brand files, private links, logos, lockups, or long copied brand-book excerpts.
+These rules paraphrase UiPath brand guidance. Do not store private brand files, links, logos, lockups, Otto graphics, or copied brand-book passages in the public repository.
 
 ## Voice
 
-- Be human, direct, warm, and practical.
-- Lead with the customer's business need, not UiPath product vocabulary.
-- Write peer-to-peer. Avoid sounding like a vendor brochure or a technical lecture.
-- Make the brief skimmable with short paragraphs, decision-oriented headings, and clear tables.
-- Say something specific. A vague "AI can transform operations" claim is not useful enough to ship.
+- Lead with the customer's business process and outcome.
+- Use direct, human language suitable for a customer conversation.
+- Explain what UiPath capabilities do in this process; do not list products without a role.
+- Prefer short sentences, concrete nouns, and accountable actions.
+- Remove internal IDs, scoring mechanics, schema language, and validation narration.
+- Reject hype, generic AI claims, and invented precision.
 
-## Executive impact
+## Required customer structure
 
-Every final brief must make these points easy to find:
+The default customer DOCX has exactly three sections:
 
-1. Why this matters now for the customer.
-2. What decision or next step the account team should ask for.
-3. Which inventory patterns support the recommendation.
-4. Which public strategy priorities make it executive-relevant.
-5. Which assumptions still need customer validation.
+1. Source File Summary.
+2. Current Automation Footprint.
+3. Top 3 Recommendations.
 
-The executive summary should be 3-5 tight sentences. It should name the strongest opportunity themes, explain the customer-facing value, and state the recommended next action.
+It contains one to three recommendations, no filler, no more than 900 words, and no more than two rendered pages.
 
-## Recommendation quality
+Before the recommendation detail, state the bounded workshop ask, the basis for final customer-set
+thresholds, and material deferred process groups. A workshop-ready assessment authorizes neither
+deployment nor investment.
 
-Reject or rewrite recommendation cards that are generic, unsupported, or too product-led. Each high-impact recommendation must include:
+Each recommendation states:
 
-- `Recommendation`
-- `Why now`
-- `Inventory evidence`
-- `Agentic enhancement`
-- `UiPath capability fit`
-- `Value levers`
-- `Feasibility`
-- `Governance`
-- `Validation questions`
+- End-to-end process boundary.
+- Customer reason to act.
+- Existing automation count, named foundation, and clearly labeled proposed pilot path.
+- Plain-language Maestro, agentic, GenAI, robot, and human-review roles.
+- Historical sample and selection method, reviewer-owned ground truth with its accountable owner,
+  observable output, at least two numerator/denominator metric formulas with comparable units,
+  review cadence, and one measurement owner.
+- Bounded pilot decision with exhaustive stop, proceed, and adjust ranges, mandatory correction
+  and rerun for mixed results, plus the next decision that proceeding enables.
+- Plain unresolved licensing, connection, deployment, or value checks.
+- Customer decision owner, UiPath account-team owner, data/security approval owner, and product
+  or deployment validation owner for one next step, with prerequisite fallback and absolute
+  target kickoff and decision dates.
 
-Each low-friction POC candidate must define a narrow scope, agent role, human role, success metrics, data needed, and exit criteria. If those details cannot be stated, the candidate is not ready to be positioned as a POC.
+Detailed evidence, source IDs, assumptions, scores, deployment analysis, and review findings remain in the internal package.
 
-## Visual brand profile for generated Word briefs
+## Brand profile
 
-Use a restrained UiPath-derived document style:
+- Robotic Orange `#FA4616` for title emphasis.
+- Deep Blue `#182126` for structure and table headers.
+- Agentic Teal `#0BA2B3` for recommendation headings.
+- Bright White and neutral greys for readability.
+- Arial as the shared-document fallback.
 
-- Robotic Orange `#FA4616` for title emphasis and selective highlights.
-- Deep Blue `#182126` for table headers, structural rules, and primary document structure.
-- Agentic Teal `#0BA2B3` for agentic sections, level-three recommendation headings, and callout accents.
-- Bright White `#FFFFFF` and neutral greys for whitespace, alternating rows, and readability.
-- Arial as the shared-document fallback font. Do not bundle brand fonts.
+Do not invent visual assets or logos. Use only approved assets supplied for the engagement.
 
-Do not create unofficial logos, logo lockups, Otto graphics, custom badges, or decorative pixel systems. Use approved assets only when the user supplies them or explicitly points to an approved template.
+## Customer-ready gate
 
-## Quality gate
+Customer-ready means all of the following passed:
 
-For claim-certified output, first confirm that schema `1.0` evidence and portfolio artifacts pass
-`validate_portfolio.py`; inventory facts cite `INV-*`, public facts cite dated `SRC-*`, planning
-assumptions cite `ASM-*`, and stored scores, value math, deployment controls, and entitlement
-language match the validated portfolio.
+- Portfolio and profile validation.
+- Analyst-mapped process validation, explicitly labeled as requiring customer confirmation.
+- Complete internal prioritization, with source-supported observations separated from validation tasks and explicit selected/deferred rationale.
+- A customer footprint that shows lifecycle mix, named process groups with automation counts, concentrations, and the unmapped count.
+- Explicit cross-record linkage action, reviewer-owned ground truth, auditable metric formulas,
+  mandatory mixed-result reruns, human-gated write boundaries, and owner-confirmation gates
+  without unsupported numeric precision.
+- Fresh human or independent semantic review at `workshop_ready` or higher.
+- Plain-language Markdown validation.
+- Brand-style DOCX verification.
+- Actual PDF render of one or two pages.
 
-The executive source must remain at or below 3,500 words by default, show the criterion-level
-basis for ranked scores, and use accountable pilot owners rather than placeholders. Repeated raw
-inventory narrative belongs in a separate analysis artifact, not the executive brief.
-
-Before rendering the Word file, run:
-
-```bash
-python3 scripts/validate_executive_brief.py <brief.md> \
-  --evidence-ledger <evidence_ledger.json> \
-  --portfolio <portfolio.json> \
-  --inventory-profile <inventory_profile.json>
-```
-
-Without the JSON options, the command performs legacy structure-only validation.
-
-After rendering, run structural and brand-style verification:
-
-```bash
-python3 scripts/verify_executive_docx.py <brief.docx> --require-output-dir --require-brand-style
-```
-
-If either validator fails, fix the Markdown or renderer output before delivery.
+If page rendering or semantic review is unavailable, produce an exploratory draft and label it clearly.
