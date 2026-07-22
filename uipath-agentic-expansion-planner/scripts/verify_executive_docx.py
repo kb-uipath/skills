@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -25,6 +26,11 @@ REQUIRED_HEADINGS = [
     "Facts, Assumptions, and Validation Questions",
     "Workshop Prep",
     "Recommended Next Steps",
+]
+CUSTOMER_REQUIRED_HEADINGS = [
+    "Source File Summary",
+    "Current Automation Footprint",
+    "Top 3 Recommendations",
 ]
 
 REQUIRED_BRAND_COLORS = {"FA4616", "182126", "0BA2B3"}
@@ -63,6 +69,23 @@ def parse_args() -> argparse.Namespace:
         "--require-brand-style",
         action="store_true",
         help="Require UiPath-derived colors and shared-document font styling.",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=("detailed", "customer-assessment"),
+        default="detailed",
+        help="Structural contract to verify",
+    )
+    parser.add_argument(
+        "--rendered-pdf",
+        type=Path,
+        help="PDF rendered from this DOCX for page-count verification",
+    )
+    parser.add_argument("--max-pages", type=int, default=2)
+    parser.add_argument(
+        "--require-page-count",
+        action="store_true",
+        help="Fail unless a rendered PDF is supplied and within --max-pages",
     )
     return parser.parse_args()
 
@@ -116,9 +139,20 @@ def brand_style_failures(path: Path) -> list[str]:
     return failures
 
 
+def pdf_page_count(path: Path) -> int:
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:  # pragma: no cover - dependency is pinned for repository validation
+        raise RuntimeError("pypdf is required for rendered page verification") from exc
+    return len(PdfReader(str(path)).pages)
+
+
 def main() -> int:
     args = parse_args()
     failures: list[str] = []
+
+    if args.profile == "customer-assessment" and not 1 <= args.max_pages <= 2:
+        failures.append("Customer-assessment --max-pages must be 1 or 2.")
 
     if not args.docx.exists():
         failures.append(f"DOCX does not exist: {args.docx}")
@@ -154,40 +188,94 @@ def main() -> int:
         failures.append("DOCX must be portrait unless landscape was explicitly requested.")
 
     heading_texts = [text for _, text in headings]
-    missing = [heading for heading in REQUIRED_HEADINGS if heading not in heading_texts]
-    if missing:
-        failures.append("Missing required headings: " + ", ".join(missing))
-
-    if not any("Source Ledger" in text or text.startswith("Appendix") for text in heading_texts):
-        failures.append("Missing appendix/source-ledger heading.")
-
-    if len(document.tables) < 3:
-        failures.append(f"Expected at least 3 tables; found {len(document.tables)}.")
-
-    if not table_has_rank_header(document):
-        failures.append("No prioritized portfolio table with Rank / Opportunity header found.")
-
-    proposal_count = section_count(
-        headings,
-        "Top 5 High-Impact Recommendations",
-        {"Top 3 Low-Friction POC Candidates"},
-    )
-    if proposal_count < args.min_proposal_headings:
-        failures.append(
-            f"Expected at least {args.min_proposal_headings} proposal headings; found {proposal_count}."
+    proposal_count = 0
+    poc_count = 0
+    if args.profile == "customer-assessment":
+        level_two = [text for level, text in headings if level == 2]
+        if level_two != CUSTOMER_REQUIRED_HEADINGS:
+            failures.append(
+                "Customer assessment must contain exactly these headings in order: "
+                + ", ".join(CUSTOMER_REQUIRED_HEADINGS)
+            )
+        proposal_count = section_count(headings, "Top 3 Recommendations", set())
+        if not 1 <= proposal_count <= 3:
+            failures.append(
+                f"Customer assessment must contain one to three recommendations; found {proposal_count}."
+            )
+        recommendation_headings = [text for level, text in headings if level == 3]
+        for index, heading in enumerate(recommendation_headings, start=1):
+            if not re.match(rf"^{index}\.\s+\S", heading):
+                failures.append(
+                    "Customer recommendation headings must be numbered consecutively from 1."
+                )
+                break
+        if len(document.tables) < 1:
+            failures.append("Customer assessment must contain the footprint table.")
+        all_text = "\n".join(paragraphs)
+        all_text += "\n" + "\n".join(
+            cell.text for table in document.tables for row in table.rows for cell in row.cells
         )
+        if re.search(
+            r"\b(?:INV|SRC|ASM|OPP|PROC|LEDGER|PORTFOLIO|PROCESS-MAP|REVIEW)-[A-Z0-9]",
+            all_text,
+            re.I,
+        ):
+            failures.append("Customer assessment exposes an internal evidence or contract ID.")
+        if re.search(
+            r"(?:^|[\s(])(?:/(?:Users|home|private|tmp|var)/[^\s)]+|[A-Za-z]:\\[^\s)]+)",
+            all_text,
+            re.I,
+        ):
+            failures.append("Customer assessment exposes a local filesystem path.")
+        if re.search(r"\b[0-9a-f]{64}\b", all_text, re.I):
+            failures.append("Customer assessment exposes a raw SHA-256 value.")
+    else:
+        missing = [heading for heading in REQUIRED_HEADINGS if heading not in heading_texts]
+        if missing:
+            failures.append("Missing required headings: " + ", ".join(missing))
+        if not any("Source Ledger" in text or text.startswith("Appendix") for text in heading_texts):
+            failures.append("Missing appendix/source-ledger heading.")
+        if len(document.tables) < 3:
+            failures.append(f"Expected at least 3 tables; found {len(document.tables)}.")
+        if not table_has_rank_header(document):
+            failures.append("No prioritized portfolio table with Rank / Opportunity header found.")
+        proposal_count = section_count(
+            headings,
+            "Top 5 High-Impact Recommendations",
+            {"Top 3 Low-Friction POC Candidates"},
+        )
+        if proposal_count < args.min_proposal_headings:
+            failures.append(
+                f"Expected at least {args.min_proposal_headings} proposal headings; found {proposal_count}."
+            )
+        poc_count = section_count(
+            headings,
+            "Top 3 Low-Friction POC Candidates",
+            {"Value Framing"},
+        )
+        if poc_count < args.min_poc_headings:
+            failures.append(
+                f"Expected at least {args.min_poc_headings} POC headings; found {poc_count}."
+            )
+        first_heading_names = [text for _, text in headings[:6]]
+        if any("Source Ledger" in text or text.startswith("Appendix") for text in first_heading_names):
+            failures.append("Source ledger appears too early; keep it in the appendix.")
 
-    poc_count = section_count(
-        headings,
-        "Top 3 Low-Friction POC Candidates",
-        {"Value Framing"},
-    )
-    if poc_count < args.min_poc_headings:
-        failures.append(f"Expected at least {args.min_poc_headings} POC headings; found {poc_count}.")
-
-    first_heading_names = [text for _, text in headings[:6]]
-    if any("Source Ledger" in text or text.startswith("Appendix") for text in first_heading_names):
-        failures.append("Source ledger appears too early; keep it in the appendix.")
+    page_count = None
+    if args.rendered_pdf:
+        if not args.rendered_pdf.exists():
+            failures.append(f"Rendered PDF does not exist: {args.rendered_pdf}")
+        else:
+            try:
+                page_count = pdf_page_count(args.rendered_pdf)
+            except RuntimeError as exc:
+                failures.append(str(exc))
+            if page_count is not None and not 1 <= page_count <= args.max_pages:
+                failures.append(
+                    f"Rendered customer assessment has {page_count} page(s); maximum is {args.max_pages}."
+                )
+    elif args.require_page_count:
+        failures.append("--require-page-count requires --rendered-pdf")
 
     if args.require_brand_style:
         failures.extend(brand_style_failures(args.docx))
@@ -207,6 +295,8 @@ def main() -> int:
     print(f"tables={len(document.tables)}")
     print(f"proposal_headings={proposal_count}")
     print(f"poc_headings={poc_count}")
+    if page_count is not None:
+        print(f"pages={page_count}")
     return 0
 
 

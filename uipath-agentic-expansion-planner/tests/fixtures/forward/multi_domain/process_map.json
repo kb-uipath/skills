@@ -1,0 +1,528 @@
+{
+  "schema_version": "1.0",
+  "process_map_id": "PROCESS-MAP-NORTHSTAR-MULTI-DOMAIN-001",
+  "customer_name": "Northstar Shared Services Cooperative - Synthetic",
+  "profile_source_sha256": "c951f3f322663c2b6dcef2a58b94b69a5744b8cd55a031163b10c5e2a89ce24f",
+  "confirmation_status": "analyst_confirmed",
+  "confirmed_by": "Synthetic Account Planning Analyst",
+  "confirmed_on": "2026-07-21",
+  "prioritization": {
+    "method": "Rank each analyst-mapped process by strategy alignment, observed workload, existing automation foundation, process coherence, delivery risk, and evidence quality.",
+    "criteria": [
+      "strategy_alignment",
+      "workload_signal",
+      "automation_foundation",
+      "process_coherence",
+      "delivery_risk",
+      "evidence_quality"
+    ],
+    "decisions": [
+      {
+        "process_id": "PROC-INVOICE-EXCEPTION",
+        "status": "selected",
+        "rank": 2,
+        "strategy_alignment": "confirmed",
+        "rationale": "Selected second because invoice linkage, ownership, and foundation are confirmed; access governance is stronger.",
+        "observed_evidence": [
+          "Two active Finance records span live invoice intake and UAT exception triage.",
+          "The source separately lists 18,000 annual submissions and 4,200 annual exceptions.",
+          "The customer workshop confirms invoice_id across the frozen exports, the Finance Operations Lead as disposition owner, and 100 completed exceptions available after data approval."
+        ],
+        "validation_needed": [
+          "Finance data-owner approval for the historical sample",
+          "Product, licensing, connectivity, and deployment compatibility",
+          "Observed baselines and owner-approved go, revise, and stop tolerances"
+        ]
+      },
+      {
+        "process_id": "PROC-ACCESS-ASSURANCE",
+        "status": "selected",
+        "rank": 1,
+        "strategy_alignment": "confirmed",
+        "rationale": "Selected first because confirmed linkage, ownership, foundation, and CIO priority provide strongest evidence.",
+        "observed_evidence": [
+          "Two active assurance records span deployed evidence extraction and UAT exception narrative work.",
+          "The source lists 26,400 entitlement lines and 1,200 exceptions annually.",
+          "The CIO workshop confirms campaign_id and entitlement_id across the frozen exports, the Access Governance Manager as outcome owner, and 120 completed exceptions available after access approval."
+        ],
+        "validation_needed": [
+          "Identity-data access approval for the historical sample",
+          "Product, licensing, connectivity, and deployment compatibility",
+          "Observed baselines and owner-approved go, revise, and stop tolerances"
+        ]
+      },
+      {
+        "process_id": "PROC-VENDOR-ONBOARDING",
+        "status": "selected",
+        "rank": 3,
+        "strategy_alignment": "confirmed",
+        "rationale": "Selected third because supplier linkage, ownership, and foundation are confirmed; sensitive data adds risk.",
+        "observed_evidence": [
+          "Two active Procurement records cover production supplier intake and approved-backlog risk review.",
+          "The source separately lists 1,400 intake requests and 900 risk reviews annually.",
+          "The customer workshop confirms supplier_request_id across the frozen exports, the Supplier Risk Lead as taxonomy and outcome owner, and 80 redacted files available after data approval."
+        ],
+        "validation_needed": [
+          "Supplier-data access and redaction approval for the historical sample",
+          "Product, licensing, connectivity, and deployment compatibility",
+          "Observed baselines and owner-approved go, revise, and stop tolerances"
+        ]
+      },
+      {
+        "process_id": "PROC-EMPLOYEE-LIFECYCLE",
+        "status": "deferred",
+        "rank": 4,
+        "strategy_alignment": "confirmed",
+        "rationale": "Defer because sparse ownership and mixed request types reduce process coherence until HR establishes one boundary, baseline, and accountable pilot owner.",
+        "observed_evidence": [
+          "The mapped HR records include one deployed onboarding check and one idea-stage benefits intake.",
+          "The two mapped HR records list 3,850 annual requests."
+        ],
+        "validation_needed": [
+          "A decision on whether onboarding and benefits requests share one process boundary",
+          "A named benefits-intake owner and destination system"
+        ]
+      },
+      {
+        "process_id": "PROC-VENDOR-MASTER",
+        "status": "deferred",
+        "rank": 5,
+        "strategy_alignment": "not_identified",
+        "rationale": "Defer because the source marks master creation paused until Procurement names an owner, restart trigger, and replacement-system boundary.",
+        "observed_evidence": [
+          "One Procurement Operations record describes vendor master creation with a paused lifecycle status."
+        ],
+        "validation_needed": [
+          "A named process owner and restart decision after the ERP migration",
+          "The replacement system boundary and authorized write path"
+        ]
+      }
+    ]
+  },
+  "processes": [
+    {
+      "process_id": "PROC-INVOICE-EXCEPTION",
+      "name": "Supplier invoice exception resolution",
+      "business_function": "Finance operations",
+      "boundary": {
+        "starts_when": "invoice enters the Finance mailbox",
+        "ends_when": "Finance records disposition and payment-review handoff",
+        "business_outcome": "complete evidence supports review; posting and payment excluded"
+      },
+      "inventory_ids": [
+        "INV-INVENTORY-R00002",
+        "INV-INVENTORY-R00003"
+      ],
+      "membership_rationale": "The two active records cover invoice intake and match-exception review within one invoice-resolution boundary.",
+      "linkage": {
+        "status": "confirmed",
+        "rationale": "The inventory omits the join column, but the customer workshop confirms invoice_id across the frozen intake and exception exports.",
+        "validation_step": "An analyst verifies twenty joined records and documents every unmatched case before the workshop."
+      }
+    },
+    {
+      "process_id": "PROC-VENDOR-ONBOARDING",
+      "name": "Vendor onboarding evidence readiness",
+      "business_function": "Procurement operations",
+      "boundary": {
+        "starts_when": "supplier request enters portal",
+        "ends_when": "Supplier Risk Lead records the review outcome",
+        "business_outcome": "traceable risk decision supports onboarding; vendor-master creation excluded"
+      },
+      "inventory_ids": [
+        "INV-INVENTORY-R00005",
+        "INV-INVENTORY-R00006"
+      ],
+      "membership_rationale": "The two active records represent supplier intake and evidence review within one onboarding-readiness decision path.",
+      "linkage": {
+        "status": "confirmed",
+        "rationale": "The inventory omits the join column, but the customer workshop confirms supplier_request_id across the frozen intake and risk-review exports.",
+        "validation_step": "An analyst verifies twenty joined supplier records and documents every unmatched case before the workshop."
+      }
+    },
+    {
+      "process_id": "PROC-VENDOR-MASTER",
+      "name": "Vendor master creation",
+      "business_function": "Procurement operations",
+      "boundary": {
+        "starts_when": "an approved supplier result is ready for master-data processing",
+        "ends_when": "an authorized owner creates the supplier record in the replacement system",
+        "business_outcome": "approved suppliers receive a controlled and auditable master record"
+      },
+      "inventory_ids": [
+        "INV-INVENTORY-R00007"
+      ],
+      "membership_rationale": "The single paused record describes the distinct vendor master creation step after onboarding review.",
+      "linkage": {
+        "status": "not_applicable",
+        "rationale": "Only one inventory record belongs to this paused process boundary.",
+        "validation_step": "Procurement names the owner, restart trigger, replacement system, and authorized write path before reconsideration."
+      }
+    },
+    {
+      "process_id": "PROC-ACCESS-ASSURANCE",
+      "name": "Quarterly privileged access assurance",
+      "business_function": "IT assurance",
+      "boundary": {
+        "starts_when": "quarterly access campaign opens",
+        "ends_when": "Access Governance Manager records the certification decision",
+        "business_outcome": "traceable evidence closes certification; access changes excluded"
+      },
+      "inventory_ids": [
+        "INV-INVENTORY-R00008",
+        "INV-INVENTORY-R00009"
+      ],
+      "membership_rationale": "The two active records cover evidence extraction and exception preparation for the same quarterly access-assurance decision cycle.",
+      "linkage": {
+        "status": "confirmed",
+        "rationale": "The inventory omits the join columns, but the CIO workshop confirms campaign_id and entitlement_id across the frozen evidence and exception exports.",
+        "validation_step": "An analyst verifies thirty joined exception records and documents every unmatched case before the workshop."
+      }
+    },
+    {
+      "process_id": "PROC-EMPLOYEE-LIFECYCLE",
+      "name": "Employee lifecycle requests",
+      "business_function": "Human resources operations",
+      "boundary": {
+        "starts_when": "HR receives an onboarding packet or benefits life-event request",
+        "ends_when": "HR records completeness and routes the request to its human decision owner",
+        "business_outcome": "complete employee-service submissions reach the correct HR reviewer with traceable context"
+      },
+      "inventory_ids": [
+        "INV-INVENTORY-R00011",
+        "INV-INVENTORY-R00012"
+      ],
+      "membership_rationale": "Both records perform employee-service intake and completeness checks, but their shared operating boundary remains analytically weak.",
+      "linkage": {
+        "status": "validation_required",
+        "rationale": "The records share an HR intake pattern, but they have different outcomes and no stated common case model.",
+        "validation_step": "HR reviews twenty records from each request type and decides whether one owner, taxonomy, and boundary apply."
+      }
+    }
+  ],
+  "unmapped_inventory": [
+    {
+      "inventory_id": "INV-INVENTORY-R00004",
+      "reason": "The source marks this posting-confirmation archive retired and does not identify its replacement process."
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00010",
+      "reason": "The source marks this legacy access extract as a duplicate, so it cannot support a distinct current process."
+    },
+    {
+      "inventory_id": "INV-INVENTORY-R00013",
+      "reason": "The source marks this termination tracker as cancelled and provides no restart trigger for current prioritization."
+    }
+  ],
+  "orchestrations": [
+    {
+      "opportunity_id": "OPP-INVOICE-EXCEPTION",
+      "process_id": "PROC-INVOICE-EXCEPTION",
+      "pattern": "stitch_existing",
+      "existing_automation_ids": [
+        "INV-INVENTORY-R00002",
+        "INV-INVENTORY-R00003"
+      ],
+      "stages": [
+        {
+          "sequence": 1,
+          "phase": "current_state",
+          "name": "Existing invoice intake and worklist",
+          "role": "existing_automation",
+          "inventory_ids": [
+            "INV-INVENTORY-R00002",
+            "INV-INVENTORY-R00003"
+          ],
+          "action": "Capture invoice submissions and prepare purchase-order match exceptions for Finance review.",
+          "human_control": "Finance staff resolve current exception cases."
+        },
+        {
+          "sequence": 2,
+          "phase": "pilot",
+          "name": "links invoice ID",
+          "role": "maestro",
+          "inventory_ids": [],
+          "action": "Join frozen mailbox and worklist exports by invoice ID; log each case stage and wait reason.",
+          "human_control": "Finance approves the sampled boundary and checkpoints."
+        },
+        {
+          "sequence": 3,
+          "phase": "pilot",
+          "name": "outputs invoice and PO evidence gaps",
+          "role": "robot",
+          "inventory_ids": [],
+          "action": "Output one invoice and purchase-order evidence bundle per case; flag missing IDs, match results, or documents.",
+          "human_control": "Finance staff inspect every compiled evidence package."
+        },
+        {
+          "sequence": 4,
+          "phase": "pilot",
+          "name": "Finance reviews weekly",
+          "role": "human_review",
+          "inventory_ids": [],
+          "action": "Compare every bundle with the Finance Operations Lead-approved final disposition in a weekly control review.",
+          "human_control": "The Finance Operations Lead is the reviewer of record for the historical truth set."
+        },
+        {
+          "sequence": 5,
+          "phase": "future_state",
+          "name": "Authorized result recording",
+          "role": "robot",
+          "inventory_ids": [],
+          "action": "Record only a human-approved exception disposition after separate production authorization.",
+          "human_control": "A separately authorized human-approved result is required."
+        }
+      ],
+      "capability_roles": {
+        "maestro": {
+          "applicability": "applies",
+          "role": "Coordinates historical case stages, waits, and reviewer checkpoints during the shadow."
+        },
+        "agentic": {
+          "applicability": "not_needed",
+          "role": "The first pilot tests deterministic evidence rules before considering adaptive judgment."
+        },
+        "genai": {
+          "applicability": "not_needed",
+          "role": "The pilot uses source-grounded structured summaries and creates no generated external content."
+        },
+        "robots": {
+          "applicability": "applies",
+          "role": "Compile historical evidence read-only and support only separately authorized future recording."
+        },
+        "human_review": {
+          "applicability": "applies",
+          "role": "Finance reviewers retain every exception and production-change decision."
+        }
+      },
+      "measurement_plan": {
+        "sample_method": "100 completed exceptions by documented type",
+        "ground_truth": "Approved disposition per sampled invoice",
+        "ground_truth_owner": "Finance Operations Lead",
+        "metrics": [
+          {
+            "name": "agreement",
+            "formula": "reviewed cases whose proposed route matches final disposition / reviewed cases"
+          },
+          {
+            "name": "linkage",
+            "formula": "cases joined by invoice ID / reviewed cases"
+          }
+        ],
+        "cadence": "weekly",
+        "owner": "Finance Operations Lead",
+        "mixed_result_action": "Correct rules or linkage, rerun failed cases, and do not proceed until every gate passes."
+      },
+      "next_step": {
+        "owner": "Finance Operations Lead",
+        "account_team_owner": "UiPath Customer Success Manager",
+        "action": "Prerequisite: Finance data owner approves export and baseline; UiPath validates product/deployment fit; otherwise defer",
+        "deliverable": "draft pilot charter",
+        "target_days": 14
+      }
+    },
+    {
+      "opportunity_id": "OPP-VENDOR-ONBOARDING",
+      "process_id": "PROC-VENDOR-ONBOARDING",
+      "pattern": "stitch_existing",
+      "existing_automation_ids": [
+        "INV-INVENTORY-R00005",
+        "INV-INVENTORY-R00006"
+      ],
+      "stages": [
+        {
+          "sequence": 1,
+          "phase": "current_state",
+          "name": "Existing supplier intake and review",
+          "role": "existing_automation",
+          "inventory_ids": [
+            "INV-INVENTORY-R00005",
+            "INV-INVENTORY-R00006"
+          ],
+          "action": "Capture supplier requests and prepare submitted evidence for Procurement risk review.",
+          "human_control": "Procurement reviewers decide current supplier exceptions."
+        },
+        {
+          "sequence": 2,
+          "phase": "pilot",
+          "name": "links supplier request ID",
+          "role": "maestro",
+          "inventory_ids": [],
+          "action": "Join frozen portal and risk-review exports by supplier request ID; log each handoff and wait.",
+          "human_control": "Procurement approves the sample boundary and handoffs."
+        },
+        {
+          "sequence": 3,
+          "phase": "pilot",
+          "name": "outputs checklist and document gaps",
+          "role": "robot",
+          "inventory_ids": [],
+          "action": "Output one checklist result per file; flag missing required documents against the approved taxonomy.",
+          "human_control": "Procurement reviewers inspect every classification and retain every disposition."
+        },
+        {
+          "sequence": 4,
+          "phase": "pilot",
+          "name": "Procurement reviews weekly",
+          "role": "human_review",
+          "inventory_ids": [],
+          "action": "Compare every result with the Supplier Risk Lead-approved checklist and reviewer-of-record outcome in a weekly control review.",
+          "human_control": "The Supplier Risk Lead owns the checklist and historical truth set."
+        }
+      ],
+      "capability_roles": {
+        "maestro": {
+          "applicability": "applies",
+          "role": "Coordinates supplier-file stages, waits, human checkpoints, and exception paths."
+        },
+        "agentic": {
+          "applicability": "not_needed",
+          "role": "The first pilot tests established evidence rules and does not require adaptive support."
+        },
+        "genai": {
+          "applicability": "not_needed",
+          "role": "The first pilot uses structured rule results and creates no generated content."
+        },
+      "robots": {
+        "applicability": "applies",
+        "role": "Apply approved evidence rules to redacted historical files without changing source systems."
+        },
+        "human_review": {
+          "applicability": "applies",
+          "role": "Procurement reviewers retain document, risk, supplier, and production-change decisions."
+        }
+      },
+      "measurement_plan": {
+        "sample_method": "80 completed redacted files by unit and class",
+        "ground_truth": "Approved checklist and outcome per file",
+        "ground_truth_owner": "Supplier Risk Lead",
+        "metrics": [
+          {
+            "name": "precision",
+            "formula": "correct missing-document flags / all missing-document flags"
+          },
+          {
+            "name": "recall",
+            "formula": "known missing documents correctly flagged / all known missing documents"
+          }
+        ],
+        "cadence": "weekly",
+        "owner": "Supplier Risk Lead",
+        "mixed_result_action": "Correct rules or linkage, rerun failed files, and do not proceed until every gate passes."
+      },
+      "next_step": {
+        "owner": "Supplier Risk Lead",
+        "account_team_owner": "UiPath Account Solution Consultant",
+        "action": "Prerequisite: Supplier Risk Lead approves redacted export and baseline; UiPath validates product/deployment fit; otherwise defer",
+        "deliverable": "draft pilot charter",
+        "target_days": 21
+      }
+    },
+    {
+      "opportunity_id": "OPP-ACCESS-ASSURANCE",
+      "process_id": "PROC-ACCESS-ASSURANCE",
+      "pattern": "stitch_existing",
+      "existing_automation_ids": [
+        "INV-INVENTORY-R00008",
+        "INV-INVENTORY-R00009"
+      ],
+      "stages": [
+        {
+          "sequence": 1,
+          "phase": "current_state",
+          "name": "Existing assurance evidence flow",
+          "role": "existing_automation",
+          "inventory_ids": [
+            "INV-INVENTORY-R00008",
+            "INV-INVENTORY-R00009"
+          ],
+          "action": "Extract certification evidence and prepare privileged-access exceptions for assurance review.",
+          "human_control": "Assurance reviewers decide current access exceptions."
+        },
+        {
+          "sequence": 2,
+          "phase": "pilot",
+          "name": "links campaign and entitlement IDs",
+          "role": "maestro",
+          "inventory_ids": [],
+          "action": "Join frozen campaign and exception exports by campaign and entitlement IDs; log each route and wait.",
+          "human_control": "IT assurance approves the sample and checkpoints."
+        },
+        {
+          "sequence": 3,
+          "phase": "pilot",
+          "name": "outputs evidence-gap bundles",
+          "role": "robot",
+          "inventory_ids": [],
+          "action": "Output one evidence bundle per exception; flag missing entitlement, ticket, or policy evidence.",
+          "human_control": "Assurance staff inspect every compiled evidence package."
+        },
+        {
+          "sequence": 4,
+          "phase": "pilot",
+          "name": "Assurance reviews weekly",
+          "role": "human_review",
+          "inventory_ids": [],
+          "action": "Compare every bundle with the Access Governance Manager-approved checklist and final disposition in a weekly control review.",
+          "human_control": "The Access Governance Manager owns the checklist and historical truth set."
+        },
+        {
+          "sequence": 5,
+          "phase": "future_state",
+          "name": "Authorized assurance recording",
+          "role": "robot",
+          "inventory_ids": [],
+          "action": "Record only a human-approved assurance result after separate production authorization.",
+          "human_control": "A separately authorized human-approved result is required."
+        }
+      ],
+      "capability_roles": {
+        "maestro": {
+          "applicability": "applies",
+          "role": "Coordinates evidence stages, exception routing, and reviewer checkpoints."
+        },
+        "agentic": {
+          "applicability": "not_needed",
+          "role": "The pilot uses deterministic evidence rules and does not require adaptive judgment."
+        },
+        "genai": {
+          "applicability": "not_needed",
+          "role": "The pilot compiles existing evidence fields and generates no narrative content."
+        },
+        "robots": {
+          "applicability": "applies",
+          "role": "Compile historical evidence read-only and support only authorized future result recording."
+        },
+        "human_review": {
+          "applicability": "applies",
+          "role": "Assurance reviewers retain every routing, certification, and production-change decision."
+        }
+      },
+      "measurement_plan": {
+        "sample_method": "120 completed exceptions across campaigns and types",
+        "ground_truth": "Approved disposition and checklist per exception",
+        "ground_truth_owner": "Access Governance Manager",
+        "metrics": [
+          {
+            "name": "coverage",
+            "formula": "reviewed cases with every required evidence field complete / reviewed cases"
+          },
+          {
+            "name": "agreement",
+            "formula": "reviewed cases whose proposed route matches final disposition / reviewed cases"
+          }
+        ],
+        "cadence": "weekly",
+        "owner": "Access Governance Manager",
+        "mixed_result_action": "Correct rules or linkage, rerun failed cases, and do not proceed until every gate passes."
+      },
+      "next_step": {
+        "owner": "Access Governance Manager",
+        "account_team_owner": "UiPath Customer Success Manager",
+        "action": "Prerequisite: Identity and Security approve export and baseline; UiPath validates product/deployment fit; otherwise defer",
+        "deliverable": "draft pilot charter",
+        "target_days": 14
+      }
+    }
+  ]
+}

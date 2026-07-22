@@ -1,0 +1,453 @@
+{
+  "as_of_date": "2026-07-21",
+  "customer_name": "Northstar Shared Services Cooperative - Synthetic",
+  "ledger_id": "LEDGER-NORTHSTAR-MULTI-DOMAIN-001",
+  "opportunities": [
+    {
+      "agentic_enhancement": "No agent is proposed for the first pilot; deterministic evidence assembly and approved exception rules should be tested before any adaptive recommendation role is considered.",
+      "business_problem": "Invoice intake and purchase-order exception handling sit in separate automation records. The inventory omits their join field, while the customer workshop confirms invoice_id and the Finance Operations Lead as disposition owner.",
+      "capability_fit": [
+        {
+          "capability": "UiPath Maestro",
+          "claim": "likely_fit",
+          "entitlement_evidence_refs": []
+        },
+        {
+          "capability": "UiPath Robots",
+          "claim": "likely_fit",
+          "entitlement_evidence_refs": []
+        },
+        {
+          "capability": "UiPath Action Center",
+          "claim": "likely_fit",
+          "entitlement_evidence_refs": []
+        }
+      ],
+      "category": "validate_next",
+      "confidence": "medium",
+      "criteria_scores": {
+        "agentic_suitability": 2,
+        "enterprise_scalability": 4,
+        "feasibility": 4,
+        "governance_readiness": 4,
+        "inventory_evidence": 4,
+        "strategic_alignment": 4,
+        "time_to_pilot": 4,
+        "value_potential": 5
+      },
+      "decision_ask": "Authorize a read-only design workshop and controlled access to the confirmed 100-case historical sample.",
+      "deployment": {
+        "constraints_addressed": [
+          "Pilots must be read-only and use historical records",
+          "Production writes require separate process-owner authorization"
+        ],
+        "controls": [
+          "The pilot reads a frozen historical sample and cannot change source records.",
+          "Human review approves every Finance exception disposition.",
+          "Any future production write requires a separately approved implementation gate."
+        ],
+        "notes": "Deployment model, connectivity, licensing, and historical-data access remain validation items.",
+        "status": "requires_validation"
+      },
+      "evidence_refs": {
+        "assumption_ids": [
+          "ASM-INVOICE-LINKAGE",
+          "ASM-DEPLOYMENT-UNCONFIRMED",
+          "ASM-ENTITLEMENTS-UNCONFIRMED",
+          "ASM-VALUE-BASELINES"
+        ],
+        "inventory_ids": [
+          "INV-INVENTORY-R00002",
+          "INV-INVENTORY-R00003"
+        ],
+        "public_source_ids": [
+          "SRC-SYNTHETIC-OPERATING-PRIORITIES"
+        ]
+      },
+      "feasibility": "The customer workshop confirms invoice linkage, historical dispositions, and their Finance owner; data access, interfaces, product fit, and deployment compatibility still need validation.",
+      "governance": "Finance retains every disposition; the pilot is read-only, logs evidence sources, and makes no payment or posting decision.",
+      "name": "Supplier invoice exception resolution",
+      "opportunity_id": "OPP-INVOICE-EXCEPTION",
+      "pilot": {
+        "agent_role": "No agent role is proposed; deterministic rules assemble invoice and purchase-order evidence and flag missing fields.",
+        "data_needed": [
+          "100 completed exceptions",
+          "Invoice and purchase-order linkage fields",
+          "Exception evidence and final disposition history"
+        ],
+        "exit_criteria": [
+          "Stop if agreement is under 80%, linkage under 90%, or any control breach. Go if 100 cases reach 95% agreement and 98% linkage. Revise if agreement is 80-94% or linkage is 90-97%."
+        ],
+        "first_step": "The Finance data owner approves the 100-case export and the Finance Operations Lead sets baseline measures and control tolerances.",
+        "human_role": "Finance reviewers decide every disposition and flag missing or misleading evidence.",
+        "narrow_scope": "Historical read-only shadow of 100 completed invoice exceptions with no source-system changes.",
+        "objective": "Measure whether deterministic evidence assembly and rule-based routing match Finance reviewer dispositions on completed invoice exceptions.",
+        "owner": "Finance Operations Lead",
+        "success_metrics": [
+          "Reviewer agreement on deterministic exception routing",
+          "Source-linkage coverage across invoice and purchase-order evidence"
+        ],
+        "timeline_days": 21
+      },
+      "scores": {
+        "high_impact": 77.0,
+        "poc": 75.0
+      },
+      "validation_questions": [
+        "Who approves access to the 100-case historical export?",
+        "Which observed baseline and control tolerances should govern the shadow test?",
+        "Which deployment and licensing constraints apply to historical invoice data?"
+      ],
+      "value_case": {
+        "basis": "The live intake lists 18,000 annual submissions and the UAT worklist separately lists 4,200 exceptions; overlap, rates, rework, and time-savings baselines are not supplied.",
+        "label": "high",
+        "method": "qualitative"
+      },
+      "value_levers": [
+        "Reviewer capacity on invoice exceptions",
+        "Consistent evidence presentation",
+        "Auditability of exception decisions"
+      ],
+      "why_now": "Finance prioritizes throughput; 18,000 submissions and 4,200 exceptions show demand."
+    },
+    {
+      "agentic_enhancement": "No agentic or GenAI role is needed in the first pilot; reconsider only if the measured rules-based check cannot handle documented variation.",
+      "business_problem": "Supplier intake and risk evidence review are separate automation records. The inventory omits their join field, while the customer workshop confirms supplier_request_id, the approved taxonomy, and the Supplier Risk Lead as outcome owner.",
+      "capability_fit": [
+        {
+          "capability": "UiPath Maestro",
+          "claim": "likely_fit",
+          "entitlement_evidence_refs": []
+        },
+        {
+          "capability": "UiPath Robots",
+          "claim": "likely_fit",
+          "entitlement_evidence_refs": []
+        },
+        {
+          "capability": "UiPath Action Center",
+          "claim": "likely_fit",
+          "entitlement_evidence_refs": []
+        }
+      ],
+      "category": "pilot_first",
+      "confidence": "medium",
+      "criteria_scores": {
+        "agentic_suitability": 2,
+        "enterprise_scalability": 4,
+        "feasibility": 3,
+        "governance_readiness": 3,
+        "inventory_evidence": 4,
+        "strategic_alignment": 4,
+        "time_to_pilot": 3,
+        "value_potential": 4
+      },
+      "decision_ask": "Approve a read-only supplier-evidence shadow and name the Procurement reviewer responsible for the sample.",
+      "deployment": {
+        "constraints_addressed": [
+          "Pilots must be read-only and use historical records",
+          "Production writes require separate process-owner authorization",
+          "GenAI use requires privacy and security review"
+        ],
+        "controls": [
+          "The pilot uses redacted historical supplier files and cannot alter vendor records.",
+          "Human review decides document sufficiency and supplier disposition.",
+          "GenAI remains disabled unless privacy and security reviewers authorize its use."
+        ],
+        "notes": "Supplier-data access, redaction, deployment, and capability availability require validation.",
+        "status": "requires_validation"
+      },
+      "evidence_refs": {
+        "assumption_ids": [
+          "ASM-VENDOR-LINKAGE",
+          "ASM-DEPLOYMENT-UNCONFIRMED",
+          "ASM-ENTITLEMENTS-UNCONFIRMED",
+          "ASM-VALUE-BASELINES"
+        ],
+        "inventory_ids": [
+          "INV-INVENTORY-R00005",
+          "INV-INVENTORY-R00006"
+        ],
+        "public_source_ids": [
+          "SRC-SYNTHETIC-OPERATING-PRIORITIES"
+        ]
+      },
+      "feasibility": "The customer workshop confirms supplier linkage, the approved taxonomy, and historical outcomes; sensitive-field redaction, data access, product fit, and deployment compatibility still raise delivery risk.",
+      "governance": "Procurement retains evidence-sufficiency and supplier decisions; sensitive bank data must be minimized and GenAI requires separate review.",
+      "name": "Vendor onboarding evidence readiness",
+      "opportunity_id": "OPP-VENDOR-ONBOARDING",
+      "pilot": {
+        "agent_role": "No agent is proposed initially; compare approved rules with historical outcomes to decide whether adaptive support is warranted.",
+        "data_needed": [
+          "80 redacted supplier files",
+          "Supplier Risk Lead-approved historical reviewer outcomes and missing-document checklist",
+          "Supplier request identifiers across intake and risk review"
+        ],
+        "exit_criteria": [
+          "Stop if precision is under 75%, recall under 80%, or any data breach. Go if 80 files reach 92% precision and 95% recall. Revise if precision is 75-91% or recall is 80-94%."
+        ],
+        "first_step": "The Supplier Risk Lead approves the 80-file redacted export and sets baseline measures and control tolerances.",
+        "human_role": "Procurement reviewers decide document sufficiency, risk exceptions, and supplier disposition.",
+        "narrow_scope": "Historical read-only shadow of 80 redacted supplier files with no supplier-record changes.",
+        "objective": "Measure whether approved evidence rules identify missing documents consistently enough to avoid agentic support.",
+        "owner": "Supplier Risk Lead",
+        "success_metrics": [
+          "Precision of missing-evidence classifications",
+          "Recall of known missing documents in each supplier file"
+        ],
+        "timeline_days": 28
+      },
+      "scores": {
+        "high_impact": 70.0,
+        "poc": 62.0
+      },
+      "validation_questions": [
+        "Who approves access to the 80-file redacted historical sample?",
+        "Which observed baseline and control tolerances should govern the shadow test?",
+        "Which deployment, privacy, and licensing constraints apply to supplier evidence?"
+      ],
+      "value_case": {
+        "basis": "The intake lists 1,400 annual requests and the backlog review separately lists 900; overlap, rework, and labor baselines are not supplied.",
+        "label": "medium",
+        "method": "qualitative"
+      },
+      "value_levers": [
+        "Faster identification of incomplete supplier files",
+        "Consistent application of onboarding evidence rules",
+        "Reduced reviewer rework"
+      ],
+      "why_now": "Supplier prioritizes onboarding; linked outcomes support testing after data approval."
+    },
+    {
+      "agentic_enhancement": "No agent is proposed for the pilot; deterministic orchestration can assemble evidence and route exceptions, while assurance reviewers retain all certification judgments.",
+      "business_problem": "Evidence extraction and exception narratives are separate records and the volume units differ. The inventory omits their join fields, while the CIO workshop confirms campaign_id, entitlement_id, and the Access Governance Manager as outcome owner.",
+      "capability_fit": [
+        {
+          "capability": "UiPath Maestro",
+          "claim": "likely_fit",
+          "entitlement_evidence_refs": []
+        },
+        {
+          "capability": "UiPath Robots",
+          "claim": "likely_fit",
+          "entitlement_evidence_refs": []
+        },
+        {
+          "capability": "UiPath Action Center",
+          "claim": "likely_fit",
+          "entitlement_evidence_refs": []
+        }
+      ],
+      "category": "validate_next",
+      "confidence": "medium",
+      "criteria_scores": {
+        "agentic_suitability": 2,
+        "enterprise_scalability": 5,
+        "feasibility": 4,
+        "governance_readiness": 5,
+        "inventory_evidence": 5,
+        "strategic_alignment": 4,
+        "time_to_pilot": 4,
+        "value_potential": 4
+      },
+      "decision_ask": "Authorize a deterministic read-only assurance shadow using completed certification records.",
+      "deployment": {
+        "constraints_addressed": [
+          "Pilots must be read-only and use historical records",
+          "Production writes require separate process-owner authorization"
+        ],
+        "controls": [
+          "The pilot reads completed certification evidence and cannot change access or ticket records.",
+          "Human review retains every access-certification disposition.",
+          "Any later evidence-recording step requires separate process-owner authorization."
+        ],
+        "notes": "Identity-data access, deployment compatibility, licensing, and capability availability require validation.",
+        "status": "requires_validation"
+      },
+      "evidence_refs": {
+        "assumption_ids": [
+          "ASM-ACCESS-LINKAGE",
+          "ASM-DEPLOYMENT-UNCONFIRMED",
+          "ASM-ENTITLEMENTS-UNCONFIRMED",
+          "ASM-VALUE-BASELINES"
+        ],
+        "inventory_ids": [
+          "INV-INVENTORY-R00008",
+          "INV-INVENTORY-R00009"
+        ],
+        "public_source_ids": [
+          "SRC-SYNTHETIC-ASSURANCE-PRIORITIES"
+        ]
+      },
+      "feasibility": "The CIO workshop confirms campaign and entitlement linkage, final dispositions, and their owner; evidence access, product fit, deployment compatibility, and the meaning of each volume field still need validation.",
+      "governance": "No agent or GenAI role is needed; assurance reviewers retain certification decisions and the shadow cannot modify access rights.",
+      "name": "Quarterly privileged access assurance",
+      "opportunity_id": "OPP-ACCESS-ASSURANCE",
+      "pilot": {
+        "agent_role": "No agent role is proposed; deterministic rules assemble evidence and flag missing fields.",
+        "data_needed": [
+          "120 completed exceptions",
+          "Certification campaign and entitlement identifiers",
+          "Historical reviewer routing and disposition records"
+        ],
+        "exit_criteria": [
+          "Stop if coverage is under 85%, agreement under 80%, or any access breach. Go if 120 cases reach 98% coverage and 95% agreement. Revise if coverage is 85-97% or agreement is 80-94%."
+        ],
+        "first_step": "Identity and Security approve the 120-case export and the Access Governance Manager sets baseline measures and control tolerances.",
+        "human_role": "Assurance reviewers decide every exception and evaluate evidence completeness.",
+        "narrow_scope": "Historical read-only shadow of 120 completed access exceptions with no identity, access, or ticket changes.",
+        "objective": "Measure deterministic evidence completeness and routing against completed access-certification outcomes.",
+        "owner": "Access Governance Manager",
+        "success_metrics": [
+          "Evidence-field coverage for sampled exceptions",
+          "Reviewer agreement on deterministic routing"
+        ],
+        "timeline_days": 21
+      },
+      "scores": {
+        "high_impact": 81.0,
+        "poc": 79.0
+      },
+      "validation_questions": [
+        "Who approves access to the 120-case historical assurance export?",
+        "Does the 1,200 volume represent unique exceptions or repeated review events?",
+        "Which deployment, licensing, and identity-data controls apply to the read-only shadow?"
+      ],
+      "value_case": {
+        "basis": "The source lists 26,400 annual entitlement lines and 1,200 exception narratives, but those units are not additive and no error-cost baseline is supplied.",
+        "label": "high",
+        "method": "qualitative"
+      },
+      "value_levers": [
+        "Evidence completeness for access certification",
+        "Traceability of reviewer decisions",
+        "Reusable assurance controls"
+      ],
+      "why_now": "CIO prioritizes access evidence; records list 26,400 lines and 1,200 exceptions."
+    },
+    {
+      "agentic_enhancement": "A future agent could classify request type and explain missing information for HR review, but no agent should be designed before HR confirms the process boundary and policy rules.",
+      "business_problem": "Onboarding packets and benefits requests may share intake patterns, but they have different outcomes, one record has no owner or system, and the inventory provides no common case model.",
+      "capability_fit": [
+        {
+          "capability": "UiPath Agents",
+          "claim": "likely_fit",
+          "entitlement_evidence_refs": []
+        },
+        {
+          "capability": "UiPath Robots",
+          "claim": "likely_fit",
+          "entitlement_evidence_refs": []
+        },
+        {
+          "capability": "UiPath Action Center",
+          "claim": "likely_fit",
+          "entitlement_evidence_refs": []
+        }
+      ],
+      "category": "monitor",
+      "confidence": "low",
+      "criteria_scores": {
+        "agentic_suitability": 3,
+        "enterprise_scalability": 4,
+        "feasibility": 4,
+        "governance_readiness": 4,
+        "inventory_evidence": 3,
+        "strategic_alignment": 3,
+        "time_to_pilot": 4,
+        "value_potential": 3
+      },
+      "decision_ask": "Defer pilot selection until HR defines one request boundary and accountable service owner.",
+      "deployment": {
+        "constraints_addressed": [
+          "Pilots must be read-only and use historical records"
+        ],
+        "controls": [
+          "Any future pilot must use historical records and cannot update HR systems.",
+          "Human review retains every completeness, eligibility, and routing decision."
+        ],
+        "notes": "The HR process boundary, data classification, owner, deployment, and entitlement context are incomplete.",
+        "status": "requires_validation"
+      },
+      "evidence_refs": {
+        "assumption_ids": [
+          "ASM-HR-BOUNDARY",
+          "ASM-DEPLOYMENT-UNCONFIRMED",
+          "ASM-ENTITLEMENTS-UNCONFIRMED",
+          "ASM-VALUE-BASELINES"
+        ],
+        "inventory_ids": [
+          "INV-INVENTORY-R00011",
+          "INV-INVENTORY-R00012"
+        ],
+        "public_source_ids": [
+          "SRC-SYNTHETIC-OPERATING-PRIORITIES"
+        ]
+      },
+      "feasibility": "A small historical sample is technically bounded, but HR must first separate or confirm the request types, owner, systems, and policy rules.",
+      "governance": "HR retains every policy and eligibility decision; sensitive employee records require data-minimization and access review before any pilot.",
+      "name": "Employee lifecycle request fulfillment",
+      "opportunity_id": "OPP-EMPLOYEE-LIFECYCLE",
+      "pilot": {
+        "agent_role": "Classify request type and flag missing information without deciding eligibility or policy outcomes.",
+        "data_needed": [
+          "Sixty historical employee-service records",
+          "Reviewer outcomes and request-type labels",
+          "Approved field-completeness rules"
+        ],
+        "exit_criteria": [
+          "Stop if classification accuracy is below 75 percent, reviewer agreement is below 80 percent, or any employee-data control breach occurs. Go if at least 60 historical cases achieve at least 93 percent classification accuracy and at least 95 percent reviewer agreement. Revise if classification accuracy is 75 to 92 percent or reviewer agreement is 80 to 94 percent."
+        ],
+        "first_step": "HR Onboarding Manager decides whether the two request types share one boundary.",
+        "human_role": "HR reviewers decide routing, completeness, eligibility, and all follow-up actions.",
+        "narrow_scope": "Historical read-only shadow of 60 employee-service records with no HR system changes.",
+        "objective": "Measure request classification and missing-field detection after HR confirms the process boundary.",
+        "owner": "HR Onboarding Manager",
+        "success_metrics": [
+          "Accuracy of request-type classification",
+          "Reviewer agreement on missing-field flags"
+        ],
+        "timeline_days": 21
+      },
+      "scores": {
+        "high_impact": 66.0,
+        "poc": 72.0
+      },
+      "validation_questions": [
+        "Should onboarding and benefits requests share one process boundary or remain separate?",
+        "Who owns benefits intake and which system receives routed requests?",
+        "Which employee-data controls apply to a historical sample?"
+      ],
+      "value_case": {
+        "basis": "The two mapped records list 3,850 annual requests, but they represent different request types and have no shared rework, error-cost, or savings baseline.",
+        "label": "medium",
+        "method": "qualitative"
+      },
+      "value_levers": [
+        "Completeness of employee-service submissions",
+        "Consistent routing to HR reviewers",
+        "Reduced follow-up for missing information"
+      ],
+      "why_now": "A deployed onboarding check and an idea-stage benefits intake show recurring employee-service demand, but ownership, systems, and a common process boundary are incomplete."
+    }
+  ],
+  "portfolio_id": "PORTFOLIO-NORTHSTAR-MULTI-DOMAIN-001",
+  "ranking_limits": {
+    "high_impact": 3,
+    "low_friction_poc": 3
+  },
+  "rankings": {
+    "high_impact": [
+      "OPP-ACCESS-ASSURANCE",
+      "OPP-INVOICE-EXCEPTION",
+      "OPP-VENDOR-ONBOARDING"
+    ],
+    "low_friction_poc": [
+      "OPP-ACCESS-ASSURANCE",
+      "OPP-INVOICE-EXCEPTION",
+      "OPP-EMPLOYEE-LIFECYCLE"
+    ]
+  },
+  "schema_version": "1.0",
+  "score_model_version": "1.0"
+}

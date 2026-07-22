@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/uipath-agentic-expansion-planner/process-map/v1",
+  "title": "UiPath Agentic Expansion Process Map v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "process_map_id",
+    "customer_name",
+    "profile_source_sha256",
+    "confirmation_status",
+    "confirmed_by",
+    "confirmed_on",
+    "prioritization",
+    "processes",
+    "unmapped_inventory",
+    "orchestrations"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "process_map_id": { "type": "string", "pattern": "^PROCESS-MAP-[A-Z0-9][A-Z0-9._-]*$" },
+    "customer_name": { "$ref": "#/$defs/nonEmptyString" },
+    "profile_source_sha256": { "$ref": "#/$defs/sha256" },
+    "confirmation_status": { "enum": ["suggested", "analyst_confirmed"] },
+    "confirmed_by": { "$ref": "#/$defs/nonEmptyString" },
+    "confirmed_on": { "type": "string", "format": "date" },
+    "prioritization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "criteria", "decisions"],
+      "properties": {
+        "method": { "$ref": "#/$defs/nonEmptyString" },
+        "criteria": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "strategy_alignment",
+              "workload_signal",
+              "automation_foundation",
+              "process_coherence",
+              "delivery_risk",
+              "evidence_quality"
+            ]
+          }
+        },
+        "decisions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/prioritizationDecision" }
+        }
+      }
+    },
+    "processes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/process" }
+    },
+    "unmapped_inventory": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/unmapped" }
+    },
+    "orchestrations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/orchestration" }
+    }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "inventoryIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^INV-[A-Z0-9][A-Z0-9._-]*$" }
+    },
+    "prioritizationDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "process_id",
+        "status",
+        "rank",
+        "strategy_alignment",
+        "rationale",
+        "observed_evidence",
+        "validation_needed"
+      ],
+      "properties": {
+        "process_id": { "type": "string", "pattern": "^PROC-[A-Z0-9][A-Z0-9._-]*$" },
+        "status": { "enum": ["selected", "deferred", "not_prioritized"] },
+        "rank": { "type": ["integer", "null"], "minimum": 1 },
+        "strategy_alignment": { "enum": ["confirmed", "validation_required", "not_identified"] },
+        "rationale": { "$ref": "#/$defs/nonEmptyString" },
+        "observed_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "validation_needed": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        }
+      }
+    },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["process_id", "name", "business_function", "boundary", "inventory_ids", "membership_rationale", "linkage"],
+      "properties": {
+        "process_id": { "type": "string", "pattern": "^PROC-[A-Z0-9][A-Z0-9._-]*$" },
+        "name": { "$ref": "#/$defs/nonEmptyString" },
+        "business_function": { "$ref": "#/$defs/nonEmptyString" },
+        "boundary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["starts_when", "ends_when", "business_outcome"],
+          "properties": {
+            "starts_when": { "$ref": "#/$defs/nonEmptyString" },
+            "ends_when": { "$ref": "#/$defs/nonEmptyString" },
+            "business_outcome": { "$ref": "#/$defs/nonEmptyString" }
+          }
+        },
+        "inventory_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^INV-[A-Z0-9][A-Z0-9._-]*$" }
+        },
+        "membership_rationale": { "$ref": "#/$defs/nonEmptyString" },
+        "linkage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "rationale", "validation_step"],
+          "properties": {
+            "status": { "enum": ["confirmed", "validation_required", "not_applicable"] },
+            "rationale": { "$ref": "#/$defs/nonEmptyString" },
+            "validation_step": { "$ref": "#/$defs/nonEmptyString" }
+          }
+        }
+      }
+    },
+    "unmapped": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inventory_id", "reason"],
+      "properties": {
+        "inventory_id": { "type": "string", "pattern": "^INV-[A-Z0-9][A-Z0-9._-]*$" },
+        "reason": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "capabilityRole": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["applicability", "role"],
+      "properties": {
+        "applicability": { "enum": ["applies", "not_needed", "validation_required"] },
+        "role": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "phase", "name", "role", "inventory_ids", "action", "human_control"],
+      "properties": {
+        "sequence": { "type": "integer", "minimum": 1 },
+        "phase": { "enum": ["current_state", "pilot", "future_state"] },
+        "name": { "$ref": "#/$defs/nonEmptyString" },
+        "role": { "enum": ["existing_automation", "maestro", "agentic", "genai", "robot", "human_review", "system_of_record"] },
+        "inventory_ids": { "$ref": "#/$defs/inventoryIds" },
+        "action": { "$ref": "#/$defs/nonEmptyString" },
+        "human_control": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "measurementPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sample_method", "ground_truth", "ground_truth_owner", "metrics", "cadence", "owner", "mixed_result_action"],
+      "properties": {
+        "sample_method": { "$ref": "#/$defs/nonEmptyString" },
+        "ground_truth": { "$ref": "#/$defs/nonEmptyString" },
+        "ground_truth_owner": { "$ref": "#/$defs/nonEmptyString" },
+        "metrics": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "formula"],
+            "properties": {
+              "name": { "$ref": "#/$defs/nonEmptyString" },
+              "formula": { "$ref": "#/$defs/nonEmptyString" }
+            }
+          }
+        },
+        "cadence": { "enum": ["daily", "weekly", "per_case"] },
+        "owner": { "$ref": "#/$defs/nonEmptyString" },
+        "mixed_result_action": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "orchestration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["opportunity_id", "process_id", "pattern", "existing_automation_ids", "stages", "capability_roles", "measurement_plan", "next_step"],
+      "properties": {
+        "opportunity_id": { "type": "string", "pattern": "^OPP-[A-Z0-9][A-Z0-9._-]*$" },
+        "process_id": { "type": "string", "pattern": "^PROC-[A-Z0-9][A-Z0-9._-]*$" },
+        "pattern": { "enum": ["stitch_existing", "extend_single", "net_new"] },
+        "existing_automation_ids": { "$ref": "#/$defs/inventoryIds" },
+        "stages": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/stage" } },
+        "capability_roles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maestro", "agentic", "genai", "robots", "human_review"],
+          "properties": {
+            "maestro": { "$ref": "#/$defs/capabilityRole" },
+            "agentic": { "$ref": "#/$defs/capabilityRole" },
+            "genai": { "$ref": "#/$defs/capabilityRole" },
+            "robots": { "$ref": "#/$defs/capabilityRole" },
+            "human_review": { "$ref": "#/$defs/capabilityRole" }
+          }
+        },
+        "measurement_plan": { "$ref": "#/$defs/measurementPlan" },
+        "next_step": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["owner", "account_team_owner", "action", "deliverable", "target_days"],
+          "properties": {
+            "owner": { "$ref": "#/$defs/nonEmptyString" },
+            "account_team_owner": { "$ref": "#/$defs/nonEmptyString" },
+            "action": { "$ref": "#/$defs/nonEmptyString" },
+            "deliverable": { "$ref": "#/$defs/nonEmptyString" },
+            "target_days": { "type": "integer", "minimum": 1, "maximum": 30 }
+          }
+        }
+      }
+    }
+  }
+}

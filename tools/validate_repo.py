@@ -7,6 +7,7 @@ import argparse
 import ipaddress
 import re
 import sys
+from datetime import date
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -60,27 +61,30 @@ STANDARD_DOC_CONCEPTS = (
     ),
     ("known limitations", re.compile(r"(?im)^## (?:Known )?Limitations\s*$")),
     ("certification status", re.compile(r"(?im)^## .*Certification.*\s*$|^## Status\s*$")),
-    ("last-verified date", re.compile(r"(?is)last verified.{0,50}2026-07-10")),
+    ("last-verified date", re.compile(r"(?is)last verified.{0,50}\d{4}-\d{2}-\d{2}")),
 )
 ROOT_DOC_SECTIONS = {
     "README.md": (
         "## Runtime And Validation",
         "## Governance",
-        "Last verified: 2026-07-10",
     ),
     "docs/README.md": (
         "## Documentation Contract",
-        "Last verified: 2026-07-10",
     ),
     "docs/production-readiness-evaluation.md": (
         "## Readiness Axes",
-        "Last verified: 2026-07-10",
     ),
     "SECURITY.md": (
         "## Reporting A Vulnerability",
         "private advisory",
     ),
 }
+ROOT_DOC_LAST_VERIFIED = {
+    "README.md",
+    "docs/README.md",
+    "docs/production-readiness-evaluation.md",
+}
+LAST_VERIFIED_RE = re.compile(r"(?m)^Last verified: (\d{4}-\d{2}-\d{2})\s*$")
 OPENAI_INTERFACE_KEYS = {"display_name", "short_description", "default_prompt", "brand_color"}
 SKILL_FRONTMATTER_KEYS = {"name", "description"}
 PINNED_ACTION_RE = re.compile(r"^[^@\s]+@[0-9a-fA-F]{40}$")
@@ -433,6 +437,15 @@ def validate_root_docs(root: Path = ROOT) -> list[str]:
         for section in required_sections:
             if section not in text:
                 errors.append(f"{rel_path}: missing required section {section!r}")
+        if rel_path in ROOT_DOC_LAST_VERIFIED:
+            match = LAST_VERIFIED_RE.search(text)
+            if match is None:
+                errors.append(f"{rel_path}: missing valid ISO last-verified date")
+            else:
+                try:
+                    date.fromisoformat(match.group(1))
+                except ValueError:
+                    errors.append(f"{rel_path}: missing valid ISO last-verified date")
     return errors
 
 

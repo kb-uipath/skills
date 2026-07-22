@@ -43,6 +43,17 @@ when stored values or rankings are stale. The rendered portfolio exposes the two
 limiting criterion inputs for each recommendation; a total score without its basis is not an
 executive-ready explanation.
 
+The rankings are internal analysis. The customer assessment renders only the first one to three
+high-impact opportunities after process-map and semantic-review gates pass. It does not display
+numeric scores and never adds filler to reach three.
+
+The process map must reconcile those rankings against every analyst-mapped process. Record the
+selection method and a ranked decision for each selected or deferred process. Each decision separates
+source-supported `observed_evidence` from `validation_needed`. A selected rationale states why it
+outranks alternatives; a deferral states why it ranks lower and what triggers reconsideration. The
+customer assessment shows that method and the highest-priority deferral without exposing weighted
+scores.
+
 ## High-impact recommendation ranking
 
 Use the default weighted criteria. Favor candidates with:

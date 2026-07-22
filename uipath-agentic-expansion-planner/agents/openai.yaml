@@ -1,5 +1,5 @@
 interface:
   display_name: "UiPath Agentic Expansion Planner"
-  short_description: "Creates on-brand DOCX expansion briefs from inventories."
+  short_description: "Creates concise customer portfolio assessments."
   brand_color: "#FA4616"
-  default_prompt: "Use $uipath-agentic-expansion-planner to profile this inventory, build and validate v1 evidence and portfolio JSON, then produce an on-brand verified DOCX expansion brief."
+  default_prompt: "Use $uipath-agentic-expansion-planner to profile this inventory with source-date integrity, analyst-map end-to-end process groups while labeling customer-confirmation needs, and account for every selected, deferred, and unmapped item. Define human-gated read-only pilots with sample selection, source-backed ground-truth ownership, comparable-unit metric formulas, measurement ownership, rerun rules, prerequisite fallbacks, customer-set thresholds from baselines and tolerances, and absolute kickoff and decision dates. Independently review the opportunities, bind available source files, and produce a verified one-to-two-page workshop-ready customer DOCX with up to three recommendations and no deployment or investment approval."

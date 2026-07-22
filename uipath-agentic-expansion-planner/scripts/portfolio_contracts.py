@@ -7,7 +7,7 @@ import ipaddress
 import json
 import math
 import re
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterable, Optional
 from urllib.parse import urlparse
@@ -66,6 +66,23 @@ ID_PATTERNS = {
     "source_id": re.compile(r"^SRC-[A-Z0-9][A-Z0-9._-]*$"),
     "assumption_id": re.compile(r"^ASM-[A-Z0-9][A-Z0-9._-]*$"),
     "opportunity_id": re.compile(r"^OPP-[A-Z0-9][A-Z0-9._-]*$"),
+}
+
+PROFILE_CORE_FIELDS = {
+    "use_case_name",
+    "description",
+    "status",
+    "department",
+    "owner",
+    "systems",
+    "volume",
+    "weekly_volume",
+    "annual_volume",
+    "handling_time",
+    "hours_saved",
+    "value",
+    "priority",
+    "date",
 }
 
 EVIDENCE_REF_KEYS = ("inventory_ids", "public_source_ids", "assumption_ids")
@@ -342,9 +359,9 @@ def _validate_inventory_profile(
     profile: dict[str, Any], ledger: dict[str, Any], errors: list[str]
 ) -> None:
     version = profile.get("schema_version")
-    if version != CONTRACT_VERSION:
+    if version not in {"1.0", "1.1"}:
         errors.append(
-            "inventory_profile.schema_version must be '1.0'; regenerate it with "
+            "inventory_profile.schema_version must be '1.0' or '1.1'; regenerate it with "
             "scripts/inventory_profiler.py before cross-checking."
         )
         return
@@ -361,8 +378,16 @@ def _validate_inventory_profile(
             errors.append(f"inventory_profile.inventory_items[{index}] must be an object")
             continue
         item_id = item.get("inventory_id")
-        if isinstance(item_id, str):
-            profile_items[item_id] = item
+        if not isinstance(item_id, str) or not ID_PATTERNS["inventory_id"].fullmatch(item_id):
+            if version == "1.1":
+                errors.append(
+                    f"inventory_profile.inventory_items[{index}].inventory_id must match "
+                    f"{ID_PATTERNS['inventory_id'].pattern}"
+                )
+            continue
+        if item_id in profile_items:
+            errors.append(f"inventory_profile.inventory_items has duplicate ID {item_id}")
+        profile_items[item_id] = item
     ledger_items = {
         item.get("inventory_id"): item
         for item in ledger.get("inventory_evidence", [])
@@ -439,12 +464,417 @@ def _validate_inventory_profile(
         errors.append("inventory_profile.metadata must be an object")
         return
     source_file = metadata.get("source_file")
+    source_name = metadata.get("source_name")
     expected_name = ledger.get("inventory_profile", {}).get("source_name")
-    if isinstance(source_file, str) and expected_name and Path(source_file).name != expected_name:
+    actual_name = source_name if isinstance(source_name, str) else (
+        Path(source_file).name if isinstance(source_file, str) else None
+    )
+    if actual_name and expected_name and actual_name != expected_name:
         errors.append(
-            f"inventory profile source name {Path(source_file).name!r} does not match "
+            f"inventory profile source name {actual_name!r} does not match "
             f"ledger source_name {expected_name!r}"
         )
+    if version == "1.1":
+        generated_at = metadata.get("generated_at_utc")
+        if not isinstance(generated_at, str):
+            errors.append(
+                "inventory_profile.metadata.generated_at_utc is required for profile 1.1"
+            )
+        else:
+            try:
+                parsed_generated = datetime.fromisoformat(
+                    generated_at.replace("Z", "+00:00")
+                )
+                if parsed_generated.utcoffset() is None:
+                    raise ValueError
+            except ValueError:
+                errors.append(
+                    "inventory_profile.metadata.generated_at_utc must be ISO-8601"
+                )
+        source_sha256 = metadata.get("source_sha256")
+        source_file = metadata.get("source_file")
+        if not isinstance(source_name, str) or not source_name.strip():
+            errors.append("inventory_profile.metadata.source_name is required for profile 1.1")
+        elif (
+            source_name != Path(source_name).name
+            or "\\" in source_name
+            or re.search(r"[<>:\"|?*`]", source_name)
+            or re.search(r"[\x00-\x1f\x7f]", source_name)
+        ):
+            errors.append(
+                "inventory_profile.metadata.source_name must be a display-safe basename"
+            )
+        if (
+            not isinstance(source_file, str)
+            or not source_file.strip()
+            or source_file != Path(source_file).name
+            or "\\" in source_file
+            or re.search(r"[<>:\"|?*`]", source_file)
+            or re.search(r"[\x00-\x1f\x7f]", source_file)
+        ):
+            errors.append(
+                "inventory_profile.metadata.source_file must be a display-safe basename for profile 1.1"
+            )
+        elif isinstance(source_name, str) and source_file != source_name:
+            errors.append(
+                "inventory_profile.metadata.source_file must equal source_name for profile 1.1"
+            )
+        if not isinstance(source_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
+            errors.append(
+                "inventory_profile.metadata.source_sha256 must be a lowercase SHA-256 for profile 1.1"
+            )
+        source_date_summary = metadata.get("source_date_summary")
+        source_date_fields = {
+            "columns",
+            "nonblank_count",
+            "valid_count",
+            "invalid_count",
+            "earliest_date",
+            "latest_date",
+        }
+        if source_date_summary is not None:
+            _reject_unknown(
+                source_date_summary,
+                source_date_fields,
+                "inventory_profile.metadata.source_date_summary",
+                errors,
+            )
+            _required(
+                source_date_summary,
+                source_date_fields,
+                "inventory_profile.metadata.source_date_summary",
+                errors,
+            )
+            if isinstance(source_date_summary, dict):
+                _string_list(
+                    source_date_summary.get("columns"),
+                    "inventory_profile.metadata.source_date_summary.columns",
+                    errors,
+                )
+                source_date_counts: dict[str, int] = {}
+                for field in ("nonblank_count", "valid_count", "invalid_count"):
+                    value = source_date_summary.get(field)
+                    if (
+                        isinstance(value, bool)
+                        or not isinstance(value, int)
+                        or not 0 <= value <= len(items)
+                    ):
+                        errors.append(
+                            "inventory_profile.metadata.source_date_summary."
+                            f"{field} must be from 0 to total rows"
+                        )
+                    else:
+                        source_date_counts[field] = value
+                if (
+                    len(source_date_counts) == 3
+                    and source_date_counts["nonblank_count"]
+                    != source_date_counts["valid_count"]
+                    + source_date_counts["invalid_count"]
+                ):
+                    errors.append(
+                        "inventory_profile.metadata.source_date_summary.nonblank_count "
+                        "must equal valid_count plus invalid_count"
+                    )
+                parsed_summary_dates: dict[str, date | None] = {}
+                for field in ("earliest_date", "latest_date"):
+                    value = source_date_summary.get(field)
+                    if value is None:
+                        parsed_summary_dates[field] = None
+                    else:
+                        parsed_summary_dates[field] = _date(
+                            value,
+                            f"inventory_profile.metadata.source_date_summary.{field}",
+                            errors,
+                        )
+                if source_date_counts.get("valid_count", 0) == 0:
+                    if any(value is not None for value in parsed_summary_dates.values()):
+                        errors.append(
+                            "inventory_profile source date bounds must be null when no valid dates exist"
+                        )
+                elif any(value is None for value in parsed_summary_dates.values()):
+                    errors.append(
+                        "inventory_profile source date bounds are required when valid dates exist"
+                    )
+                elif parsed_summary_dates["earliest_date"] > parsed_summary_dates["latest_date"]:
+                    errors.append(
+                        "inventory_profile source date earliest_date cannot follow latest_date"
+                    )
+                latest_date = source_date_summary.get("latest_date")
+                ledger_as_of = ledger.get("inventory_profile", {}).get("as_of_date")
+                if isinstance(latest_date, str) and ledger_as_of != latest_date:
+                    errors.append(
+                        "evidence_ledger.inventory_profile.as_of_date must equal the latest "
+                        "valid source record date"
+                    )
+        total_rows = metadata.get("total_rows")
+        if isinstance(total_rows, bool) or not isinstance(total_rows, int) or total_rows != len(items):
+            errors.append(
+                "inventory_profile.metadata.total_rows must equal inventory_items length"
+            )
+        total_columns = metadata.get("total_columns")
+        if (
+            isinstance(total_columns, bool)
+            or not isinstance(total_columns, int)
+            or total_columns < 0
+        ):
+            errors.append(
+                "inventory_profile.metadata.total_columns must be a non-negative integer"
+            )
+        sheets = profile.get("sheets")
+        sheet_names: set[str] = set()
+        sheet_columns: dict[str, set[str]] = {}
+        if not isinstance(sheets, list):
+            errors.append("inventory_profile.sheets must be an array for profile 1.1")
+        else:
+            sheet_rows = []
+            for index, sheet in enumerate(sheets):
+                if not isinstance(sheet, dict):
+                    errors.append(f"inventory_profile.sheets[{index}] must be an object")
+                    continue
+                sheet_name = sheet.get("sheet")
+                if not isinstance(sheet_name, str) or not sheet_name.strip():
+                    errors.append(
+                        f"inventory_profile.sheets[{index}].sheet must be a non-empty string"
+                    )
+                elif sheet_name in sheet_names:
+                    errors.append(
+                        f"inventory_profile.sheets has duplicate sheet name {sheet_name!r}"
+                    )
+                else:
+                    sheet_names.add(sheet_name)
+                rows = sheet.get("rows") if isinstance(sheet, dict) else None
+                if isinstance(rows, bool) or not isinstance(rows, int) or rows < 0:
+                    errors.append(
+                        f"inventory_profile.sheets[{index}].rows must be a non-negative integer"
+                    )
+                else:
+                    sheet_rows.append(rows)
+                columns = sheet.get("columns")
+                if (
+                    not isinstance(columns, list)
+                    or any(not isinstance(column, str) or not column.strip() for column in columns)
+                    or len(columns) != len(set(columns))
+                ):
+                    errors.append(
+                        f"inventory_profile.sheets[{index}].columns must be an array of unique non-empty strings"
+                    )
+                else:
+                    if isinstance(sheet_name, str) and sheet_name.strip():
+                        sheet_columns[sheet_name] = set(columns)
+                    if sheet.get("column_count") != len(columns):
+                        errors.append(
+                            f"inventory_profile.sheets[{index}].column_count must equal columns length"
+                        )
+            if metadata.get("sheet_count") != len(sheets):
+                errors.append(
+                    "inventory_profile.metadata.sheet_count must equal sheets length"
+                )
+            if len(sheet_rows) == len(sheets) and sum(sheet_rows) != len(items):
+                errors.append(
+                    "inventory_profile sheet row counts must equal inventory_items length"
+                )
+            if isinstance(total_columns, int) and not isinstance(total_columns, bool):
+                union_columns = set().union(*sheet_columns.values()) if sheet_columns else set()
+                if total_columns != len(union_columns):
+                    errors.append(
+                        "inventory_profile.metadata.total_columns must equal unique sheet columns"
+                    )
+
+        core_mapping = profile.get("core_field_mapping")
+        if not isinstance(core_mapping, dict):
+            errors.append(
+                "inventory_profile.core_field_mapping must be an object for profile 1.1"
+            )
+        else:
+            missing_fields = sorted(PROFILE_CORE_FIELDS - set(core_mapping))
+            if missing_fields:
+                errors.append(
+                    "inventory_profile.core_field_mapping is missing field(s): "
+                    + ", ".join(missing_fields)
+                )
+            for field, column in core_mapping.items():
+                if field in PROFILE_CORE_FIELDS and column is not None and (
+                    not isinstance(column, str) or not column.strip()
+                ):
+                    errors.append(
+                        f"inventory_profile.core_field_mapping.{field} must be a string or null"
+                    )
+
+        sheet_mappings = profile.get("sheet_field_mappings")
+        if not isinstance(sheet_mappings, dict):
+            errors.append(
+                "inventory_profile.sheet_field_mappings must be an object for profile 1.1"
+            )
+        else:
+            if set(sheet_mappings) != sheet_names:
+                errors.append(
+                    "inventory_profile.sheet_field_mappings keys must exactly match sheet names"
+                )
+            for sheet_name, mapping in sheet_mappings.items():
+                if not isinstance(mapping, dict):
+                    errors.append(
+                        f"inventory_profile.sheet_field_mappings.{sheet_name} must be an object"
+                    )
+                    continue
+                missing_fields = sorted(PROFILE_CORE_FIELDS - set(mapping))
+                if missing_fields:
+                    errors.append(
+                        f"inventory_profile.sheet_field_mappings.{sheet_name} is missing field(s): "
+                        + ", ".join(missing_fields)
+                    )
+                for field, column in mapping.items():
+                    if field not in PROFILE_CORE_FIELDS or column is None:
+                        continue
+                    if not isinstance(column, str) or column not in sheet_columns.get(sheet_name, set()):
+                        errors.append(
+                            f"inventory_profile.sheet_field_mappings.{sheet_name}.{field} "
+                            "must reference a column on that sheet or be null"
+                        )
+
+        data_quality = profile.get("data_quality")
+        field_coverage = (
+            data_quality.get("field_coverage") if isinstance(data_quality, dict) else None
+        )
+        if not isinstance(field_coverage, dict):
+            errors.append(
+                "inventory_profile.data_quality.field_coverage must be an object for profile 1.1"
+            )
+        else:
+            missing_fields = sorted(PROFILE_CORE_FIELDS - set(field_coverage))
+            if missing_fields:
+                errors.append(
+                    "inventory_profile.data_quality.field_coverage is missing field(s): "
+                    + ", ".join(missing_fields)
+                )
+            for field in PROFILE_CORE_FIELDS:
+                details = field_coverage.get(field)
+                path = f"inventory_profile.data_quality.field_coverage.{field}"
+                if not isinstance(details, dict):
+                    if field in field_coverage:
+                        errors.append(f"{path} must be an object")
+                    continue
+                if set(details) != {"column", "nonblank", "coverage_pct"}:
+                    errors.append(
+                        f"{path} must contain column, nonblank, and coverage_pct"
+                    )
+                column = details.get("column")
+                if column is not None and (not isinstance(column, str) or not column.strip()):
+                    errors.append(f"{path}.column must be a string or null")
+                nonblank = details.get("nonblank")
+                if (
+                    isinstance(nonblank, bool)
+                    or not isinstance(nonblank, int)
+                    or not 0 <= nonblank <= len(items)
+                ):
+                    errors.append(f"{path}.nonblank must be from 0 to total rows")
+                coverage_pct = details.get("coverage_pct")
+                if (
+                    isinstance(coverage_pct, bool)
+                    or not isinstance(coverage_pct, (int, float))
+                    or not 0 <= float(coverage_pct) <= 100
+                ):
+                    errors.append(f"{path}.coverage_pct must be from 0 to 100")
+                elif isinstance(nonblank, int) and not isinstance(nonblank, bool):
+                    expected_pct = round(
+                        (nonblank / len(items) * 100.0) if items else 0.0, 1
+                    )
+                    if not math.isclose(
+                        float(coverage_pct), expected_pct, rel_tol=0, abs_tol=0.05
+                    ):
+                        errors.append(
+                            f"{path}.coverage_pct must match nonblank and total rows"
+                        )
+                if isinstance(core_mapping, dict) and field in core_mapping:
+                    if column != core_mapping.get(field):
+                        errors.append(
+                            f"{path}.column must match core_field_mapping.{field}"
+                        )
+
+        lifecycle_counts = profile.get("status_summary", {}).get("lifecycle_status_counts")
+        if not isinstance(lifecycle_counts, dict):
+            errors.append(
+                "inventory_profile.status_summary.lifecycle_status_counts is required for profile 1.1"
+            )
+        expected_lifecycle_counts: dict[str, int] = {}
+        actual_sheet_rows: dict[str, int] = {}
+        normalized_source_dates: list[str] = []
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            if not isinstance(item.get("raw_status"), str):
+                errors.append(f"inventory_profile.inventory_items[{index}].raw_status is required")
+            if source_date_summary is not None:
+                source_date_value = item.get("source_date")
+                if source_date_value is not None:
+                    parsed_source_date = _date(
+                        source_date_value,
+                        f"inventory_profile.inventory_items[{index}].source_date",
+                        errors,
+                    )
+                    if parsed_source_date is not None:
+                        normalized_source_dates.append(parsed_source_date.isoformat())
+            sheet_name = item.get("sheet")
+            if not isinstance(sheet_name, str) or sheet_name not in sheet_names:
+                errors.append(
+                    f"inventory_profile.inventory_items[{index}].sheet must reference a defined sheet"
+                )
+            else:
+                actual_sheet_rows[sheet_name] = actual_sheet_rows.get(sheet_name, 0) + 1
+            row_number = item.get("row_number")
+            if (
+                isinstance(row_number, bool)
+                or not isinstance(row_number, int)
+                or row_number < 2
+            ):
+                errors.append(
+                    f"inventory_profile.inventory_items[{index}].row_number must be an integer of 2 or greater"
+                )
+            if item.get("lifecycle_status") not in {
+                "deployed",
+                "pipeline",
+                "paused",
+                "retired",
+                "cancelled",
+                "rejected",
+                "duplicate",
+                "idea",
+                "unknown",
+                "other",
+            }:
+                errors.append(
+                    f"inventory_profile.inventory_items[{index}].lifecycle_status is invalid"
+                )
+            else:
+                lifecycle_status = item["lifecycle_status"]
+                expected_lifecycle_counts[lifecycle_status] = (
+                    expected_lifecycle_counts.get(lifecycle_status, 0) + 1
+                )
+        if isinstance(lifecycle_counts, dict) and lifecycle_counts != expected_lifecycle_counts:
+            errors.append(
+                "inventory_profile lifecycle_status_counts must exactly match inventory_items"
+            )
+        if isinstance(source_date_summary, dict):
+            if source_date_summary.get("valid_count") != len(normalized_source_dates):
+                errors.append(
+                    "inventory_profile source_date_summary.valid_count must match inventory_items"
+                )
+            if normalized_source_dates:
+                if source_date_summary.get("earliest_date") != min(normalized_source_dates):
+                    errors.append(
+                        "inventory_profile source_date_summary.earliest_date must match inventory_items"
+                    )
+                if source_date_summary.get("latest_date") != max(normalized_source_dates):
+                    errors.append(
+                        "inventory_profile source_date_summary.latest_date must match inventory_items"
+                    )
+        if isinstance(sheets, list):
+            for index, sheet in enumerate(sheets):
+                if not isinstance(sheet, dict) or not isinstance(sheet.get("sheet"), str):
+                    continue
+                if sheet.get("rows") != actual_sheet_rows.get(sheet["sheet"], 0):
+                    errors.append(
+                        f"inventory_profile.sheets[{index}].rows must match inventory item sheet membership"
+                    )
 
 
 def validate_evidence_ledger(

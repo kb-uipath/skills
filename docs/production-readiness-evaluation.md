@@ -2,7 +2,7 @@
 
 This evaluation separates repository package quality from confidence that a skill produces its intended functional outcome and from evidence that its real operating path has been certified. A strong package is not the same thing as a certified live integration.
 
-Last verified: 2026-07-10
+Last verified: 2026-07-21
 
 ## Readiness Axes
 
@@ -33,7 +33,7 @@ The table is sorted by functional outcome confidence, then package quality. Live
 
 | Rank | Skill | Package quality | Functional confidence | Operational certification | Evidence | Blocking condition |
 | ---: | --- | ---: | ---: | --- | --- | --- |
-| 1 | `uipath-agentic-expansion-planner` | 9.5 | 9.2 | Offline workflow validated | Versioned profile/evidence/portfolio reconciliation, rubric `1.2`, bounded deterministic rendering, sparse/noisy/on-prem goldens, branded DOCX checks, and a fresh seven-row run scoring 5/4/5 for specificity, decision utility, and pilot actionability. | Source semantics, customer entitlements, rate assumptions, and real deployment feasibility still require account-team validation. |
+| 1 | `uipath-agentic-expansion-planner` | 9.5 | 9.2 | Offline workflow validated | Versioned `1.1` inventory profile plus evidence, portfolio, process-map, and semantic-review contracts; deterministic concise rendering; lifecycle and sparse/noisy/on-prem goldens; branded two-page DOCX checks; and a fresh 12-row multi-domain run producing an 899-word assessment that scored 4/5/5/4 for clarity, process specificity, decision utility, and account-team actionability. | Tenant capability and entitlement, deployment compatibility, data access, baselines, value, funding, and pilot approval still require customer and account-team validation. |
 | 2 | `llm-council` | 9.4 | 9.1 | Offline workflow validated | Published strict schema, question hashes, run/model and disjoint agent-ID evidence, seeded anonymization, atomic `0600` artifacts, 13 tests, and a true five-advisor/five-reviewer run plus separately labeled fallback scoring 5/5/5/4. | Future decisions still depend on framing, source data, and subagent availability; concrete child model IDs and production telemetry were not exposed or certified. |
 | 3 | `usecasehandoff` | 9.3 | 9.1 | Offline workflow validated | A fresh ready package produced exactly nine files and eight content hashes. Missing or changed local sources failed closed, restored evidence passed, and nine tests cover readiness, source integrity, owned risks, acceptance tests, first-sprint work, and the no-send boundary. | Remote HTTPS evidence cannot be byte-pinned when its declared hash is `N/A`; connector routing and destination permissions remain uncertified. |
 | 4 | `account-meeting-availability` | 9.3 | 9.0 | Offline workflow validated | A fresh 215-candidate run was byte-deterministic, emitted no emails, preserved full exclusion counts under bounded diagnostics, and used private modes. Twenty-five tests now include privacy-safe optional-attendee reasons and explicit Python runtime guidance. | Real Outlook free/busy freshness and completeness have not been connector-certified. |
@@ -50,7 +50,7 @@ These scores come from independent synthetic runs without expected output files.
 
 | Skill | Blunt outcome scores (1-5) | Residual finding |
 | --- | --- | --- |
-| `uipath-agentic-expansion-planner` | Specificity 5; decision utility 4; pilot actionability 5 | The 2,555-word brief was specific and actionable, but evidence semantics and entitlement assumptions remain human checks. |
+| `uipath-agentic-expansion-planner` | Clarity 4; process specificity 5; decision utility 5; account-team actionability 4 | The independent answer-blind reviewer found the two-page assessment workshop-usable with no structural blocker. Page-two density and recommendation-level mapping of TAM/AE timing remain bounded polish opportunities; deployment, entitlement, data-access, baseline, value, and approval items remain validation tasks. |
 | `usecasehandoff` | Evidence 4.5; specificity 5; delivery completeness 4.5; risk ownership 5; first-sprint actionability 5 | Local evidence is hash-bound; remote HTTPS evidence may be declared `N/A`. |
 | `account-meeting-availability` | Specificity 5; scheduling utility 4; determinism 5; privacy 5; actionability 4 | The forward test's optional-reason and truncation-test gaps now have deterministic coverage; real Outlook evidence remains uncertified. |
 | `gtm-org-proposal-generator` | Specificity 5; evidence coverage 4; value math 5; decision utility 4; actionability 5 | The output is pilot-authorizable, not yet an investment-grade business case. |

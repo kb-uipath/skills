@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.example.invalid/uipath-agentic-expansion-planner/semantic-review/v1",
+  "title": "UiPath Agentic Expansion Semantic Review v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "review_id",
+    "portfolio_id",
+    "process_map_id",
+    "reviewed_at",
+    "reviewer",
+    "artifact_hashes",
+    "opportunity_reviews",
+    "overall_readiness"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "review_id": { "type": "string", "pattern": "^REVIEW-[A-Z0-9][A-Z0-9._-]*$" },
+    "portfolio_id": { "type": "string", "pattern": "^PORTFOLIO-[A-Z0-9][A-Z0-9._-]*$" },
+    "process_map_id": { "type": "string", "pattern": "^PROCESS-MAP-[A-Z0-9][A-Z0-9._-]*$" },
+    "reviewed_at": { "type": "string", "format": "date" },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "id"],
+      "properties": {
+        "mode": { "enum": ["human", "independent_agent", "single_agent_fallback"] },
+        "id": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "artifact_hashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inventory_profile_sha256", "evidence_ledger_sha256", "portfolio_sha256", "process_map_sha256"],
+      "properties": {
+        "inventory_profile_sha256": { "$ref": "#/$defs/sha256" },
+        "evidence_ledger_sha256": { "$ref": "#/$defs/sha256" },
+        "portfolio_sha256": { "$ref": "#/$defs/sha256" },
+        "process_map_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "opportunity_reviews": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/opportunityReview" }
+    },
+    "overall_readiness": { "enum": ["exploratory", "workshop_ready", "pilot_authorizable"] }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "claimReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim_type", "judgment", "evidence_refs", "rationale"],
+      "properties": {
+        "claim_type": {
+          "description": "Review the correctness of the artifact's declared decision. For agentic_need, pass means evidence supports either applies or not_needed; it does not require an agent. A deterministic process with no evidenced judgment, ambiguity, or adaptive reasoning should pass when agentic is declared not_needed and should fail if an agent is forced into the design.",
+          "enum": ["inventory_support", "strategy_support", "process_coherence", "agentic_need", "capability_fit", "value_logic", "pilot_realism", "customer_language"]
+        },
+        "judgment": { "enum": ["pass", "needs_validation", "fail"] },
+        "evidence_refs": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/nonEmptyString" } },
+        "rationale": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "opportunityReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["opportunity_id", "claim_reviews", "blocking_findings"],
+      "properties": {
+        "opportunity_id": { "type": "string", "pattern": "^OPP-[A-Z0-9][A-Z0-9._-]*$" },
+        "claim_reviews": { "type": "array", "minItems": 8, "maxItems": 8, "items": { "$ref": "#/$defs/claimReview" } },
+        "blocking_findings": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/nonEmptyString" } }
+      }
+    }
+  }
+}

@@ -78,7 +78,7 @@ class PortfolioPipelineTests(unittest.TestCase):
                 with self.subTest(case=case):
                     profile, _profile_path = profile_case(case, root / case)
                     ledger, portfolio, _expected = case_artifacts(case)
-                    self.assertEqual(profile["schema_version"], "1.0")
+                    self.assertEqual(profile["schema_version"], "1.1")
                     self.assertEqual(
                         {item["inventory_id"] for item in profile["inventory_items"]},
                         set(ledger["inventory_profile"]["inventory_ids"]),
@@ -185,7 +185,7 @@ class PortfolioPipelineTests(unittest.TestCase):
                         )
                         self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(first.read_bytes(), second.read_bytes())
-                    self.assertEqual(profile["schema_version"], "1.0")
+                    self.assertEqual(profile["schema_version"], "1.1")
 
                     validation = subprocess.run(
                         [
@@ -433,7 +433,7 @@ class PortfolioPipelineTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(render.returncode, 0, render.stderr)
-            self.assertEqual(profile["schema_version"], "1.0")
+            self.assertEqual(profile["schema_version"], "1.1")
 
             partial = subprocess.run(
                 [
