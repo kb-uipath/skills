@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import re
+import subprocess
 import sys
 from datetime import date
 from pathlib import Path
@@ -93,9 +94,48 @@ REQ_PIN_RE = re.compile(
 )
 
 
+def git_visible_files(root: Path) -> list[Path] | None:
+    """Return tracked and non-ignored files when root is a Git worktree."""
+    try:
+        top_level = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
+        if Path(top_level).resolve() != root.resolve():
+            return None
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ],
+            check=True,
+            capture_output=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError, UnicodeDecodeError):
+        return None
+
+    return [
+        root / relative_path.decode("utf-8", errors="surrogateescape")
+        for relative_path in result.stdout.split(b"\0")
+        if relative_path
+    ]
+
+
 def text_files(root: Path = ROOT) -> list[Path]:
     files: list[Path] = []
-    for path in root.rglob("*"):
+    candidates = git_visible_files(root)
+    if candidates is None:
+        candidates = list(root.rglob("*"))
+    for path in candidates:
         if ".git" in path.parts or path.is_dir():
             continue
         try:

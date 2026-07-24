@@ -2,6 +2,15 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
+## Repository-Specific Beads Persistence
+
+This repository currently uses embedded Dolt with no configured Dolt remote.
+Use `bd history <issue-id>` for local lifecycle history and commit the
+Git-tracked `.beads/issues.jsonl` for shared, cross-clone state. Refresh it
+with `bd export -o .beads/issues.jsonl` before committing tracker changes.
+Do not run `bd dolt push` or `bd dolt pull` unless
+`bd dolt remote list` shows a configured remote.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 

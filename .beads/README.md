@@ -2,6 +2,15 @@
 
 Welcome to Beads! This repository uses **Beads** for issue tracking - a modern, AI-native tool designed to live directly in your codebase alongside your code.
 
+## Repository Persistence Model
+
+This repository currently uses embedded Dolt with no configured Dolt remote.
+`bd history <issue-id>` provides full lifecycle history in the local checkout.
+Shared, cross-clone state is carried by the Git-tracked
+`.beads/issues.jsonl`; refresh it with `bd export -o .beads/issues.jsonl`
+before committing tracker changes. Do not run `bd dolt push` or
+`bd dolt pull` unless `bd dolt remote list` shows a configured remote.
+
 ## What is Beads?
 
 Beads is issue tracking that lives in your repo, making it perfect for AI coding agents and developers who want their issues close to their code. No web UI required - everything works through the CLI and integrates seamlessly with git.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -268,6 +269,39 @@ jobs:
         errors = self.run_validator(mutate)
         self.assert_error_contains(errors, "local absolute path leak")
         self.assert_error_contains(errors, "possible secret material")
+
+    def test_ignores_gitignored_beads_runtime_but_scans_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.create_minimal_repo(root)
+            local_path = "/Users" + "/person/project"
+            self.write(root, ".gitignore", ".beads/embeddeddolt/\n")
+            self.write(
+                root,
+                ".beads/embeddeddolt/skills/.dolt/repo_state.json",
+                f'{{"data_path": "{local_path}/.beads/embeddeddolt"}}\n',
+            )
+            self.write(
+                root,
+                ".beads/config.yaml",
+                f"data-path: {local_path}/.beads\n",
+            )
+            subprocess.run(
+                ["git", "init", "--quiet"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+
+            errors = validate_repo.run_validation(root)
+
+        self.assert_error_contains(
+            errors, ".beads/config.yaml:1: local absolute path leak"
+        )
+        self.assertFalse(
+            any("embeddeddolt" in error for error in errors),
+            f"ignored Beads runtime leaked into validation: {errors}",
+        )
 
     def test_rejects_non_exact_dependency_pin(self) -> None:
         def mutate(root: Path) -> None:
