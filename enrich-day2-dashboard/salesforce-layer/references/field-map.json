@@ -1,0 +1,124 @@
+{
+  "version": "salesforce-day2-field-map/v1",
+  "dashboardSchemaVersion": "1.4",
+  "account": {
+    "requiredFields": [
+      "Id",
+      "Name",
+      "LastModifiedDate"
+    ],
+    "optionalFields": [
+      "Segmentation_CS_3_0__c",
+      "Region__c",
+      "Earliest_Renewal_Expiry_Date__c",
+      "Utilization_Users__c",
+      "Utilization_Robots__c",
+      "Utilization_Consumables__c",
+      "Health_Score_Label__c",
+      "Last_QBR__c",
+      "Last_EBC__c"
+    ]
+  },
+  "mappings": [
+    {
+      "source": ["Name"],
+      "target": "customerName",
+      "rule": "Exact identity. A different existing value is a hard stop."
+    },
+    {
+      "source": ["Segmentation_CS_3_0__c", "Region__c"],
+      "target": "segment",
+      "rule": "Join nonblank literal values with ' | '."
+    },
+    {
+      "source": ["Earliest_Renewal_Expiry_Date__c"],
+      "target": "renewalDate",
+      "rule": "Copy only an exact ISO date-only value."
+    },
+    {
+      "source": ["Utilization_Users__c"],
+      "target": "metrics.utilization.users",
+      "rule": "Append '%' to the supplied numeric literal. Never calculate or clamp."
+    },
+    {
+      "source": ["Utilization_Robots__c"],
+      "target": "metrics.utilization.robots",
+      "rule": "Append '%' to the supplied numeric literal. Never calculate or clamp."
+    },
+    {
+      "source": ["Utilization_Consumables__c"],
+      "target": "metrics.utilization.consumables",
+      "rule": "Append '%' to the supplied numeric literal. Never calculate or clamp."
+    },
+    {
+      "source": ["Health_Score_Label__c"],
+      "target": "health.overall",
+      "rule": "Map only exact literal Red or Green and add source-field evidence. Skip Yellow and every other value."
+    },
+    {
+      "source": ["Last_QBR__c", "Last_EBC__c"],
+      "target": "timeline and executiveCadence",
+      "rule": "Append exact historical events. Use the latest valid date for the single cadence summary; on an exact date tie, prefer Last EBC deterministically."
+    },
+    {
+      "source": ["Id", "LastModifiedDate", "accepted mapping fields"],
+      "target": "sourceNotes",
+      "rule": "Append one marker-keyed, de-duplicated provenance block."
+    }
+  ],
+  "assets": {
+    "filter": "Status = 'Purchased'",
+    "directCandidateFields": [
+      "Id",
+      "Product2Id",
+      "Quantity",
+      "CurrentQuantity",
+      "UsageEndDate",
+      "CurrentLifecycleEndDate",
+      "LifecycleEndDate",
+      "End_Date__c",
+      "SBQQ__SubscriptionStartDate__c",
+      "SBQQ__SubscriptionEndDate__c"
+    ],
+    "productCandidateFields": [
+      "Name",
+      "Family"
+    ],
+    "endDatePrecedence": [
+      "CurrentLifecycleEndDate",
+      "LifecycleEndDate",
+      "UsageEndDate",
+      "End_Date__c",
+      "SBQQ__SubscriptionEndDate__c"
+    ],
+    "rule": "Report purchased records as dated-current, expired, or undated manual-review candidates. Never write candidates to dashboard JSON."
+  },
+  "neverMap": [
+    "currentArr",
+    "motion",
+    "deploymentType",
+    "deliveryModel",
+    "soldProducts",
+    "useCases",
+    "tagline",
+    "statusSummary",
+    "metrics.savings",
+    "metrics.automations",
+    "metrics.agentic",
+    "metrics.pipeline",
+    "health.agenticReadiness",
+    "health.execSponsors",
+    "health.effectiveAom",
+    "health.lobEngagement",
+    "health.valueRealization",
+    "health.pipelineQuality",
+    "health.resourcingModel",
+    "health.customerAdvocacy",
+    "relationships",
+    "goals",
+    "cadenceGoals",
+    "workstreams",
+    "eltAsks",
+    "consumptionPlan"
+  ]
+}

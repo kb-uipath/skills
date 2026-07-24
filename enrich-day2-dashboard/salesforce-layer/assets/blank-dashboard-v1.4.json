@@ -1,0 +1,112 @@
+{
+  "schemaVersion": "1.4",
+  "customerName": "",
+  "tagline": "",
+  "segment": "",
+  "motion": "",
+  "currentArr": "",
+  "renewalDate": "",
+  "deploymentType": "",
+  "deliveryModel": "",
+  "soldProducts": "",
+  "useCases": "",
+  "statusSummary": "",
+  "sourceNotes": "",
+  "healthConflictAcknowledged": false,
+  "motionAnswers": {},
+  "metrics": {
+    "savings": {
+      "value": "",
+      "note": ""
+    },
+    "automations": {
+      "value": "",
+      "note": ""
+    },
+    "agentic": {
+      "value": "",
+      "note": ""
+    },
+    "pipeline": {
+      "value": "",
+      "note": ""
+    },
+    "utilization": {
+      "users": "",
+      "robots": "",
+      "consumables": ""
+    }
+  },
+  "health": {
+    "overall": {
+      "status": "",
+      "evidence": "",
+      "mitigation": "",
+      "owner": ""
+    },
+    "agenticReadiness": {
+      "status": "",
+      "evidence": "",
+      "mitigation": "",
+      "owner": ""
+    },
+    "execSponsors": {
+      "status": "",
+      "evidence": "",
+      "mitigation": "",
+      "owner": ""
+    },
+    "effectiveAom": {
+      "status": "",
+      "evidence": "",
+      "mitigation": "",
+      "owner": ""
+    },
+    "lobEngagement": {
+      "status": "",
+      "evidence": "",
+      "mitigation": "",
+      "owner": ""
+    },
+    "valueRealization": {
+      "status": "",
+      "evidence": "",
+      "mitigation": "",
+      "owner": ""
+    },
+    "pipelineQuality": {
+      "status": "",
+      "evidence": "",
+      "mitigation": "",
+      "owner": ""
+    },
+    "resourcingModel": {
+      "status": "",
+      "evidence": "",
+      "mitigation": "",
+      "owner": ""
+    },
+    "customerAdvocacy": {
+      "status": "",
+      "evidence": "",
+      "mitigation": "",
+      "owner": ""
+    }
+  },
+  "goals": [],
+  "executiveCadence": {
+    "type": "nextQbr",
+    "date": ""
+  },
+  "cadenceGoals": [],
+  "workstreams": [],
+  "consumptionPlan": {
+    "asOf": "",
+    "forecastPeriod": "",
+    "groups": []
+  },
+  "relationships": [],
+  "eltAsks": [],
+  "timeline": [],
+  "sources": []
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex/skills/enrich-day2-dashboard/clarification-answers.schema.json",
+  "title": "Day 2 Clarification Answers",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "previewDigest", "answeredAt", "answers"],
+  "properties": {
+    "kind": { "const": "day2-clarification-answers/v1" },
+    "previewDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "answeredAt": { "type": "string", "format": "date-time" },
+    "answers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["questionId", "status", "response"],
+        "properties": {
+          "questionId": { "type": "string", "pattern": "^Q-[a-f0-9]{20}$" },
+          "status": { "enum": ["answered", "unknown", "skipped"] },
+          "response": { "type": "string", "maxLength": 4000 }
+        }
+      }
+    }
+  }
+}

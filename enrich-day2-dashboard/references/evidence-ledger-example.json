@@ -1,0 +1,90 @@
+{
+  "kind": "day2-evidence-ledger",
+  "version": "2",
+  "dashboardSchemaVersion": "1.4",
+  "policyVersion": "day2-evidence-policy/v2",
+  "account": {
+    "salesforceOrgId": "00D000000000001",
+    "salesforceAccountId": "001000000000001",
+    "canonicalName": "Example Agency",
+    "aliases": ["Example"],
+    "domains": ["example.invalid"],
+    "contacts": [
+      {
+        "name": "Customer Owner",
+        "email": "owner@example.invalid"
+      }
+    ]
+  },
+  "scope": {
+    "sources": ["sharepoint"],
+    "windowStart": "2026-01-25",
+    "windowEnd": "2026-07-24",
+    "foundationalSourceIds": [],
+    "privateSlackConsent": false,
+    "privateSlackScopes": [],
+    "oneNoteSelections": [],
+    "discoveryRuns": [
+      {
+        "sourceType": "sharepoint",
+        "tenantId": "example-tenant",
+        "scope": "Account-specific folder",
+        "containerIds": ["sharepoint-folder-example-agency"],
+        "queryDigest": "sha256:ef5c2c1d428e88e1e2c0a020f5f9ae6f7f759894e9b17ec7fb03dfd617840fc9",
+        "pages": 1,
+        "complete": true,
+        "limitations": [],
+        "verifiedAt": ""
+      }
+    ],
+    "coverageNotes": [],
+    "collectedAt": "2026-07-23T09:30:00Z"
+  },
+  "items": [
+    {
+      "ref": "account-plan",
+      "sourceType": "sharepoint",
+      "tenantId": "example-tenant",
+      "visibility": "internal",
+      "sourceId": "drive-item-example",
+      "sourceUrl": "https://example.invalid/sites/accounts/example-plan",
+      "container": "sharepoint-folder-example-agency",
+      "title": "Example Agency validated account plan",
+      "author": {
+        "name": "Account Owner",
+        "kind": "uipath"
+      },
+      "occurredAt": "2026-07-20",
+      "modifiedAt": "2026-07-20T15:00:00Z",
+      "retrievedAt": "2026-07-23T09:00:00Z",
+      "verifiedAt": "",
+      "freshnessMode": "stable-id",
+      "contentDigest": "sha256:7ebd3a1d5fa1d4ab3e168337c0d98643a02062f5a0bf9b486fcc4f89e516bff1",
+      "excerpt": "Production adoption advanced and the named owner will close the remaining gate.",
+      "accountMatch": {
+        "signals": ["canonical-name", "container"],
+        "rationale": "The canonical account name appears inside its account-specific folder."
+      },
+      "claimClass": "actual",
+      "authority": "validated-account-document",
+      "limitations": []
+    }
+  ],
+  "proposals": [
+    {
+      "ref": "headline",
+      "targetPath": "/tagline",
+      "operation": "set",
+      "value": "Production adoption is advancing with accountable execution.",
+      "semanticKey": "",
+      "evidenceRefs": ["account-plan"],
+      "claimClass": "actual",
+      "claimAnnotations": [],
+      "rationale": "The validated account plan explicitly reports production progress and ownership.",
+      "position": null
+    }
+  ],
+  "gaps": [
+    "No product telemetry was supplied for actual consumption."
+  ]
+}
