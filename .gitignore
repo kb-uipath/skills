@@ -8,3 +8,8 @@ __pycache__/
 node_modules/
 output/
 work/day2/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
