@@ -4,7 +4,7 @@ Each page describes when to use the skill, what inputs to provide, and a starter
 
 See [production-readiness-evaluation.md](./production-readiness-evaluation.md) for separate package-quality, functional-confidence, and operational-certification evidence. Prior single scores are historical only.
 
-Last verified: 2026-07-10
+Last verified: 2026-07-24
 
 ## Documentation Contract
 
@@ -14,7 +14,7 @@ Do not claim full production certification from local validation alone. Certific
 
 ## Latest Readiness Snapshot
 
-All 10 remaining skills meet the package-quality Org Baseline, but no live-write skill is operationally certified. The highest functional-confidence skills are:
+All 11 skills meet the package-quality Org Baseline, but no live-write skill is operationally certified. The highest functional-confidence skills are:
 
 | Rank | Skill | Package | Functional | Certification |
 | ---: | --- | ---: | ---: | --- |
@@ -27,6 +27,7 @@ Run `make validate` from the repo root before sharing changes. Use a Python runt
 | Skill | Category | Docs |
 | --- | --- | --- |
 | account-meeting-availability | Customer operations | [account-meeting-availability.md](./account-meeting-availability.md) |
+| enrich-day2-dashboard | Customer operations | [enrich-day2-dashboard.md](./enrich-day2-dashboard.md) |
 | estimate-du-units | Consumption planning | [estimate-du-units.md](./estimate-du-units.md) |
 | gtm-org-proposal-generator | GTM and executive proposals | [gtm-org-proposal-generator.md](./gtm-org-proposal-generator.md) |
 | llm-council | Decision support | [llm-council.md](./llm-council.md) |

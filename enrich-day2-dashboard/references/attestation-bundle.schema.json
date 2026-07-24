@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex/skills/enrich-day2-dashboard/attestation-bundle.schema.json",
+  "title": "Day 2 Account-Team Attestation Bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "dashboardSchemaVersion",
+    "policyVersion",
+    "account",
+    "inputDigest",
+    "sourceEvidenceDigest",
+    "questionPlanDigests",
+    "answerDigests",
+    "createdAt",
+    "records",
+    "integrityDigest"
+  ],
+  "properties": {
+    "kind": { "const": "day2-account-team-attestations/v1" },
+    "dashboardSchemaVersion": { "const": "1.4" },
+    "policyVersion": { "const": "day2-evidence-policy/v2" },
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["salesforceOrgId", "salesforceAccountId", "canonicalName"],
+      "properties": {
+        "salesforceOrgId": { "type": "string", "minLength": 1 },
+        "salesforceAccountId": { "type": "string", "pattern": "^001[A-Za-z0-9]{12}([A-Za-z0-9]{3})?$" },
+        "canonicalName": { "type": "string", "minLength": 1 }
+      }
+    },
+    "inputDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "sourceEvidenceDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "questionPlanDigests": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+      "uniqueItems": true
+    },
+    "answerDigests": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+      "uniqueItems": true
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ref",
+          "questionId",
+          "policyKey",
+          "status",
+          "response",
+          "responseDigest",
+          "answeredAt",
+          "questionPlanDigest",
+          "allowedTargetPaths",
+          "allowedClaimClasses"
+        ],
+        "properties": {
+          "ref": { "type": "string", "pattern": "^A-[a-f0-9]{20}$" },
+          "questionId": { "type": "string", "pattern": "^Q-[a-f0-9]{20}$" },
+          "policyKey": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["answered", "unknown", "skipped"] },
+          "response": { "type": "string", "maxLength": 4000 },
+          "responseDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+          "answeredAt": { "type": "string", "format": "date-time" },
+          "questionPlanDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+          "allowedTargetPaths": {
+            "type": "array",
+            "items": { "type": "string" },
+            "uniqueItems": true
+          },
+          "allowedClaimClasses": {
+            "type": "array",
+            "items": { "enum": ["actual", "target", "plan", "risk", "opinion"] },
+            "uniqueItems": true
+          }
+        }
+      }
+    },
+    "integrityDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}

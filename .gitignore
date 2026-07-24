@@ -5,3 +5,6 @@
 *.zip
 __pycache__/
 .pytest_cache/
+node_modules/
+output/
+work/day2/

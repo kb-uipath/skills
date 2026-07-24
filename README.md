@@ -4,11 +4,11 @@ This repository contains Codex skills packaged for public GitHub use and broader
 
 The skills are copied as top-level directories so they can be installed or synced directly into a Codex skills folder. The `docs/` folder contains usage notes, required inputs, and example prompts for each skill.
 
-Last verified: 2026-07-10
+Last verified: 2026-07-24
 
 ## What is included
 
-- 10 top-level Codex skills.
+- 11 top-level Codex skills.
 - Per-skill `SKILL.md` files plus bundled references, scripts, assets, and templates.
 - Skill-specific documentation in `docs/` with inputs, prompts, outputs, safety notes, and validation commands.
 - Repo-level validation through `make validate`, `tools/validate_repo.py`, Python unit tests, Node tests, syntax checks, and whitespace checks.
@@ -16,7 +16,7 @@ Last verified: 2026-07-10
 
 ## Latest validated state
 
-As of 2026-07-10, all 10 skills meet the package-quality Org Baseline. Fresh offline forward tests also cover the planner, handoff, availability, GTM proposal, and true five-advisor/five-review council workflows. Readiness is no longer represented by one score: the repository tracks package quality, functional outcome confidence, and operational certification separately. Salesforce and coded-app deployment remain explicitly uncertified until their opt-in nonproduction workflows run successfully.
+As of 2026-07-24, all 11 skills meet the package-quality Org Baseline. Fresh offline forward tests also cover the planner, handoff, availability, GTM proposal, true five-advisor/five-review council, and adaptive Day 2 JSON workflows. Readiness is no longer represented by one score: the repository tracks package quality, functional outcome confidence, and operational certification separately. Salesforce and coded-app deployment remain explicitly uncertified until their opt-in nonproduction workflows run successfully.
 
 See [docs/production-readiness-evaluation.md](./docs/production-readiness-evaluation.md) for the sorted three-axis table, evidence, blockers, and the superseded historical score comparison.
 
@@ -103,6 +103,7 @@ make validate PYTHON=/path/to/python-with-document-dependencies
 | Skill | Production outcome | Use when | Docs |
 | --- | --- | --- | --- |
 | [account-meeting-availability](./account-meeting-availability/SKILL.md) | Maintains a private versioned contact store and ranks slots with privacy-safe availability reasons and bounded diagnostics. | Contact identity, email review, attendee preparation, or deterministic availability ranking is required without sending or scheduling. | [docs](./docs/account-meeting-availability.md) |
+| [enrich-day2-dashboard](./enrich-day2-dashboard/SKILL.md) | Builds a schema `1.4` Day 2 dashboard through exact-safe Salesforce seeding, scoped evidence, bounded clarification, and proposal-level approval. | An account team needs executive-ready JSON while keeping protected facts evidence-backed and unsupported gaps explicit. | [docs](./docs/enrich-day2-dashboard.md) |
 | [estimate-du-units](./estimate-du-units/SKILL.md) | Produces versioned exact and rounded DU consumption scenarios from verified rate inputs. | A customer needs a defensible AI Unit or Platform Unit estimate with applicability rationale and current source dates. | [docs](./docs/estimate-du-units.md) |
 | [gtm-org-proposal-generator](./gtm-org-proposal-generator/SKILL.md) | Validates and renders evidence-backed proposal cards with source-aligned card and aggregate value math. | Public authoritative research must become deployment-aware GTM recommendations without fabricated impact claims. | [docs](./docs/gtm-org-proposal-generator.md) |
 | [llm-council](./llm-council/SKILL.md) | Produces a hashed five-advisor/five-review decision record with seeded anonymization, execution evidence, and truthful fallback. | A consequential decision needs independent challenge, disconfirming evidence, and an explicit chairman verdict. | [docs](./docs/llm-council.md) |

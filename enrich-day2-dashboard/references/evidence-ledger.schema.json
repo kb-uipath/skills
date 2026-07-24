@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex/skills/enrich-day2-dashboard/evidence-ledger.schema.json",
+  "title": "Day 2 Evidence Ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "dashboardSchemaVersion",
+    "policyVersion",
+    "account",
+    "scope",
+    "items",
+    "proposals",
+    "gaps"
+  ],
+  "properties": {
+    "kind": { "const": "day2-evidence-ledger" },
+    "version": { "const": "2" },
+    "dashboardSchemaVersion": { "const": "1.4" },
+    "policyVersion": { "const": "day2-evidence-policy/v2" },
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["salesforceOrgId", "salesforceAccountId", "canonicalName", "aliases", "domains", "contacts"],
+      "properties": {
+        "salesforceOrgId": { "type": "string", "minLength": 1 },
+        "salesforceAccountId": { "type": "string", "pattern": "^001[A-Za-z0-9]{12}([A-Za-z0-9]{3})?$" },
+        "canonicalName": { "type": "string", "minLength": 1 },
+        "aliases": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "domains": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "contacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "email"],
+            "properties": {
+              "name": { "type": "string" },
+              "email": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sources",
+        "windowStart",
+        "windowEnd",
+        "foundationalSourceIds",
+        "privateSlackConsent",
+        "privateSlackScopes",
+        "oneNoteSelections",
+        "discoveryRuns",
+        "coverageNotes",
+        "collectedAt"
+      ],
+      "properties": {
+        "sources": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "salesforce",
+              "sharepoint",
+              "onedrive",
+              "outlook-email",
+              "outlook-attachment",
+              "slack-public",
+              "slack-private",
+              "slack-dm",
+              "teams",
+              "outlook-calendar",
+              "local-file",
+              "telemetry",
+              "onenote",
+              "public-web"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "windowStart": { "type": "string", "format": "date" },
+        "windowEnd": { "type": "string", "format": "date" },
+        "foundationalSourceIds": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true,
+          "$comment": "Exact stable source IDs explicitly selected by the user as older foundational evidence. Each ID must resolve to exactly one ledger item."
+        },
+        "privateSlackConsent": { "type": "boolean" },
+        "privateSlackScopes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true,
+          "$comment": "Exact consented parent-container IDs. Private evidence must match one here and in its discovery run containerIds."
+        },
+        "oneNoteSelections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["notebook", "section", "page", "sourceId", "captureDigest"],
+            "properties": {
+              "notebook": { "type": "string", "minLength": 1 },
+              "section": { "type": "string", "minLength": 1 },
+              "page": { "type": "string", "minLength": 1 },
+              "sourceId": { "type": "string", "minLength": 1 },
+              "captureDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+            }
+          },
+          "$comment": "Each selected sourceId must resolve to exactly one collected OneNote item with the same capture digest."
+        },
+        "discoveryRuns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sourceType", "tenantId", "scope", "containerIds", "queryDigest", "pages", "complete", "limitations", "verifiedAt"],
+            "properties": {
+              "sourceType": {
+                "enum": [
+                  "salesforce",
+                  "sharepoint",
+                  "onedrive",
+                  "outlook-email",
+                  "outlook-attachment",
+                  "slack-public",
+                  "slack-private",
+                  "slack-dm",
+                  "teams",
+                  "outlook-calendar",
+                  "local-file",
+                  "telemetry",
+                  "onenote",
+                  "public-web"
+                ]
+              },
+              "tenantId": { "type": "string", "minLength": 1 },
+              "scope": {
+                "type": "string",
+                "minLength": 1,
+                "$comment": "For slack-private and slack-dm, use sorted exact parent filters joined by OR, such as in:C123 OR in:D456. The deterministic helper enforces this canonical form."
+              },
+              "containerIds": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "uniqueItems": true
+              },
+              "queryDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+              "pages": { "type": "integer", "minimum": 1 },
+              "complete": { "type": "boolean" },
+              "limitations": { "type": "array", "items": { "type": "string" } },
+              "verifiedAt": { "type": "string" }
+            }
+          }
+        },
+        "coverageNotes": { "type": "array", "items": { "type": "string" } },
+        "collectedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "items": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ref",
+          "sourceType",
+          "tenantId",
+          "visibility",
+          "sourceId",
+          "sourceUrl",
+          "container",
+          "title",
+          "author",
+          "occurredAt",
+          "modifiedAt",
+          "retrievedAt",
+          "verifiedAt",
+          "freshnessMode",
+          "contentDigest",
+          "excerpt",
+          "accountMatch",
+          "claimClass",
+          "authority",
+          "limitations"
+        ],
+        "properties": {
+          "ref": { "type": "string", "minLength": 1 },
+          "sourceType": {
+            "enum": [
+              "salesforce",
+              "sharepoint",
+              "onedrive",
+              "outlook-email",
+              "outlook-attachment",
+              "slack-public",
+              "slack-private",
+              "slack-dm",
+              "teams",
+              "outlook-calendar",
+              "local-file",
+              "telemetry",
+              "onenote",
+              "public-web"
+            ]
+          },
+          "tenantId": { "type": "string", "minLength": 1 },
+          "visibility": { "enum": ["public", "private", "dm", "internal", "external", "local", "unknown"] },
+          "sourceId": { "type": "string", "minLength": 1 },
+          "sourceUrl": { "type": "string" },
+          "container": { "type": "string" },
+          "title": { "type": "string" },
+          "author": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "kind"],
+            "properties": {
+              "name": { "type": "string" },
+              "kind": { "enum": ["customer", "uipath", "system", "public", "unknown"] }
+            }
+          },
+          "occurredAt": {
+            "oneOf": [
+              { "const": "" },
+              { "type": "string", "format": "date" },
+              { "type": "string", "format": "date-time" }
+            ]
+          },
+          "modifiedAt": {
+            "oneOf": [
+              { "const": "" },
+              { "type": "string", "format": "date" },
+              { "type": "string", "format": "date-time" }
+            ]
+          },
+          "retrievedAt": { "type": "string", "format": "date-time" },
+          "verifiedAt": {
+            "oneOf": [
+              { "const": "" },
+              { "type": "string", "format": "date-time" }
+            ]
+          },
+          "freshnessMode": { "enum": ["stable-id", "snapshot"] },
+          "contentDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+          "excerpt": { "type": "string", "maxLength": 1200 },
+          "accountMatch": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["signals", "rationale"],
+            "properties": {
+              "signals": {
+                "type": "array",
+                "items": {
+                  "enum": ["canonical-name", "alias", "domain", "contact", "container", "explicit-link"]
+                },
+                "uniqueItems": true
+              },
+              "rationale": { "type": "string", "minLength": 1 }
+            }
+          },
+          "claimClass": { "enum": ["actual", "target", "plan", "risk", "opinion", "meeting-scheduled"] },
+          "authority": {
+            "enum": [
+              "salesforce-exact",
+              "contract-order",
+              "license-record",
+              "product-telemetry",
+              "validated-account-document",
+              "customer-statement",
+              "internal-operations",
+              "calendar-event",
+              "personal-note",
+              "public-web"
+            ]
+          },
+          "limitations": { "type": "array", "items": { "type": "string" } }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "sourceType": { "const": "salesforce" } }, "required": ["sourceType"] },
+            "then": { "properties": { "authority": { "const": "salesforce-exact" } } }
+          },
+          {
+            "if": {
+              "properties": {
+                "sourceType": {
+                  "enum": ["sharepoint", "onedrive", "outlook-attachment", "local-file"]
+                }
+              },
+              "required": ["sourceType"]
+            },
+            "then": {
+              "properties": {
+                "authority": {
+                  "enum": ["contract-order", "license-record", "validated-account-document"]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "sourceType": {
+                  "enum": ["outlook-email", "slack-public", "slack-private", "slack-dm", "teams"]
+                }
+              },
+              "required": ["sourceType"]
+            },
+            "then": {
+              "properties": {
+                "authority": { "enum": ["customer-statement", "internal-operations"] }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "sourceType": { "const": "telemetry" } }, "required": ["sourceType"] },
+            "then": { "properties": { "authority": { "const": "product-telemetry" } } }
+          },
+          {
+            "if": { "properties": { "sourceType": { "const": "outlook-calendar" } }, "required": ["sourceType"] },
+            "then": { "properties": { "authority": { "const": "calendar-event" } } }
+          },
+          {
+            "if": { "properties": { "sourceType": { "const": "onenote" } }, "required": ["sourceType"] },
+            "then": { "properties": { "authority": { "const": "personal-note" } } }
+          },
+          {
+            "if": { "properties": { "sourceType": { "const": "public-web" } }, "required": ["sourceType"] },
+            "then": { "properties": { "authority": { "const": "public-web" } } }
+          },
+          {
+            "if": { "properties": { "authority": { "const": "customer-statement" } }, "required": ["authority"] },
+            "then": { "properties": { "author": { "properties": { "kind": { "const": "customer" } } } } }
+          },
+          {
+            "if": { "properties": { "authority": { "const": "internal-operations" } }, "required": ["authority"] },
+            "then": { "properties": { "author": { "properties": { "kind": { "enum": ["uipath", "system"] } } } } }
+          },
+          {
+            "if": { "properties": { "authority": { "const": "public-web" } }, "required": ["authority"] },
+            "then": { "properties": { "author": { "properties": { "kind": { "const": "public" } } } } }
+          }
+        ],
+        "$comment": "Window and foundational-source eligibility, exact private Slack container matching, and OneNote corroboration are enforced by the deterministic helper."
+      }
+    },
+    "proposals": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ref",
+          "targetPath",
+          "operation",
+          "value",
+          "semanticKey",
+          "evidenceRefs",
+          "claimClass",
+          "claimAnnotations",
+          "rationale",
+          "position"
+        ],
+        "properties": {
+          "ref": { "type": "string", "minLength": 1 },
+          "targetPath": { "type": "string", "pattern": "^/" },
+          "operation": { "enum": ["set", "insert", "update"] },
+          "value": {},
+          "semanticKey": { "type": "string" },
+          "evidenceRefs": { "type": "array", "items": { "type": "string" }, "minItems": 1, "uniqueItems": true },
+          "claimClass": { "enum": ["actual", "target", "plan", "risk", "opinion", "meeting-scheduled", "mixed"] },
+          "claimAnnotations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["locator", "claimClass", "evidenceRefs"],
+              "properties": {
+                "locator": { "type": "string", "minLength": 1 },
+                "claimClass": { "enum": ["actual", "target", "plan", "risk", "opinion", "meeting-scheduled"] },
+                "evidenceRefs": { "type": "array", "items": { "type": "string" }, "minItems": 1, "uniqueItems": true }
+              }
+            }
+          },
+          "rationale": { "type": "string", "minLength": 1 },
+          "position": {
+            "oneOf": [
+              { "type": "null" },
+              { "const": "append" },
+              { "type": "integer", "minimum": 1 }
+            ]
+          }
+        }
+      }
+    },
+    "gaps": { "type": "array", "items": { "type": "string" } }
+  }
+}
