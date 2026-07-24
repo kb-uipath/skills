@@ -4,12 +4,19 @@ This file provides instructions and context for AI coding agents working on this
 
 ## Repository-Specific Beads Persistence
 
-This repository currently uses embedded Dolt with no configured Dolt remote.
-Use `bd history <issue-id>` for local lifecycle history and commit the
-Git-tracked `.beads/issues.jsonl` for shared, cross-clone state. Refresh it
-with `bd export -o .beads/issues.jsonl` before committing tracker changes.
-Do not run `bd dolt push` or `bd dolt pull` unless
-`bd dolt remote list` shows a configured remote.
+These repository-specific rules override the generic integration text below.
+Complete Beads history is published to this GitHub repository at
+`refs/dolt/data`; use explicit `bd dolt pull` and `bd dolt push`, never
+`--force`. The Git-tracked `.beads/issues.jsonl` is current state,
+`.beads/history.jsonl` is a deduplicated issue-field review projection, and
+`.beads/history-manifest.json` hashes both while anchoring the native Dolt
+head. On a fresh clone, run `chmod 700 .beads`, `bd bootstrap --yes`,
+`git config beads.role maintainer`, and `bd hooks install --beads`; never run
+plain `bd init` over the tracked snapshot. Maintainers must run
+`make beads-history-export` before committing tracker changes. CI and imported
+clones must only run `make beads-history-check`. All Beads content and history
+are public, so never store secrets, customer-confidential data, credentials,
+tokens, or local paths.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker

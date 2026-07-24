@@ -23,9 +23,9 @@
 # Default actor for audit trails (overridden by BEADS_ACTOR or --actor)
 # actor: ""
 
-# Export events (audit trail) to .beads/events.jsonl on each flush/sync
-# When enabled, new events are appended incrementally using a high-water mark.
-# Use 'bd export --events' to trigger manually regardless of this setting.
+# Beads 1.0.3 does not implement the events-export template option or
+# `bd export --events`. Do not rely on it for shared history; use the native
+# Dolt remote plus tools/beads_history.py.
 # events-export: false
 
 # Multi-repo configuration (experimental - bd-307)
@@ -52,3 +52,5 @@
 # - linear.api-key
 # - github.org
 # - github.repo
+
+sync.remote: "git+ssh://git@github.com/kb-uipath/skills.git"

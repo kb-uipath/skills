@@ -39,6 +39,7 @@ Last verified: 2026-07-10
 ## Governance
 """,
         )
+
         self.write(
             root,
             "docs/README.md",
@@ -173,6 +174,40 @@ jobs:
 Report sensitive findings through a private advisory.
 """,
         )
+
+    def test_decoded_json_scan_rejects_escaped_windows_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            path = root / "history.jsonl"
+            self.write(
+                root,
+                "history.jsonl",
+                '{"event":"{\\"path\\":\\"C:\\\\\\\\Users\\\\\\\\person\\\\\\\\cache\\"}"}\n',
+            )
+
+            errors = validate_repo.validate_no_local_paths([path], root)
+
+            self.assertEqual(
+                ["history.jsonl: decoded JSON value contains a local absolute path"],
+                errors,
+            )
+
+    def test_decoded_json_scan_rejects_nested_secret(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            path = root / "history.jsonl"
+            self.write(
+                root,
+                "history.jsonl",
+                '{"event":"{\\"api_key\\":\\"abcdefghijklmnopqrstuvwx\\"}"}\n',
+            )
+
+            errors = validate_repo.validate_no_secrets([path], root)
+
+            self.assertEqual(
+                ["history.jsonl: decoded JSON value contains possible secret material"],
+                errors,
+            )
 
     def run_validator(self, mutate=None) -> list[str]:
         with tempfile.TemporaryDirectory() as tmp:

@@ -5,14 +5,27 @@ build work. Run `bd prime` at the start of substantive work.
 
 ## Repository-Specific Persistence
 
-This repository currently uses embedded Dolt with no configured Dolt remote.
+These repository-specific rules override the generic integration text below.
 
-- Local lifecycle history is available through `bd history <issue-id>`.
-- Shared, cross-clone state is the Git-tracked `.beads/issues.jsonl`.
-- Before committing, refresh that snapshot with
-  `bd export -o .beads/issues.jsonl`.
-- Do not run `bd dolt push` or `bd dolt pull` unless
-  `bd dolt remote list` shows a configured remote.
+- The complete Beads database and lifecycle history are published to this
+  GitHub repository at `refs/dolt/data`. Use explicit `bd dolt pull` and
+  `bd dolt push`; never use `--force`.
+- `.beads/issues.jsonl` is the current-state interchange snapshot.
+- `.beads/history.jsonl` is a deduplicated issue-field projection for normal
+  GitHub and pull-request review. It is not the recovery source and does not
+  include relational history such as labels, dependencies, or comments.
+- `.beads/history-manifest.json` hashes both tracked artifacts and anchors them
+  to the native Dolt head.
+- On a fresh clone, run `chmod 700 .beads`, `bd bootstrap --yes`,
+  `git config beads.role maintainer`, and `bd hooks install --beads`. Never run
+  plain `bd init` over the tracked snapshot.
+- Before committing tracker changes, run `make beads-history-export`. CI and
+  fresh clones must run only `make beads-history-check`; regenerating from an
+  imported snapshot would truncate the review projection.
+- Treat every Beads field and historical value as public. Never put secrets,
+  customer-confidential data, credentials, tokens, or local paths in an issue.
+- Finish by committing all three tracked Beads artifacts, pushing Dolt history with
+  `bd dolt push`, and then pushing Git.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:full hash:f65d5d33 -->
 ## Issue Tracking with bd (beads)
