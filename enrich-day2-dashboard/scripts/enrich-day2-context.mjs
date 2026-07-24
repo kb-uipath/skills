@@ -14,11 +14,11 @@ import {
   createPreviewDocument,
   loadAttestationBundle,
   loadClarificationAnswersFile,
+  loadContextPreview,
   loadDashboard,
   loadEvidenceLedger,
-  readJsonFile,
+  loadSalesforceRevalidationReceipt,
   slugify,
-  validatePreviewDocument,
   writeJsonAtomic,
 } from "./day2-context-lib.mjs";
 
@@ -27,7 +27,7 @@ const HELP = `Evidence-Backed Direct-JSON Day 2 Enricher
 Usage:
   node enrich-day2-context.mjs preview --input <dashboard.json> --salesforce-report <mapping-report.json> --evidence <ledger.json> [options]
   node enrich-day2-context.mjs clarify --preview <preview.json> --answers <answers.json> [options]
-  node enrich-day2-context.mjs build --preview <preview.json> --evidence <refreshed-ledger.json> [options]
+  node enrich-day2-context.mjs build --preview <preview.json> --evidence <refreshed-ledger.json> --salesforce-revalidation <receipt.json> [options]
   node enrich-day2-context.mjs self-test
 
 Preview options:
@@ -42,6 +42,8 @@ Clarify options:
   --output <file>          New confidential bundle; existing bundles are never overwritten.
 
 Build options:
+  --salesforce-revalidation <file>
+                           Fresh read-only Salesforce receipt created after this preview.
   --attestations <file>    Exact bundle bound to the preview.
   --approve-proposal <id>  Approve one exact contextual proposal ID. Repeat per proposal.
   --output <file>          Importable schema 1.4 dashboard JSON path.
@@ -70,6 +72,7 @@ const BUILD_HELP = `Build contextual Day 2 JSON
 Required:
   --preview <preview.json>
   --evidence <refreshed-ledger.json>
+  --salesforce-revalidation <receipt.json>
 
 Optional:
   --attestations <file>          Exact bundle bound to the preview, when present.
@@ -102,7 +105,7 @@ function parseCommandLine(argv) {
   const allowedByCommand = {
     preview: new Set(["--input", "--salesforce-report", "--evidence", "--attestations", "--preview-output", "--output-dir", "--overwrite", "--help"]),
     clarify: new Set(["--preview", "--answers", "--attestations", "--output", "--help"]),
-    build: new Set(["--preview", "--evidence", "--attestations", "--approve-proposal", "--output", "--report", "--overwrite", "--help"]),
+    build: new Set(["--preview", "--evidence", "--salesforce-revalidation", "--attestations", "--approve-proposal", "--output", "--report", "--overwrite", "--help"]),
     "self-test": new Set(["--help"]),
     help: new Set(),
   };
@@ -207,7 +210,7 @@ async function runClarify(parsed) {
     ? path.resolve(parsed.options.get("--attestations"))
     : "";
   const [preview, answers, priorAttestations] = await Promise.all([
-    readJsonFile(previewPath, "Context preview").then(validatePreviewDocument),
+    loadContextPreview(previewPath),
     loadClarificationAnswersFile(answersPath),
     priorPath ? loadAttestationBundle(priorPath) : Promise.resolve(null),
   ]);
@@ -247,7 +250,13 @@ async function runBuild(parsed) {
   }
   const previewPath = path.resolve(requiredOption(parsed, "--preview"));
   const evidencePath = path.resolve(requiredOption(parsed, "--evidence"));
-  const preview = validatePreviewDocument(await readJsonFile(previewPath, "Context preview"));
+  const salesforceRevalidationPath = path.resolve(
+    requiredOption(parsed, "--salesforce-revalidation"),
+  );
+  const [preview, salesforceRevalidation] = await Promise.all([
+    loadContextPreview(previewPath),
+    loadSalesforceRevalidationReceipt(salesforceRevalidationPath),
+  ]);
   const attestationsPath = parsed.options.get("--attestations")
     ? path.resolve(parsed.options.get("--attestations"))
     : "";
@@ -262,6 +271,8 @@ async function runBuild(parsed) {
     previewPath,
     ledger,
     evidencePath,
+    salesforceRevalidation,
+    salesforceRevalidationPath,
     attestations,
     attestationsPath,
     approvedProposalIds,

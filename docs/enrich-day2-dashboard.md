@@ -16,7 +16,7 @@ No contextual answer or source is applied without explicit approval of its exact
 ## Runtime And Dependencies
 
 - Node.js 22 or newer; the helpers use only Node.js standard-library modules.
-- Salesforce CLI `sf`, authenticated to the intended org, for live `preview` and `build` runs.
+- Salesforce CLI `sf`, authenticated to the intended org, for live `preview`, `build`, and final `revalidate` runs. Each CLI call has a 120-second default timeout and fails closed.
 - Read access to the selected Salesforce Account and, when chosen, connected Slack, Outlook Email, SharePoint/OneDrive, Teams, Outlook Calendar, local, telemetry, OneNote, or public-web sources.
 - Python 3.11+ with this repository's pinned development dependencies for repository validation.
 - No npm install is required for the skill's deterministic helpers.
@@ -47,7 +47,9 @@ Versioned contracts:
 | Clarification answers | `day2-clarification-answers/v1` |
 | Attestation bundle | `day2-account-team-attestations/v1` |
 | Evidence report | `day2-evidence-report/v2` |
-| Salesforce mapping | `salesforce-day2-field-map/v1` |
+| Salesforce field map | `salesforce-day2-field-map/v1` |
+| Salesforce mapping report | `salesforce-day2-mapping-report/v1` |
+| Salesforce final receipt | [`salesforce-day2-revalidation/v1`](../enrich-day2-dashboard/salesforce-layer/references/salesforce-revalidation.schema.json) |
 
 Old ledgers and previews are rejected. Regenerate them; never migrate or reuse their proposal IDs.
 
@@ -59,7 +61,7 @@ Use $enrich-day2-dashboard for this Salesforce Account. Start from my exported d
 
 ## Runnable Example
 
-Run all 122 synthetic tests without contacting Salesforce or any connector:
+Run all 129 synthetic tests without contacting Salesforce or any connector:
 
 ```bash
 node enrich-day2-dashboard/scripts/enrich-day2-context.mjs self-test
@@ -92,12 +94,21 @@ node enrich-day2-dashboard/scripts/enrich-day2-context.mjs clarify \
   --output work/day2/account-day2-attestations.json
 ```
 
-Re-preview after proposals cite accepted `A-...` attestations. On final build, revalidate the bounded evidence searches and approve only complete proposal IDs:
+Re-preview after proposals cite accepted `A-...` attestations. After that contextual preview, re-query Salesforce through the bundled read-only layer:
+
+```bash
+node enrich-day2-dashboard/salesforce-layer/scripts/enrich-day2.mjs revalidate \
+  --report work/day2/account-day2-mapping-report.json \
+  --output work/day2/account-day2-salesforce-revalidation.json
+```
+
+If Salesforce changed, regenerate the Salesforce base and contextual preview. Otherwise, revalidate the bounded evidence searches and approve only complete proposal IDs:
 
 ```bash
 node enrich-day2-dashboard/scripts/enrich-day2-context.mjs build \
   --preview work/day2/account-day2-context-preview.json \
   --evidence work/day2/reverified-evidence-ledger.json \
+  --salesforce-revalidation work/day2/account-day2-salesforce-revalidation.json \
   --attestations work/day2/account-day2-attestations.json \
   --approve-proposal P-00000000000000000000
 ```
@@ -108,7 +119,7 @@ The `001...`, org, filenames, `Q-...`, and `P-...` values above are synthetic pl
 
 - `*-day2-dashboard.json`: a new schema `1.4` file for the app's **Import JSON** control.
 - `*-day2-evidence-report.md`: a confidential minimized report of accepted/rejected proposals, conflicts, gaps, clarification status, validation, and bounded search limitations.
-- Confidential preview, evidence-ledger, answer, attestation, and Salesforce mapping artifacts that bind identity, input digest, evidence digest, question plan, source freshness, policy version, and proposal IDs.
+- Confidential preview, evidence-ledger, answer, attestation, Salesforce mapping, and final Salesforce revalidation artifacts that bind identity, input digest, evidence digest, question plan, source freshness, policy version, and proposal IDs. The final receipt must be created strictly after the current contextual preview and binds the exact mapping-report path/digest, org, Account ID/name, field-map version/digest, `LastModifiedDate`, accepted Salesforce field/value digest, and purchased-Asset candidates.
 
 Page 1 surfaces only the first three goals and workstreams, first two ELT asks, and first seven relationships. The skill preserves explicit array placement so supporting detail cannot silently displace executive content.
 
@@ -128,12 +139,14 @@ The skill generates the four-line status proposal. Its value line requires exter
 - Attested Green health requires separately approved status and basis. Red health requires evidence, mitigation, and owner.
 - Forecast updates may change only Q1-Q4 forecast and comments on one exact, independently source-backed Consumption Plan product row.
 - Never modify the source dashboard JSON in place or overwrite outputs without exact authorization.
+- A ledger may contain at most 500 evidence items and 500 contextual proposals. One `{sourceType, tenantId, container, sourceId}` identity may appear only once; record contradictory captures as gaps.
+- Salesforce-layer JSON reads are capped at 25 MiB.
 - Self-test and repository validation use synthetic fixtures only.
 
 ## Failure Recovery
 
 - Salesforce auth or CLI failure: repair the intended `sf` org connection; do not switch to DML or UI automation.
-- Changed Account, `LastModifiedDate`, Assets, input JSON, evidence, question plan, policy, or attestation binding: discard the stale preview and create a new one.
+- Changed Account, `LastModifiedDate`, Assets, input JSON, evidence, question plan, policy, or attestation binding: discard the stale preview and create a new one. Rebuild the Salesforce base first when Salesforce changed.
 - Connector permission, pagination, or rate-limit failure: record partial coverage and leave unsupported fields unchanged.
 - Missing protected evidence: record `unknown` or the exact source-location gap; do not fill from account-team memory.
 - Contradictory evidence or answer: preserve all candidates as a conflict; never let recency or an answer win automatically.
@@ -143,9 +156,10 @@ The skill generates the four-line status proposal. Its value line requires exter
 
 ## Data Classification And Retention
 
-- Treat Account data, connector excerpts, dashboard JSON, evidence ledgers, previews, answers, attestation bundles, mapping reports, and evidence reports as customer-confidential.
-- Store confidential artifacts in a private `0700` working directory as regular `0600` files.
+- Treat Account data, connector excerpts, dashboard JSON, evidence ledgers, previews, answers, attestation bundles, mapping reports, revalidation receipts, and evidence reports as customer-confidential.
+- Store confidential artifacts in a private `0700` working directory as regular non-symlink `0600` files. These checks are enforced for consumed confidential control artifacts, not merely recommended.
 - Do not commit customer artifacts, credentials, private URLs, raw message bodies, signatures, or unnecessary PII.
+- Repository `.gitignore` rules intentionally exclude `output/` and `work/day2/`; these are local confidential working locations, not repository retention.
 - Keep raw evidence and private locators in the confidential ledger. The dashboard and report retain only minimized provenance.
 - Delete temporary downloads and superseded previews after successful handoff. Retain the current editable JSON backup, evidence report, and audit artifacts only for the approved account-review retention period.
 
@@ -155,14 +169,15 @@ The skill generates the four-line status proposal. Its value line requires exter
 - Office and PDF extraction quality depends on the available connector or local parser; metadata-only attachments cannot support claims.
 - OneNote is user-selected and corroboration-only because UI extraction lacks durable source identity.
 - Public web evidence can support external customer priorities only, not internal account health or UiPath delivery claims.
-- The helper validates schema and PDF-blocker parity but does not render the final PDF.
+- The optional app harness verifies schema import and blocker semantics against a separately supplied local app checkout; it is operator-run and is not part of repository CI. It does not certify an app version, browser export path, or rendered PDF.
+- The Salesforce layer and contextual helper use same-directory hard links for no-overwrite confidential and paired derived-output commits. Run them on a local filesystem with hard-link support; unsupported filesystems fail closed before a successful handoff.
 - Live Salesforce org behavior, connector permissions, custom field availability, and customer evidence quality remain environment-specific.
 
 ## Certification Status
 
 Status: **Maintainer-verified offline workflow**.
 
-The package passes 122 synthetic Node tests: 26 deterministic Salesforce tests and 96 contextual/adaptive tests. It also passes the dashboard app's schema `1.4` import round-trip and validation interfaces with a synthetic evidence-limited file.
+The package passes 129 synthetic Node tests: 28 deterministic Salesforce tests and 101 contextual/adaptive tests. A separately invoked optional harness also passed the dashboard app's schema `1.4` import round-trip and expected blank-template PDF-blocker semantics; that external-app check is not CI certification.
 
 This is not live-org certification, connector completeness certification, customer-data validation, security accreditation, or leadership approval. No live customer system was queried or modified during certification.
 
@@ -180,10 +195,13 @@ make secrets
 git diff --check
 ```
 
-Optional app compatibility validation requires a local Day 2 app checkout with Vitest:
+Optional app compatibility validation requires a local Day 2 app checkout with Vitest. Run the app checkout's Vitest binary with the skill directory as its explicit root:
 
 ```bash
-DAY2_APP_ROOT=/path/to/day2-app \
-DAY2_DASHBOARD_JSON=/path/to/synthetic-dashboard.json \
-vitest run enrich-day2-dashboard/scripts/app-roundtrip.test.ts
+export DAY2_APP_ROOT=/path/to/day2-app
+export DAY2_DASHBOARD_JSON=/path/to/synthetic-dashboard.json
+export DAY2_SKILL_ROOT=/path/to/skills-repo/enrich-day2-dashboard
+"$DAY2_APP_ROOT/node_modules/.bin/vitest" run \
+  --root "$DAY2_SKILL_ROOT" \
+  scripts/app-roundtrip.test.ts
 ```

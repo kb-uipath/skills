@@ -88,7 +88,7 @@
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true,
-          "$comment": "Exact stable source IDs explicitly selected by the user as older foundational evidence."
+          "$comment": "Exact stable source IDs explicitly selected by the user as older foundational evidence. Each ID must resolve to exactly one ledger item."
         },
         "privateSlackConsent": { "type": "boolean" },
         "privateSlackScopes": {
@@ -110,7 +110,8 @@
               "sourceId": { "type": "string", "minLength": 1 },
               "captureDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
             }
-          }
+          },
+          "$comment": "Each selected sourceId must resolve to exactly one collected OneNote item with the same capture digest."
         },
         "discoveryRuns": {
           "type": "array",
@@ -162,6 +163,7 @@
     },
     "items": {
       "type": "array",
+      "maxItems": 500,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -349,6 +351,7 @@
     },
     "proposals": {
       "type": "array",
+      "maxItems": 500,
       "items": {
         "type": "object",
         "additionalProperties": false,

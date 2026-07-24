@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.codex/skills/enrich-day2-dashboard/salesforce-revalidation.schema.json",
+  "title": "Salesforce Day 2 Final Revalidation Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "confidential",
+    "dashboardSchemaVersion",
+    "verifiedAt",
+    "accountId",
+    "accountName",
+    "org",
+    "fieldMap",
+    "mappingReport",
+    "source",
+    "allowedCommands",
+    "integrityDigest"
+  ],
+  "properties": {
+    "kind": { "const": "salesforce-day2-revalidation/v1" },
+    "confidential": { "const": true },
+    "dashboardSchemaVersion": { "const": "1.4" },
+    "verifiedAt": { "type": "string", "format": "date-time" },
+    "accountId": {
+      "type": "string",
+      "pattern": "^001[A-Za-z0-9]{12}([A-Za-z0-9]{3})?$"
+    },
+    "accountName": { "type": "string", "minLength": 1 },
+    "org": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["username", "orgId"],
+      "properties": {
+        "username": { "type": "string", "minLength": 1 },
+        "orgId": { "type": "string", "minLength": 1 }
+      }
+    },
+    "fieldMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "digest"],
+      "properties": {
+        "version": { "const": "salesforce-day2-field-map/v1" },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      }
+    },
+    "mappingReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "digest"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accountLastModifiedDate",
+        "acceptedSourceFieldsDigest",
+        "acceptedSourceValuesDigest",
+        "productCandidateDigest"
+      ],
+      "properties": {
+        "accountLastModifiedDate": { "type": "string", "minLength": 1 },
+        "acceptedSourceFieldsDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "acceptedSourceValuesDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "productCandidateDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      }
+    },
+    "allowedCommands": {
+      "const": ["data query", "org display", "sobject describe"]
+    },
+    "integrityDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  }
+}

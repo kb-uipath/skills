@@ -1,13 +1,26 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const DASHBOARD_SCHEMA_VERSION = "1.4";
 export const PREVIEW_KIND = "salesforce-day2-preview/v1";
 export const REPORT_KIND = "salesforce-day2-mapping-report/v1";
+export const REVALIDATION_KIND = "salesforce-day2-revalidation/v1";
 
 export const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 export const SKILL_DIRECTORY = path.dirname(SCRIPT_DIRECTORY);
@@ -15,6 +28,7 @@ export const FIELD_MAP_PATH = path.join(SKILL_DIRECTORY, "references", "field-ma
 export const BLANK_TEMPLATE_PATH = path.join(SKILL_DIRECTORY, "assets", "blank-dashboard-v1.4.json");
 
 const ACCOUNT_ID_PATTERN = /^001[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?$/;
+const SHA256_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const NUMERIC_LITERAL_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
 const HEALTH_KEYS = [
@@ -29,6 +43,8 @@ const HEALTH_KEYS = [
   "customerAdvocacy",
 ];
 const ALLOWED_SF_COMMANDS = new Set(["org display", "sobject describe", "data query"]);
+const MAX_JSON_FILE_BYTES = 25 * 1024 * 1024;
+const DEFAULT_SF_CLI_TIMEOUT_MS = 120_000;
 const RECORD_OF_STRINGS = { $recordOf: "string" };
 const DASHBOARD_SHAPE = {
   schemaVersion: "string",
@@ -195,6 +211,26 @@ export function sha256(value) {
 
 export function digestObject(value) {
   return sha256(stableStringify(value));
+}
+
+export function acceptedSourceValuesDigest(accountRecord, acceptedSourceFields) {
+  if (
+    !accountRecord ||
+    typeof accountRecord !== "object" ||
+    Array.isArray(accountRecord) ||
+    !Array.isArray(acceptedSourceFields)
+  ) {
+    throw new EnricherError(
+      "INVALID_MAPPING_REPORT",
+      "Accepted Salesforce source values require an Account record and field list.",
+    );
+  }
+  const fields = [...new Set(acceptedSourceFields)].sort();
+  const values = fields.map((field) => [
+    field,
+    Object.hasOwn(accountRecord, field) ? deepClone(accountRecord[field]) : null,
+  ]);
+  return `sha256:${digestObject({ fields, values })}`;
 }
 
 export function deepClone(value) {
@@ -774,8 +810,62 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+async function readBoundedFile(filePath, label, maxBytes = MAX_JSON_FILE_BYTES) {
+  const resolvedPath = path.resolve(filePath);
+  let details;
+  try {
+    details = await stat(resolvedPath);
+  } catch (error) {
+    throw new EnricherError("FILE_READ_FAILED", `${label} could not be read: ${error.message}`);
+  }
+  if (!details.isFile()) {
+    throw new EnricherError("FILE_READ_FAILED", `${label} must be a regular file.`);
+  }
+  if (details.size > maxBytes) {
+    throw new EnricherError(
+      "FILE_TOO_LARGE",
+      `${label} exceeds the ${maxBytes}-byte safety limit.`,
+    );
+  }
+  return readFile(resolvedPath);
+}
+
+export async function assertPrivateArtifact(filePath, label) {
+  const resolvedPath = path.resolve(filePath);
+  const details = await lstat(resolvedPath);
+  if (!details.isFile() || details.isSymbolicLink()) {
+    throw new EnricherError("INSECURE_ARTIFACT", `${label} must be a regular, non-symlink file.`);
+  }
+  if (process.platform !== "win32" && (details.mode & 0o077) !== 0) {
+    throw new EnricherError(
+      "INSECURE_PERMISSIONS",
+      `${label} exposes group or other permission bits; set mode 0600 before use.`,
+    );
+  }
+  if (process.platform !== "win32") {
+    const directoryDetails = await stat(path.dirname(resolvedPath));
+    if ((directoryDetails.mode & 0o077) !== 0) {
+      throw new EnricherError(
+        "INSECURE_PERMISSIONS",
+        `${label} is stored in a group- or other-accessible directory; use a mode 0700 working directory.`,
+      );
+    }
+  }
+  return resolvedPath;
+}
+
+export async function loadPrivateJson(filePath, label) {
+  const resolvedPath = await assertPrivateArtifact(filePath, label);
+  const raw = await readBoundedFile(resolvedPath, label);
+  try {
+    return JSON.parse(raw.toString("utf8"));
+  } catch {
+    throw new EnricherError("INVALID_JSON", `${label} is not valid JSON: ${resolvedPath}`);
+  }
+}
+
 export async function loadFieldMap() {
-  const raw = await readFile(FIELD_MAP_PATH);
+  const raw = await readBoundedFile(FIELD_MAP_PATH, "Bundled Salesforce field map");
   const value = JSON.parse(raw.toString("utf8"));
   if (value.dashboardSchemaVersion !== DASHBOARD_SCHEMA_VERSION || typeof value.version !== "string") {
     throw new EnricherError("INVALID_FIELD_MAP", "The bundled field map is invalid or targets the wrong dashboard schema.");
@@ -785,7 +875,7 @@ export async function loadFieldMap() {
 
 export async function loadDashboardInput(inputPath) {
   const resolvedPath = path.resolve(inputPath ?? BLANK_TEMPLATE_PATH);
-  const raw = await readFile(resolvedPath);
+  const raw = await readBoundedFile(resolvedPath, "Dashboard input");
   let value;
   try {
     value = JSON.parse(raw.toString("utf8"));
@@ -867,6 +957,11 @@ export function assertAllowedSfArgs(args) {
 function safeCliMessage(value) {
   return String(value ?? "")
     .replace(/(?:accessToken|sfdxAuthUrl|clientSecret)[^\n]*/gi, "[credential detail removed]")
+    .replace(/\bAuthorization\s*:\s*Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "[credential detail removed]")
+    .replace(
+      /\b(?:api[_-]?key|token|password|secret|client[_-]?secret)\s*[:=]\s*[^\s,;]+/gi,
+      "[credential detail removed]",
+    )
     .trim()
     .slice(0, 1200);
 }
@@ -874,11 +969,20 @@ function safeCliMessage(value) {
 export function runSf(args, options = {}) {
   assertAllowedSfArgs(args);
   const sfBinary = options.sfBinary ?? "sf";
+  const timeoutMs = options.timeoutMs ?? DEFAULT_SF_CLI_TIMEOUT_MS;
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10 * 60_000) {
+    throw new EnricherError(
+      "INVALID_SF_TIMEOUT",
+      "Salesforce CLI timeout must be an integer between 1 and 600000 milliseconds.",
+    );
+  }
   const result = spawnSync(sfBinary, args, {
     encoding: "utf8",
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: 25 * 1024 * 1024,
+    timeout: timeoutMs,
+    killSignal: "SIGTERM",
   });
   const category = `${args[0]} ${args[1]}`;
   if (result.error) {
@@ -1281,18 +1385,39 @@ async function pathIdentity(filePath) {
   return `${details.dev}:${details.ino}`;
 }
 
-export async function assertWritableTargets(targets, overwrite) {
+async function inspectWritableTarget(target) {
+  const resolved = path.resolve(target);
+  try {
+    const details = await lstat(resolved);
+    if (!details.isFile() || details.isSymbolicLink()) {
+      throw new EnricherError(
+        "UNSAFE_OUTPUT_TARGET",
+        `Existing output targets must be regular, non-symlink files: ${resolved}`,
+      );
+    }
+    return {
+      resolved,
+      exists: true,
+      identity: `${details.dev}:${details.ino}`,
+    };
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return { resolved, exists: false, identity: "" };
+    }
+    throw error;
+  }
+}
+
+async function captureWritableTargetStates(targets, overwrite) {
   const resolved = targets.map((target) => path.resolve(target));
   const canonical = await Promise.all(resolved.map(canonicalPath));
-  const identities = (await Promise.all(resolved.map(pathIdentity))).filter(Boolean);
+  const states = await Promise.all(resolved.map(inspectWritableTarget));
+  const identities = states.filter((state) => state.exists).map((state) => state.identity);
   if (new Set(canonical).size !== canonical.length || new Set(identities).size !== identities.length) {
     throw new EnricherError("OUTPUT_COLLISION", "Output, report, preview, and input paths must be distinct.");
   }
   if (!overwrite) {
-    const existing = [];
-    for (const target of resolved) {
-      if (await pathExists(target)) existing.push(target);
-    }
+    const existing = states.filter((state) => state.exists).map((state) => state.resolved);
     if (existing.length) {
       throw new EnricherError(
         "OUTPUT_EXISTS",
@@ -1300,7 +1425,32 @@ export async function assertWritableTargets(targets, overwrite) {
       );
     }
   }
-  return resolved;
+  return states;
+}
+
+export async function assertWritableTargets(targets, overwrite) {
+  const states = await captureWritableTargetStates(targets, overwrite);
+  return states.map((state) => state.resolved);
+}
+
+async function ensurePrivateDirectory(directory) {
+  const resolvedDirectory = path.resolve(directory);
+  const existed = await pathExists(resolvedDirectory);
+  await mkdir(resolvedDirectory, { recursive: true, mode: 0o700 });
+  if (!existed && process.platform !== "win32") {
+    await chmod(resolvedDirectory, 0o700);
+  }
+  const details = await stat(resolvedDirectory);
+  if (!details.isDirectory()) {
+    throw new EnricherError("UNSAFE_OUTPUT_DIRECTORY", `${resolvedDirectory} is not a directory.`);
+  }
+  if (process.platform !== "win32" && (details.mode & 0o077) !== 0) {
+    throw new EnricherError(
+      "INSECURE_PERMISSIONS",
+      `Output directory exposes group or other permission bits; set mode 0700: ${resolvedDirectory}`,
+    );
+  }
+  return resolvedDirectory;
 }
 
 export async function writeProtectedJson(filePath, value, overwrite = false, protectedPaths = []) {
@@ -1308,7 +1458,7 @@ export async function writeProtectedJson(filePath, value, overwrite = false, pro
   if (protectedPaths.length) {
     await assertNoProtectedPathCollision(resolvedPath, protectedPaths, "JSON output");
   }
-  await mkdir(path.dirname(resolvedPath), { recursive: true, mode: 0o700 });
+  await ensurePrivateDirectory(path.dirname(resolvedPath));
   if (protectedPaths.length) {
     await assertNoProtectedPathCollision(resolvedPath, protectedPaths, "JSON output");
   }
@@ -1322,9 +1472,114 @@ export async function writeProtectedJson(filePath, value, overwrite = false, pro
     path.dirname(resolvedPath),
     `.${path.basename(resolvedPath)}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`,
   );
-  await writeFile(temporary, content, { encoding: "utf8", flag: "wx", mode: 0o600 });
-  await rename(temporary, resolvedPath);
+  try {
+    await writeFile(temporary, content, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    await rename(temporary, resolvedPath);
+    if (process.platform !== "win32") await chmod(resolvedPath, 0o600);
+  } catch (error) {
+    await unlink(temporary).catch(() => {});
+    throw error;
+  }
   return resolvedPath;
+}
+
+export async function writeProtectedJsonPairAtomic(
+  entries,
+  { overwrite = false, protectedPaths = [] } = {},
+) {
+  if (!Array.isArray(entries) || entries.length !== 2) {
+    throw new EnricherError(
+      "INVALID_OUTPUT_BATCH",
+      "Salesforce build must commit exactly one dashboard and one mapping report.",
+    );
+  }
+  const targets = entries.map((entry) => path.resolve(entry.filePath));
+  const targetStates = await captureWritableTargetStates(targets, overwrite);
+  const prepared = [];
+  try {
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      const resolved = targets[index];
+      await ensurePrivateDirectory(path.dirname(resolved));
+      await assertNoProtectedPathCollision(resolved, protectedPaths, "JSON output");
+      const nonce = `${process.pid}.${randomBytes(6).toString("hex")}`;
+      const temporary = path.join(
+        path.dirname(resolved),
+        `.${path.basename(resolved)}.${nonce}.tmp`,
+      );
+      const backup = path.join(
+        path.dirname(resolved),
+        `.${path.basename(resolved)}.${nonce}.bak`,
+      );
+      await writeFile(
+        temporary,
+        `${JSON.stringify(entry.value, null, 2)}\n`,
+        { encoding: "utf8", flag: "wx", mode: 0o600 },
+      );
+      prepared.push({ resolved, temporary, backup, committed: false, backedUp: false });
+    }
+
+    for (let index = 0; index < prepared.length; index += 1) {
+      const entry = prepared[index];
+      const expected = targetStates[index];
+      await assertNoProtectedPathCollision(entry.resolved, protectedPaths, "JSON output");
+      const current = await inspectWritableTarget(entry.resolved);
+      if (
+        current.exists !== expected.exists ||
+        (current.exists && current.identity !== expected.identity)
+      ) {
+        throw new EnricherError(
+          "OUTPUT_TARGET_CHANGED",
+          `Output target changed after preflight: ${entry.resolved}`,
+        );
+      }
+      if (overwrite && await pathExists(entry.resolved)) {
+        await rename(entry.resolved, entry.backup);
+        entry.backedUp = true;
+      }
+      if (overwrite) {
+        await rename(entry.temporary, entry.resolved);
+      } else {
+        await link(entry.temporary, entry.resolved);
+      }
+      entry.committed = true;
+      if (process.platform !== "win32") await chmod(entry.resolved, 0o600);
+    }
+  } catch (error) {
+    const rollbackFailures = [];
+    for (const entry of [...prepared].reverse()) {
+      try {
+        if (entry.committed && await pathExists(entry.resolved)) {
+          await unlink(entry.resolved);
+        }
+        if (entry.backedUp && await pathExists(entry.backup)) {
+          await rename(entry.backup, entry.resolved);
+        }
+      } catch (rollbackError) {
+        rollbackFailures.push(`${entry.resolved}: ${rollbackError.message}`);
+      }
+      await unlink(entry.temporary).catch(() => {});
+      if (!entry.backedUp) await unlink(entry.backup).catch(() => {});
+    }
+    if (rollbackFailures.length) {
+      throw new EnricherError(
+        "ATOMIC_ROLLBACK_FAILED",
+        `Salesforce output commit failed and rollback needs manual recovery. ${rollbackFailures.join(" | ")}`,
+      );
+    }
+    if (error?.code === "EEXIST") {
+      throw new EnricherError(
+        "OUTPUT_EXISTS",
+        "An output appeared before the atomic Salesforce pair commit.",
+      );
+    }
+    throw error;
+  }
+  for (const entry of prepared) {
+    await unlink(entry.temporary).catch(() => {});
+    await unlink(entry.backup).catch(() => {});
+  }
+  return targets;
 }
 
 export async function removePreviewFile(previewPath) {
@@ -1391,6 +1646,7 @@ export function createMappingReport({
   dashboardOutput,
   reportOutput,
   fieldMap,
+  fieldMapDigest,
 }) {
   return {
     kind: REPORT_KIND,
@@ -1401,6 +1657,11 @@ export function createMappingReport({
     org: preview.org,
     sourceLastModifiedDate: snapshot.accountLastModifiedDate,
     fieldMapVersion: fieldMap.version,
+    fieldMapDigest: `sha256:${fieldMapDigest}`,
+    acceptedSourceValuesDigest: acceptedSourceValuesDigest(
+      snapshot.account,
+      buildResult.acceptedSourceFields,
+    ),
     dashboardOutput,
     reportOutput,
     mappings: buildResult.mappingResults,
@@ -1420,5 +1681,167 @@ export function createMappingReport({
     productCandidateNotice:
       "Manual review only. No product candidate was written to dashboard soldProducts or consumptionPlan.",
     explicitlyNotMapped: fieldMap.neverMap,
+  };
+}
+
+const MAPPING_REPORT_KEYS = [
+  "kind",
+  "confidential",
+  "builtAt",
+  "dashboardSchemaVersion",
+  "accountId",
+  "org",
+  "sourceLastModifiedDate",
+  "fieldMapVersion",
+  "fieldMapDigest",
+  "acceptedSourceValuesDigest",
+  "dashboardOutput",
+  "reportOutput",
+  "mappings",
+  "unresolvedConflicts",
+  "acceptedSourceFields",
+  "provenanceAdded",
+  "provenanceUpdated",
+  "skippedMappings",
+  "warnings",
+  "productCandidates",
+  "productCandidateNotice",
+  "explicitlyNotMapped",
+];
+
+export function validateMappingReport(value) {
+  assertExactKeys(value, MAPPING_REPORT_KEYS, "mapping report");
+  if (
+    value.kind !== REPORT_KIND ||
+    value.confidential !== true ||
+    value.dashboardSchemaVersion !== DASHBOARD_SCHEMA_VERSION
+  ) {
+    throw new EnricherError(
+      "INVALID_MAPPING_REPORT",
+      "The Salesforce mapping report kind, confidentiality marker, or dashboard schema is invalid.",
+    );
+  }
+  extractAccountId(value.accountId);
+  assertExactKeys(value.org, ["username", "orgId", "alias"], "mapping report org");
+  if (
+    typeof value.org.username !== "string" ||
+    !value.org.username ||
+    typeof value.org.orgId !== "string" ||
+    !value.org.orgId ||
+    typeof value.sourceLastModifiedDate !== "string" ||
+    typeof value.fieldMapVersion !== "string" ||
+    !SHA256_DIGEST_PATTERN.test(value.fieldMapDigest) ||
+    !SHA256_DIGEST_PATTERN.test(value.acceptedSourceValuesDigest) ||
+    !Array.isArray(value.acceptedSourceFields) ||
+    !Array.isArray(value.productCandidates)
+  ) {
+    throw new EnricherError("INVALID_MAPPING_REPORT", "The Salesforce mapping report metadata is invalid.");
+  }
+  return value;
+}
+
+export async function loadMappingReport(reportPath) {
+  const resolvedPath = await assertPrivateArtifact(reportPath, "Salesforce mapping report");
+  const value = validateMappingReport(
+    await loadPrivateJson(resolvedPath, "Salesforce mapping report"),
+  );
+  const canonicalReportPath = await canonicalPath(resolvedPath);
+  if (await canonicalPath(value.reportOutput) !== canonicalReportPath) {
+    throw new EnricherError(
+      "INVALID_MAPPING_REPORT",
+      "The Salesforce mapping report does not identify its own canonical path.",
+    );
+  }
+  return { value, path: canonicalReportPath };
+}
+
+export function createSalesforceRevalidationReceipt({
+  report,
+  reportPath,
+  snapshot,
+  org,
+  fieldMap,
+  fieldMapDigest,
+  verifiedAt = new Date().toISOString(),
+}) {
+  validateMappingReport(report);
+  if (
+    report.accountId !== snapshot.account.Id ||
+    report.org.orgId !== org.orgId ||
+    report.org.username !== org.username ||
+    report.fieldMapVersion !== fieldMap.version
+  ) {
+    throw new EnricherError(
+      "STALE_SALESFORCE",
+      "Salesforce Account, org, or field-map identity changed after the mapping report was built.",
+    );
+  }
+  if (report.fieldMapDigest !== `sha256:${fieldMapDigest}`) {
+    throw new EnricherError(
+      "STALE_SALESFORCE",
+      "The Salesforce field-map content changed after the mapping report was built.",
+    );
+  }
+  if (report.sourceLastModifiedDate !== snapshot.accountLastModifiedDate) {
+    throw new EnricherError(
+      "STALE_SALESFORCE",
+      "Salesforce Account.LastModifiedDate changed after contextual preview; regenerate the Salesforce and contextual previews.",
+    );
+  }
+  const missingAcceptedFields = report.acceptedSourceFields.filter(
+    (field) => !snapshot.selectedAccountFields.includes(field),
+  );
+  if (missingAcceptedFields.length) {
+    throw new EnricherError(
+      "STALE_SALESFORCE",
+      `Previously accepted Salesforce fields are no longer readable: ${missingAcceptedFields.join(", ")}.`,
+    );
+  }
+  const currentAcceptedSourceValuesDigest = acceptedSourceValuesDigest(
+    snapshot.account,
+    report.acceptedSourceFields,
+  );
+  if (currentAcceptedSourceValuesDigest !== report.acceptedSourceValuesDigest) {
+    throw new EnricherError(
+      "STALE_SALESFORCE",
+      "One or more accepted Salesforce source values changed after the mapping report was built.",
+    );
+  }
+  if (digestObject(report.productCandidates) !== snapshot.productCandidateDigest) {
+    throw new EnricherError(
+      "STALE_SALESFORCE",
+      "Purchased-Asset candidates changed after contextual preview; regenerate the Salesforce and contextual previews.",
+    );
+  }
+  const payload = {
+    kind: REVALIDATION_KIND,
+    confidential: true,
+    dashboardSchemaVersion: DASHBOARD_SCHEMA_VERSION,
+    verifiedAt,
+    accountId: snapshot.account.Id,
+    accountName: snapshot.account.Name,
+    org: {
+      username: org.username,
+      orgId: org.orgId,
+    },
+    fieldMap: {
+      version: fieldMap.version,
+      digest: report.fieldMapDigest,
+    },
+    mappingReport: {
+      path: path.resolve(reportPath),
+      digest: `sha256:${digestObject(report)}`,
+    },
+    source: {
+      accountLastModifiedDate: snapshot.accountLastModifiedDate,
+      acceptedSourceFieldsDigest: `sha256:${digestObject(report.acceptedSourceFields)}`,
+      acceptedSourceValuesDigest: report.acceptedSourceValuesDigest,
+      productCandidateDigest: `sha256:${snapshot.productCandidateDigest}`,
+    },
+    allowedCommands: [...ALLOWED_SF_COMMANDS].sort(),
+  };
+  return {
+    ...payload,
+    integrityDigest: `sha256:${digestObject(payload)}`,
   };
 }

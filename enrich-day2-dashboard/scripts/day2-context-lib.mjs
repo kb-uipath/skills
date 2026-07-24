@@ -14,6 +14,7 @@ export const CLARIFICATION_ANSWERS_KIND = "day2-clarification-answers/v1";
 export const ATTESTATION_KIND = "day2-account-team-attestations/v1";
 export const SALESFORCE_FIELD_MAP_VERSION = "salesforce-day2-field-map/v1";
 export const SALESFORCE_REPORT_KIND = "salesforce-day2-mapping-report/v1";
+export const SALESFORCE_REVALIDATION_KIND = "salesforce-day2-revalidation/v1";
 
 export const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 export const SKILL_DIRECTORY = path.dirname(SCRIPT_DIRECTORY);
@@ -90,6 +91,8 @@ const DATED_AUTHORITIES = new Set([
   "public-web",
 ]);
 const MAX_SOURCE_CLOCK_SKEW_MS = 5 * 60 * 1_000;
+const MAX_EVIDENCE_ITEMS = 500;
+const MAX_CONTEXT_PROPOSALS = 500;
 const ACCOUNT_SIGNALS = new Set([
   "canonical-name",
   "alias",
@@ -794,7 +797,13 @@ function normalizeEvidenceItem(value, index, scope) {
   const scopeDate = evidenceScopeDate(sourceType, occurredAt, modifiedAt);
   const outsideWindow = Boolean(scopeDate && (scopeDate < scope.windowStart || scopeDate > scope.windowEnd));
   const foundationalException = scope.foundationalSourceIds.includes(sourceId);
-  const evidenceId = `E-${sha256(stableStringify({ sourceType, sourceId, contentDigest })).slice(0, 16)}`;
+  const evidenceId = `E-${sha256(stableStringify({
+    sourceType,
+    tenantId,
+    container,
+    sourceId,
+    contentDigest,
+  })).slice(0, 16)}`;
 
   return {
     ref,
@@ -1358,13 +1367,64 @@ export function normalizeEvidenceLedger(value, { attestations = null } = {}) {
   if (!Array.isArray(value.items) || !Array.isArray(value.proposals)) {
     throw new ContextEnricherError("INVALID_LEDGER", "ledger.items and ledger.proposals must be arrays.");
   }
+  if (value.items.length > MAX_EVIDENCE_ITEMS) {
+    throw new ContextEnricherError(
+      "LEDGER_LIMIT_EXCEEDED",
+      `ledger.items exceeds the ${MAX_EVIDENCE_ITEMS}-item safety limit.`,
+    );
+  }
+  if (value.proposals.length > MAX_CONTEXT_PROPOSALS) {
+    throw new ContextEnricherError(
+      "LEDGER_LIMIT_EXCEEDED",
+      `ledger.proposals exceeds the ${MAX_CONTEXT_PROPOSALS}-proposal safety limit.`,
+    );
+  }
   const items = value.items.map((item, index) => normalizeEvidenceItem(item, index, scope));
-  const itemSourceIds = new Set(items.map((item) => item.sourceId));
+  const stableSourceIdentities = new Map();
+  for (const item of items) {
+    const identity = stableStringify([
+      item.sourceType,
+      item.tenantId,
+      item.container,
+      item.sourceId,
+    ]);
+    const previous = stableSourceIdentities.get(identity);
+    if (previous) {
+      throw new ContextEnricherError(
+        "SOURCE_IDENTITY_COLLISION",
+        `Evidence ${previous.ref} and ${item.ref} claim the same stable source identity. Retain exactly one current snapshot and record any contradiction as a gap.`,
+      );
+    }
+    stableSourceIdentities.set(identity, item);
+  }
+  const itemsBySourceId = new Map();
+  for (const item of items) {
+    const matches = itemsBySourceId.get(item.sourceId) ?? [];
+    matches.push(item);
+    itemsBySourceId.set(item.sourceId, matches);
+  }
   for (const sourceId of foundationalSourceIds) {
-    if (!itemSourceIds.has(sourceId)) {
+    const matches = itemsBySourceId.get(sourceId) ?? [];
+    if (matches.length === 0) {
       throw new ContextEnricherError(
         "INVALID_LEDGER",
         `Foundational source ${JSON.stringify(sourceId)} is not present in ledger.items.`,
+      );
+    }
+    if (matches.length !== 1) {
+      throw new ContextEnricherError(
+        "AMBIGUOUS_SOURCE_SELECTION",
+        `Foundational source ${JSON.stringify(sourceId)} resolves to ${matches.length} ledger items. Select a source ID that resolves to exactly one collected item.`,
+      );
+    }
+  }
+  for (const selection of oneNoteSelections) {
+    const matches = (itemsBySourceId.get(selection.sourceId) ?? [])
+      .filter((item) => item.sourceType === "onenote");
+    if (matches.length !== 1) {
+      throw new ContextEnricherError(
+        matches.length === 0 ? "ONENOTE_SELECTION_REQUIRED" : "AMBIGUOUS_SOURCE_SELECTION",
+        `OneNote selection ${JSON.stringify(selection.sourceId)} must resolve to exactly one collected OneNote item; found ${matches.length}.`,
       );
     }
   }
@@ -2310,6 +2370,11 @@ export async function loadClarificationAnswersFile(filePath) {
   return readJsonFile(filePath, "Clarification answers");
 }
 
+export async function loadContextPreview(filePath) {
+  await assertPrivateArtifact(filePath, "Context preview");
+  return validatePreviewDocument(await readJsonFile(filePath, "Context preview"));
+}
+
 export async function loadEvidenceLedger(filePath, { attestations = null } = {}) {
   await assertPrivateArtifact(filePath, "Evidence ledger");
   return normalizeEvidenceLedger(await readJsonFile(filePath, "Evidence ledger"), { attestations });
@@ -2335,6 +2400,8 @@ export async function loadSalesforceMappingReceipt(reportPath) {
     "org",
     "sourceLastModifiedDate",
     "fieldMapVersion",
+    "fieldMapDigest",
+    "acceptedSourceValuesDigest",
     "dashboardOutput",
     "reportOutput",
     "mappings",
@@ -2364,10 +2431,21 @@ export async function loadSalesforceMappingReceipt(reportPath) {
   assertExactKeys(value.org, ["username", "orgId", "alias"], "Salesforce child mapping report org");
   const orgId = requireString(value.org.orgId, "Salesforce child mapping report org.orgId");
   const fieldMapVersion = requireString(value.fieldMapVersion, "Salesforce child mapping report fieldMapVersion");
+  const fieldMapDigest = requireString(value.fieldMapDigest, "Salesforce child mapping report fieldMapDigest");
+  const acceptedSourceValuesDigest = requireString(
+    value.acceptedSourceValuesDigest,
+    "Salesforce child mapping report acceptedSourceValuesDigest",
+  );
   if (fieldMapVersion !== SALESFORCE_FIELD_MAP_VERSION) {
     throw new ContextEnricherError(
       "INVALID_SALESFORCE_RECEIPT",
       `The Salesforce child mapping report uses unsupported field map ${JSON.stringify(fieldMapVersion)}.`,
+    );
+  }
+  if (!SHA256_PATTERN.test(fieldMapDigest) || !SHA256_PATTERN.test(acceptedSourceValuesDigest)) {
+    throw new ContextEnricherError(
+      "INVALID_SALESFORCE_RECEIPT",
+      "The Salesforce child mapping report has invalid field-map or accepted-value bindings.",
     );
   }
   const sourceLastModifiedDate = normalizeSalesforceDateTime(
@@ -2393,8 +2471,162 @@ export async function loadSalesforceMappingReceipt(reportPath) {
     accountId,
     orgId,
     fieldMapVersion,
+    fieldMapDigest,
+    acceptedSourceValuesDigest,
     sourceLastModifiedDate,
     dashboardOutput,
+    acceptedSourceFieldsDigest: digestObject(value.acceptedSourceFields),
+    productCandidateDigest: digestObject(value.productCandidates),
+  };
+}
+
+export async function loadSalesforceRevalidationReceipt(receiptPath) {
+  await assertPrivateArtifact(receiptPath, "Salesforce revalidation receipt");
+  const value = await readJsonFile(receiptPath, "Salesforce revalidation receipt");
+  assertExactKeys(value, [
+    "kind",
+    "confidential",
+    "dashboardSchemaVersion",
+    "verifiedAt",
+    "accountId",
+    "accountName",
+    "org",
+    "fieldMap",
+    "mappingReport",
+    "source",
+    "allowedCommands",
+    "integrityDigest",
+  ], "Salesforce revalidation receipt");
+  if (
+    value.kind !== SALESFORCE_REVALIDATION_KIND ||
+    value.confidential !== true ||
+    value.dashboardSchemaVersion !== DASHBOARD_SCHEMA_VERSION
+  ) {
+    throw new ContextEnricherError(
+      "INVALID_SALESFORCE_REVALIDATION",
+      "The Salesforce revalidation receipt kind, confidentiality marker, or dashboard schema is invalid.",
+    );
+  }
+  const verifiedAt = requireIsoDateTime(value.verifiedAt, "Salesforce revalidation receipt verifiedAt");
+  assertNotFuture(verifiedAt, "Salesforce revalidation receipt verifiedAt");
+  const accountId = requireString(value.accountId, "Salesforce revalidation receipt accountId");
+  if (!ACCOUNT_ID_PATTERN.test(accountId)) {
+    throw new ContextEnricherError(
+      "INVALID_SALESFORCE_REVALIDATION",
+      "The Salesforce revalidation receipt has an invalid Account ID.",
+    );
+  }
+  const accountName = requireString(value.accountName, "Salesforce revalidation receipt accountName");
+  assertExactKeys(value.org, ["username", "orgId"], "Salesforce revalidation receipt org");
+  const username = requireString(value.org.username, "Salesforce revalidation receipt org.username");
+  const orgId = requireString(value.org.orgId, "Salesforce revalidation receipt org.orgId");
+  assertExactKeys(value.fieldMap, ["version", "digest"], "Salesforce revalidation receipt fieldMap");
+  const fieldMapVersion = requireString(value.fieldMap.version, "Salesforce revalidation receipt fieldMap.version");
+  const fieldMapDigest = requireString(value.fieldMap.digest, "Salesforce revalidation receipt fieldMap.digest");
+  if (fieldMapVersion !== SALESFORCE_FIELD_MAP_VERSION || !SHA256_PATTERN.test(fieldMapDigest)) {
+    throw new ContextEnricherError(
+      "INVALID_SALESFORCE_REVALIDATION",
+      "The Salesforce revalidation receipt field-map binding is invalid.",
+    );
+  }
+  assertExactKeys(value.mappingReport, ["path", "digest"], "Salesforce revalidation receipt mappingReport");
+  const mappingReportPath = await canonicalPath(
+    requireString(value.mappingReport.path, "Salesforce revalidation receipt mappingReport.path"),
+  );
+  const mappingReportDigest = requireString(
+    value.mappingReport.digest,
+    "Salesforce revalidation receipt mappingReport.digest",
+  );
+  if (!SHA256_PATTERN.test(mappingReportDigest)) {
+    throw new ContextEnricherError(
+      "INVALID_SALESFORCE_REVALIDATION",
+      "The Salesforce revalidation receipt mapping-report digest is invalid.",
+    );
+  }
+  assertExactKeys(
+    value.source,
+    [
+      "accountLastModifiedDate",
+      "acceptedSourceFieldsDigest",
+      "acceptedSourceValuesDigest",
+      "productCandidateDigest",
+    ],
+    "Salesforce revalidation receipt source",
+  );
+  const sourceLastModifiedDate = normalizeSalesforceDateTime(
+    value.source.accountLastModifiedDate,
+    "Salesforce revalidation receipt source.accountLastModifiedDate",
+  ).original;
+  const acceptedSourceFieldsDigest = requireString(
+    value.source.acceptedSourceFieldsDigest,
+    "Salesforce revalidation receipt source.acceptedSourceFieldsDigest",
+  );
+  const acceptedSourceValuesDigest = requireString(
+    value.source.acceptedSourceValuesDigest,
+    "Salesforce revalidation receipt source.acceptedSourceValuesDigest",
+  );
+  const productCandidateDigest = requireString(
+    value.source.productCandidateDigest,
+    "Salesforce revalidation receipt source.productCandidateDigest",
+  );
+  if (
+    !SHA256_PATTERN.test(acceptedSourceFieldsDigest) ||
+    !SHA256_PATTERN.test(acceptedSourceValuesDigest) ||
+    !SHA256_PATTERN.test(productCandidateDigest)
+  ) {
+    throw new ContextEnricherError(
+      "INVALID_SALESFORCE_REVALIDATION",
+      "The Salesforce revalidation receipt source digests are invalid.",
+    );
+  }
+  const allowedCommands = requireStringArray(
+    value.allowedCommands,
+    "Salesforce revalidation receipt allowedCommands",
+  );
+  const expectedCommands = ["data query", "org display", "sobject describe"];
+  if (stableStringify(allowedCommands) !== stableStringify(expectedCommands)) {
+    throw new ContextEnricherError(
+      "INVALID_SALESFORCE_REVALIDATION",
+      "The Salesforce revalidation receipt must record only the read-only Salesforce command allowlist.",
+    );
+  }
+  const integrityDigest = requireString(
+    value.integrityDigest,
+    "Salesforce revalidation receipt integrityDigest",
+  );
+  if (!SHA256_PATTERN.test(integrityDigest)) {
+    throw new ContextEnricherError(
+      "INVALID_SALESFORCE_REVALIDATION",
+      "The Salesforce revalidation receipt integrity digest is invalid.",
+    );
+  }
+  const unsigned = Object.fromEntries(
+    Object.entries(value).filter(([key]) => key !== "integrityDigest"),
+  );
+  if (integrityDigest !== digestObject(unsigned)) {
+    throw new ContextEnricherError(
+      "SALESFORCE_REVALIDATION_TAMPERED",
+      "The Salesforce revalidation receipt integrity digest does not match its contents.",
+    );
+  }
+  return {
+    ...value,
+    path: await canonicalPath(receiptPath),
+    verifiedAt,
+    accountId,
+    accountName,
+    username,
+    orgId,
+    fieldMapVersion,
+    fieldMapDigest,
+    mappingReportPath,
+    mappingReportDigest,
+    sourceLastModifiedDate,
+    acceptedSourceFieldsDigest,
+    acceptedSourceValuesDigest,
+    productCandidateDigest,
+    allowedCommands,
+    integrityDigest,
   };
 }
 
@@ -2570,9 +2802,7 @@ async function atomicWrite(filePath, content, { overwrite = false, kind }) {
       await rename(temporary, resolved);
     } else {
       await link(temporary, resolved);
-      await unlink(temporary);
     }
-    await chmod(resolved, 0o600);
   } catch (error) {
     await unlink(temporary).catch(() => {});
     if (error?.code === "EEXIST") {
@@ -2580,6 +2810,7 @@ async function atomicWrite(filePath, content, { overwrite = false, kind }) {
     }
     throw error;
   }
+  await unlink(temporary).catch(() => {});
   return resolved;
 }
 
@@ -2656,7 +2887,6 @@ async function writeDerivedPairAtomic(entries, { overwrite }) {
         await rename(entry.temporary, entry.resolved);
       } else {
         await link(entry.temporary, entry.resolved);
-        await unlink(entry.temporary);
       }
       entry.committed = true;
       await chmod(entry.resolved, 0o600);
@@ -2809,6 +3039,71 @@ function validateDashboardIdentity(dashboard, ledger, salesforceReceipt) {
     );
   }
   return matching[0];
+}
+
+async function assertSalesforceRevalidationCurrent({
+  receipt,
+  receiptPath,
+  preview,
+  mappingReceipt,
+  ledger,
+}) {
+  if (!receipt || !receiptPath) {
+    throw new ContextEnricherError(
+      "MISSING_SALESFORCE_REVALIDATION",
+      "Final build requires a fresh read-only Salesforce revalidation receipt created after the contextual preview.",
+    );
+  }
+  if (await canonicalPath(receiptPath) !== receipt.path) {
+    throw new ContextEnricherError(
+      "SALESFORCE_REVALIDATION_MISMATCH",
+      "The supplied Salesforce revalidation path does not match the loaded receipt.",
+    );
+  }
+  if (Date.parse(receipt.verifiedAt) <= Date.parse(preview.createdAt)) {
+    throw new ContextEnricherError(
+      "STALE_SALESFORCE_REVALIDATION",
+      "Salesforce must be revalidated after the current contextual preview.",
+    );
+  }
+  if (
+    receipt.mappingReportPath !== mappingReceipt.path ||
+    receipt.mappingReportDigest !== mappingReceipt.digest ||
+    receipt.mappingReportPath !== preview.salesforceReceipt.path ||
+    receipt.mappingReportDigest !== preview.salesforceReceipt.digest
+  ) {
+    throw new ContextEnricherError(
+      "SALESFORCE_REVALIDATION_MISMATCH",
+      "The Salesforce revalidation receipt is not bound to the exact mapping report used by this preview.",
+    );
+  }
+  if (
+    !sameSalesforceAccountId(receipt.accountId, preview.account.salesforceAccountId) ||
+    !sameSalesforceAccountId(receipt.accountId, ledger.account.salesforceAccountId) ||
+    receipt.orgId !== preview.account.salesforceOrgId ||
+    receipt.orgId !== ledger.account.salesforceOrgId ||
+    receipt.accountName !== preview.account.canonicalName ||
+    receipt.accountName !== ledger.account.canonicalName ||
+    receipt.fieldMapVersion !== preview.account.fieldMapVersion ||
+    receipt.fieldMapDigest !== mappingReceipt.fieldMapDigest ||
+    receipt.sourceLastModifiedDate !== preview.account.accountLastModifiedDate ||
+    receipt.sourceLastModifiedDate !== mappingReceipt.sourceLastModifiedDate
+  ) {
+    throw new ContextEnricherError(
+      "STALE_SALESFORCE_REVALIDATION",
+      "Salesforce identity, Account name, field map, or LastModifiedDate changed after contextual preview.",
+    );
+  }
+  if (
+    receipt.acceptedSourceFieldsDigest !== mappingReceipt.acceptedSourceFieldsDigest ||
+    receipt.acceptedSourceValuesDigest !== mappingReceipt.acceptedSourceValuesDigest ||
+    receipt.productCandidateDigest !== mappingReceipt.productCandidateDigest
+  ) {
+    throw new ContextEnricherError(
+      "STALE_SALESFORCE_REVALIDATION",
+      "Salesforce accepted field values, field availability, or purchased-Asset candidates changed after contextual preview.",
+    );
+  }
 }
 
 function findUnsubstantiatedGreens(dashboard, acceptedProposals = []) {
@@ -3107,6 +3402,19 @@ export async function createAttestationBundle({
     salesforceAccountId: preview.account.salesforceAccountId,
     canonicalName: preview.account.canonicalName,
   };
+  if (preview.attestations.path) {
+    if (!prior || prior.integrityDigest !== preview.attestations.digest) {
+      throw new ContextEnricherError(
+        "ATTESTATION_LINEAGE_MISMATCH",
+        "This clarification round must extend the exact attestation bundle bound to the current preview.",
+      );
+    }
+  } else if (prior) {
+    throw new ContextEnricherError(
+      "ATTESTATION_LINEAGE_MISMATCH",
+      "The current preview has no prior attestation bundle; an alternate clarification branch cannot be introduced.",
+    );
+  }
   if (prior && (
     stableStringify(prior.account) !== stableStringify(bindings) ||
     prior.inputDigest !== preview.input.digest ||
@@ -3578,6 +3886,19 @@ function sanitizeReportText(value, max = 400) {
     .replace(/[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/gu, " ")
     .replace(/https?:\/\/\S+/giu, "[link omitted]")
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu, "[email omitted]")
+    .replace(
+      /\b(?:Authorization\s*:\s*)?Bearer\s+[A-Za-z0-9._~+/=-]{8,}/giu,
+      "[credential omitted]",
+    )
+    .replace(
+      /\b(?:api[_-]?key|token|password|secret|client[_-]?secret|authorization)\s*[:=]\s*[^\s,;]+/giu,
+      "[credential omitted]",
+    )
+    .replace(
+      /(?<!\w)(?:\+\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}(?!\w)/gu,
+      "[phone omitted]",
+    )
+    .replace(/(?<!\w)\d{10}(?!\w)/gu, "[phone omitted]")
     .replace(/[\\`|<>\[\]]/gu, "\\$&")
     .replace(/\s+/gu, " ")
     .trim())
@@ -3712,6 +4033,8 @@ export async function buildFromPreview({
   previewPath,
   ledger,
   evidencePath,
+  salesforceRevalidation,
+  salesforceRevalidationPath,
   attestations = null,
   attestationsPath = "",
   approvedProposalIds,
@@ -3776,6 +4099,13 @@ export async function buildFromPreview({
       "The Salesforce child mapping report changed after preview.",
     );
   }
+  await assertSalesforceRevalidationCurrent({
+    receipt: salesforceRevalidation,
+    receiptPath: salesforceRevalidationPath,
+    preview,
+    mappingReceipt: currentSalesforceReceipt,
+    ledger,
+  });
   const dashboard = await loadDashboard(preview.input.path);
   if (digestObject(dashboard) !== preview.input.digest) {
     throw new ContextEnricherError("STALE_INPUT", "The dashboard input changed after preview.");
@@ -3835,6 +4165,7 @@ export async function buildFromPreview({
       preview.input.path,
       preview.evidence.path,
       preview.salesforceReceipt.path,
+      salesforceRevalidationPath,
       previewPath,
       attestationsPath,
       ...localSourcePaths,

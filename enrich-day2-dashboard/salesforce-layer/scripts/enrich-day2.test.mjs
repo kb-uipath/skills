@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -28,6 +39,7 @@ import {
   validateDashboardInput,
   verifyFreshness,
   writeProtectedJson,
+  writeProtectedJsonPairAtomic,
 } from "./day2-enricher-lib.mjs";
 
 const TEST_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
@@ -508,6 +520,52 @@ test("Salesforce CLI/auth process failures stop without falling back", () => {
   );
 });
 
+test("Salesforce CLI calls time out and redact credential-like error details", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "salesforce-day2-cli-"));
+  const timeoutCli = path.join(directory, "sf-timeout");
+  const secretCli = path.join(directory, "sf-secret");
+  try {
+    await writeFile(
+      timeoutCli,
+      "#!/usr/bin/env node\nsetTimeout(() => {}, 5000);\n",
+      { encoding: "utf8", mode: 0o700 },
+    );
+    assert.throws(
+      () => runSf(
+        ["org", "display", "--json"],
+        { sfBinary: timeoutCli, timeoutMs: 50 },
+      ),
+      (error) =>
+        error instanceof EnricherError &&
+        error.code === "SF_CLI_FAILURE" &&
+        !error.message.includes("undefined"),
+    );
+
+    await writeFile(
+      secretCli,
+      [
+        "#!/usr/bin/env node",
+        "process.stdout.write(JSON.stringify({",
+        "  status: 1,",
+        '  message: "password=super-secret token=private-token Authorization: Bearer abcdefghijklmnop"',
+        "}));",
+        "",
+      ].join("\n"),
+      { encoding: "utf8", mode: 0o700 },
+    );
+    assert.throws(
+      () => runSf(["org", "display", "--json"], { sfBinary: secretCli }),
+      (error) =>
+        error instanceof EnricherError &&
+        error.code === "SF_CLI_FAILURE" &&
+        !/super-secret|private-token|abcdefghijklmnop/u.test(error.message) &&
+        /credential detail removed/u.test(error.message),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("org resolution uses an explicit org or the CLI default and never injects an alias", () => {
   const calls = [];
   const runner = (args) => {
@@ -626,7 +684,14 @@ if (args[0] === "org" && args[1] === "display") {
 } else if (args[0] === "data" && args[1] === "query") {
   const query = args[args.indexOf("--query") + 1];
   if (query.includes("FROM Account")) {
-    ok({ totalSize: 1, records: [${JSON.stringify(syntheticAccount())}] });
+    const account = ${JSON.stringify(syntheticAccount())};
+    if (process.env.SF_FAKE_STALE === "1") {
+      account.LastModifiedDate = "2026-07-24T15:30:00.000+0000";
+    }
+    if (process.env.SF_FAKE_FORMULA_DRIFT === "1") {
+      account.Utilization_Users__c = "126.50";
+    }
+    ok({ totalSize: 1, records: [account] });
   } else if (query.includes("FROM Asset")) {
     ok({ totalSize: 1, records: [{
       Id: "02i000000000001AAA",
@@ -671,7 +736,7 @@ if (args[0] === "org" && args[1] === "display") {
     await writeFile(
       redirectedPreviewPath,
       JSON.stringify({ ...preview, outputDirectory: path.join(directory, "redirected") }),
-      "utf8",
+      { encoding: "utf8", mode: 0o600 },
     );
     const redirectedBuild = spawnSync(
       process.execPath,
@@ -684,7 +749,10 @@ if (args[0] === "org" && args[1] === "display") {
     const candidateTamperPath = path.join(outputDirectory, "candidate-tamper-preview.json");
     const candidateTamper = structuredClone(preview);
     candidateTamper.productCandidates[0].productName = "Tampered Product";
-    await writeFile(candidateTamperPath, JSON.stringify(candidateTamper), "utf8");
+    await writeFile(candidateTamperPath, JSON.stringify(candidateTamper), {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     const candidateTamperBuild = spawnSync(
       process.execPath,
       [CLI_PATH, "build", "--preview", candidateTamperPath],
@@ -694,11 +762,14 @@ if (args[0] === "org" && args[1] === "display") {
     assert.match(candidateTamperBuild.stderr, /PREVIEW_TAMPERED/);
 
     const decoyInputPath = path.join(directory, "byte-identical-decoy.json");
-    await writeFile(decoyInputPath, await readFile(preview.input.path));
+    await writeFile(decoyInputPath, await readFile(preview.input.path), { mode: 0o600 });
     const inputPathTamperPath = path.join(outputDirectory, "input-path-tamper-preview.json");
     const inputPathTamper = structuredClone(preview);
     inputPathTamper.input.path = decoyInputPath;
-    await writeFile(inputPathTamperPath, JSON.stringify(inputPathTamper), "utf8");
+    await writeFile(inputPathTamperPath, JSON.stringify(inputPathTamper), {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     const inputPathTamperBuild = spawnSync(
       process.execPath,
       [CLI_PATH, "build", "--preview", inputPathTamperPath, "--overwrite"],
@@ -725,6 +796,111 @@ if (args[0] === "org" && args[1] === "display") {
     assert.deepEqual(dashboard.consumptionPlan.groups, []);
     assert.equal(dashboardText.includes("Manual Candidate Product"), false);
     assert.equal(report.productCandidates[0].productName, "Manual Candidate Product");
+
+    const revalidationPath = path.join(
+      outputDirectory,
+      "synthetic-customer-day2-salesforce-revalidation.json",
+    );
+    const revalidationRun = spawnSync(
+      process.execPath,
+      [
+        CLI_PATH,
+        "revalidate",
+        "--report",
+        reportPath,
+        "--output",
+        revalidationPath,
+      ],
+      { encoding: "utf8", shell: false, env: environment },
+    );
+    assert.equal(revalidationRun.status, 0, revalidationRun.stderr);
+    const revalidation = JSON.parse(await readFile(revalidationPath, "utf8"));
+    const revalidationSchema = JSON.parse(
+      await readFile(
+        path.join(
+          TEST_DIRECTORY,
+          "..",
+          "references",
+          "salesforce-revalidation.schema.json",
+        ),
+        "utf8",
+      ),
+    );
+    assert.equal(revalidation.kind, "salesforce-day2-revalidation/v1");
+    assert.equal(revalidation.accountId, "001000000000000AAA");
+    assert.equal(revalidation.mappingReport.path, await realpath(reportPath));
+    assert.deepEqual(
+      Object.keys(revalidation).sort(),
+      [...revalidationSchema.required].sort(),
+    );
+    assert.deepEqual(
+      Object.keys(revalidation.source).sort(),
+      [...revalidationSchema.properties.source.required].sort(),
+    );
+
+    const staleRevalidationRun = spawnSync(
+      process.execPath,
+      [
+        CLI_PATH,
+        "revalidate",
+        "--report",
+        reportPath,
+        "--output",
+        path.join(outputDirectory, "stale-revalidation.json"),
+      ],
+      {
+        encoding: "utf8",
+        shell: false,
+        env: { ...environment, SF_FAKE_STALE: "1" },
+      },
+    );
+    assert.notEqual(staleRevalidationRun.status, 0);
+    assert.match(staleRevalidationRun.stderr, /STALE_SALESFORCE/u);
+
+    const formulaDriftRun = spawnSync(
+      process.execPath,
+      [
+        CLI_PATH,
+        "revalidate",
+        "--report",
+        reportPath,
+        "--output",
+        path.join(outputDirectory, "formula-drift-revalidation.json"),
+      ],
+      {
+        encoding: "utf8",
+        shell: false,
+        env: { ...environment, SF_FAKE_FORMULA_DRIFT: "1" },
+      },
+    );
+    assert.notEqual(formulaDriftRun.status, 0);
+    assert.match(formulaDriftRun.stderr, /STALE_SALESFORCE/u);
+
+    const changedFieldMapReportPath = path.join(outputDirectory, "changed-field-map-report.json");
+    const changedFieldMapReport = {
+      ...report,
+      fieldMapDigest: `sha256:${"0".repeat(64)}`,
+      reportOutput: path.join(await realpath(outputDirectory), "changed-field-map-report.json"),
+    };
+    await writeFile(
+      changedFieldMapReportPath,
+      `${JSON.stringify(changedFieldMapReport, null, 2)}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    const changedFieldMapRun = spawnSync(
+      process.execPath,
+      [
+        CLI_PATH,
+        "revalidate",
+        "--report",
+        changedFieldMapReportPath,
+        "--output",
+        path.join(outputDirectory, "changed-field-map-revalidation.json"),
+      ],
+      { encoding: "utf8", shell: false, env: environment },
+    );
+    assert.notEqual(changedFieldMapRun.status, 0);
+    assert.match(changedFieldMapRun.stderr, /STALE_SALESFORCE/u);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -770,6 +946,31 @@ test("protects existing outputs and writes confidential JSON with explicit overw
     });
     await writeProtectedJson(target, { value: 2 }, true);
     assert.deepEqual(JSON.parse(await readFile(target, "utf8")), { value: 2 });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("atomic paired writes reject non-file overwrite targets without partial output", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "salesforce-day2-pair-"));
+  const firstPath = path.join(directory, "dashboard.json");
+  const directoryTarget = path.join(directory, "mapping-report.json");
+  try {
+    await mkdir(directoryTarget, { mode: 0o700 });
+    await assert.rejects(
+      () => writeProtectedJsonPairAtomic(
+        [
+          { filePath: firstPath, value: { first: true } },
+          { filePath: directoryTarget, value: { second: true } },
+        ],
+        { overwrite: true },
+      ),
+      { code: "UNSAFE_OUTPUT_TARGET" },
+    );
+    await assert.rejects(() => stat(firstPath), { code: "ENOENT" });
+    assert.equal((await stat(directoryTarget)).isDirectory(), true);
+    const leftovers = (await readdir(directory)).filter((name) => /\.(?:tmp|bak)$/u.test(name));
+    assert.deepEqual(leftovers, []);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

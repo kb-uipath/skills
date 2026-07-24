@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -9,6 +8,7 @@ import {
   DASHBOARD_SCHEMA_VERSION,
   EnricherError,
   FIELD_MAP_PATH,
+  REVALIDATION_KIND,
   applyProposal,
   assertNoProtectedPathCollision,
   assertWritableTargets,
@@ -16,11 +16,14 @@ import {
   canonicalPath,
   createMappingReport,
   createPreviewDocument,
+  createSalesforceRevalidationReceipt,
   digestObject,
   extractAccountId,
   fetchSalesforceSnapshot,
   loadDashboardInput,
   loadFieldMap,
+  loadMappingReport,
+  loadPrivateJson,
   removePreviewFile,
   resolveOrg,
   slugifyAccountName,
@@ -28,6 +31,7 @@ import {
   validatePreview,
   verifyFreshness,
   writeProtectedJson,
+  writeProtectedJsonPairAtomic,
 } from "./day2-enricher-lib.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -40,6 +44,7 @@ function usage() {
 Usage:
   node enrich-day2.mjs preview --account <001-id-or-account-lightning-url> [options]
   node enrich-day2.mjs build --preview <preview.json> [options]
+  node enrich-day2.mjs revalidate --report <mapping-report.json> [options]
   node enrich-day2.mjs self-test
 
 Preview options:
@@ -54,6 +59,11 @@ Build options:
   --output <file>          Importable JSON path. Default: beside the preview file.
   --report <file>          Explicit confidential mapping-report path.
   --overwrite              Replace the exact output/report paths if they already exist.
+
+Revalidate options:
+  --report <file>          Matching confidential Salesforce mapping report.
+  --output <file>          Fresh read-only revalidation receipt path.
+  --overwrite              Replace only the exact revalidation receipt path.
 
 Only Salesforce Account IDs beginning with 001 and Account Lightning URLs are accepted.
 There is no bulk conflict approval option.`;
@@ -98,12 +108,7 @@ function requireOption(options, name) {
 
 async function readPreview(previewPath) {
   const resolvedPath = await canonicalPath(previewPath);
-  let value;
-  try {
-    value = JSON.parse(await readFile(resolvedPath, "utf8"));
-  } catch {
-    throw new EnricherError("INVALID_PREVIEW", `Preview is not readable JSON: ${resolvedPath}`);
-  }
+  const value = await loadPrivateJson(resolvedPath, "Salesforce preview");
   return { value: validatePreview(value), path: resolvedPath };
 }
 
@@ -268,18 +273,17 @@ async function buildCommand(tokens) {
     dashboardOutput,
     reportOutput,
     fieldMap,
+    fieldMapDigest,
   });
-  await writeProtectedJson(
-    dashboardOutput,
-    buildResult.dashboard,
-    Boolean(options.overwrite),
-    protectedPaths,
-  );
-  await writeProtectedJson(
-    reportOutput,
-    report,
-    Boolean(options.overwrite),
-    [...protectedPaths, dashboardOutput],
+  await writeProtectedJsonPairAtomic(
+    [
+      { filePath: dashboardOutput, value: buildResult.dashboard },
+      { filePath: reportOutput, value: report },
+    ],
+    {
+      overwrite: Boolean(options.overwrite),
+      protectedPaths,
+    },
   );
   await removePreviewFile(previewFile.path);
 
@@ -295,6 +299,72 @@ async function buildCommand(tokens) {
         productCandidates: summaryCounts(snapshot.productCandidates),
         next:
           "In the Day 2 dashboard, click Import JSON and choose the importableDashboard file. Review it, finish unsupported fields manually, then Export JSON to save the editable backup.",
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+async function revalidateCommand(tokens) {
+  const options = parseOptions(tokens, {
+    report: "value",
+    output: "value",
+    overwrite: "boolean",
+  });
+  const reportFile = await loadMappingReport(requireOption(options, "report"));
+  const report = reportFile.value;
+  const [{ value: fieldMap, digest: fieldMapDigest }, org] = await Promise.all([
+    loadFieldMap(),
+    Promise.resolve(resolveOrg(report.org.username)),
+  ]);
+  if (org.orgId !== report.org.orgId || org.username !== report.org.username) {
+    throw new EnricherError(
+      "ORG_MISMATCH",
+      "The mapping report's Salesforce org identity no longer matches the resolved connection.",
+    );
+  }
+  const snapshot = fetchSalesforceSnapshot(report.accountId, org.targetOrg, fieldMap);
+  const receipt = createSalesforceRevalidationReceipt({
+    report,
+    reportPath: reportFile.path,
+    snapshot,
+    org,
+    fieldMap,
+    fieldMapDigest,
+  });
+  const outputPath = path.resolve(
+    options.output ??
+      path.join(
+        path.dirname(reportFile.path),
+        `${report.accountId.toLowerCase()}-day2-salesforce-revalidation.json`,
+      ),
+  );
+  const protectedPaths = [
+    reportFile.path,
+    report.dashboardOutput,
+    FIELD_MAP_PATH,
+    BLANK_TEMPLATE_PATH,
+  ];
+  await assertNoProtectedPathCollision(outputPath, protectedPaths, "Revalidation output");
+  await assertWritableTargets([outputPath], Boolean(options.overwrite));
+  await writeProtectedJson(
+    outputPath,
+    receipt,
+    Boolean(options.overwrite),
+    protectedPaths,
+  );
+  console.log(
+    JSON.stringify(
+      {
+        status: "salesforce-revalidated",
+        kind: REVALIDATION_KIND,
+        confidentialRevalidationReceipt: outputPath,
+        verifiedAt: receipt.verifiedAt,
+        accountId: receipt.accountId,
+        orgId: receipt.org.orgId,
+        next:
+          "Create a new contextual preview if this command reports stale Salesforce. Otherwise pass this exact receipt to contextual build with --salesforce-revalidation.",
       },
       null,
       2,
@@ -327,6 +397,7 @@ async function main() {
   }
   if (command === "preview") return previewCommand(tokens);
   if (command === "build") return buildCommand(tokens);
+  if (command === "revalidate") return revalidateCommand(tokens);
   if (command === "self-test") return selfTestCommand(tokens);
   throw new EnricherError("INVALID_COMMAND", `Unknown command ${JSON.stringify(command)}.\n\n${usage()}`);
 }

@@ -16,12 +16,19 @@ import {
   digestObject,
   evidenceLedgerDigest,
   loadDashboard,
+  loadContextPreview,
   loadEvidenceLedger,
+  loadSalesforceRevalidationReceipt,
   normalizeEvidenceLedger,
   prepareProposals,
   readJsonFile,
   writeJsonAtomic,
 } from "./day2-context-lib.mjs";
+import {
+  createMappingReport as createChildMappingReport,
+  createSalesforceRevalidationReceipt as createChildSalesforceRevalidationReceipt,
+  digestObject as childDigestObject,
+} from "../salesforce-layer/scripts/day2-enricher-lib.mjs";
 
 const BLANK_TEMPLATE_PATH = path.join(
   SALESFORCE_SKILL_DIRECTORY,
@@ -30,6 +37,7 @@ const BLANK_TEMPLATE_PATH = path.join(
 );
 const FIXED_PREVIEW_TIME = "2026-07-23T10:00:00Z";
 const FIXED_RECHECK_TIME = "2026-07-23T11:00:00Z";
+const FIXED_SALESFORCE_RECHECK_TIME = "2026-07-23T11:30:00Z";
 
 function clone(value) {
   return structuredClone(value);
@@ -232,34 +240,90 @@ async function writeJson(filePath, value) {
 
 async function writeSalesforceMappingReport(directory, dashboardOutput, filename = "salesforce-mapping-report.json") {
   const reportPath = path.join(directory, filename);
-  const report = {
-    kind: "salesforce-day2-mapping-report/v1",
-    confidential: true,
-    builtAt: "2026-07-23T09:45:00Z",
-    dashboardSchemaVersion: "1.4",
-    accountId: "001000000000001",
-    org: {
-      username: "synthetic@example.invalid",
-      orgId: "00D000000000001",
-      alias: "synthetic",
+  const account = {
+    Id: "001000000000001",
+    LastModifiedDate: "2026-07-22T15:30:00.000+0000",
+    Name: "Acme Agency",
+  };
+  const report = createChildMappingReport({
+    preview: {
+      org: {
+        username: "synthetic@example.invalid",
+        orgId: "00D000000000001",
+        alias: "synthetic",
+      },
+      proposal: { skips: [], warnings: [] },
     },
-    sourceLastModifiedDate: "2026-07-22T15:30:00.000+0000",
-    fieldMapVersion: "salesforce-day2-field-map/v1",
+    buildResult: {
+      mappingResults: [],
+      unresolvedConflicts: [],
+      acceptedSourceFields: ["Id", "LastModifiedDate", "Name"],
+      provenanceAdded: true,
+      provenanceUpdated: false,
+    },
+    snapshot: {
+      account,
+      accountLastModifiedDate: account.LastModifiedDate,
+      missingOptionalAccountFields: [],
+      assetWarnings: [],
+      productCandidates: [],
+    },
     dashboardOutput: path.resolve(dashboardOutput),
     reportOutput: path.resolve(reportPath),
-    mappings: [],
-    unresolvedConflicts: [],
-    acceptedSourceFields: ["Id", "LastModifiedDate", "Name"],
-    provenanceAdded: true,
-    provenanceUpdated: false,
-    skippedMappings: [],
-    warnings: [],
-    productCandidates: [],
-    productCandidateNotice: "Synthetic fixture; no product candidate was mapped.",
-    explicitlyNotMapped: [],
-  };
+    fieldMap: {
+      version: "salesforce-day2-field-map/v1",
+      neverMap: [],
+    },
+    fieldMapDigest: digestText("field-map").slice("sha256:".length),
+  });
   await writeJson(reportPath, report);
   return reportPath;
+}
+
+async function writeSalesforceRevalidationReceipt(
+  directory,
+  reportPath,
+  {
+    filename = "salesforce-revalidation.json",
+    verifiedAt = FIXED_SALESFORCE_RECHECK_TIME,
+    overrides = {},
+  } = {},
+) {
+  const report = JSON.parse(await readFile(reportPath, "utf8"));
+  const account = {
+    Id: report.accountId,
+    LastModifiedDate: report.sourceLastModifiedDate,
+    Name: "Acme Agency",
+  };
+  const childReceipt = createChildSalesforceRevalidationReceipt({
+    report,
+    reportPath,
+    snapshot: {
+      account,
+      accountLastModifiedDate: account.LastModifiedDate,
+      selectedAccountFields: [...report.acceptedSourceFields],
+      productCandidateDigest: childDigestObject(report.productCandidates),
+    },
+    org: {
+      username: report.org.username,
+      orgId: report.org.orgId,
+    },
+    fieldMap: { version: report.fieldMapVersion },
+    fieldMapDigest: report.fieldMapDigest.slice("sha256:".length),
+    verifiedAt,
+  });
+  const payload = { ...childReceipt, ...overrides };
+  delete payload.integrityDigest;
+  const receipt = {
+    ...payload,
+    integrityDigest: digestObject(payload),
+  };
+  const receiptPath = path.join(directory, filename);
+  await writeJson(receiptPath, receipt);
+  return {
+    path: receiptPath,
+    receipt: await loadSalesforceRevalidationReceipt(receiptPath),
+  };
 }
 
 async function previewFixture({ dashboard, raw } = {}) {
@@ -282,6 +346,10 @@ async function previewFixture({ dashboard, raw } = {}) {
     createdAt: FIXED_PREVIEW_TIME,
   });
   await writeJson(previewPath, preview);
+  const revalidation = await writeSalesforceRevalidationReceipt(
+    directory,
+    salesforceReportPath,
+  );
   return {
     directory,
     base,
@@ -292,6 +360,8 @@ async function previewFixture({ dashboard, raw } = {}) {
     evidencePath,
     previewPath,
     preview,
+    salesforceRevalidation: revalidation.receipt,
+    salesforceRevalidationPath: revalidation.path,
   };
 }
 
@@ -422,6 +492,55 @@ test("normalizes every supported source type with explicit scope", () => {
   const ledger = normalizeEvidenceLedger(rawLedger({ items, proposals: [] }));
   assert.deepEqual(ledger.scope.sources.sort(), sourceTypes.sort());
   assert.equal(ledger.items.length, sourceTypes.length);
+});
+
+test("rejects duplicate stable source identities and bounded-ledger overflows", () => {
+  const duplicateIdentity = sourceDefaults({
+    ref: "evidence-2",
+    excerpt: "A contradictory rendering of the same stable source.",
+    contentDigest: digestText("different source bytes"),
+  });
+  assert.throws(
+    () => normalizeEvidenceLedger(rawLedger({
+      items: [sourceDefaults(), duplicateIdentity],
+      proposals: [],
+    })),
+    (error) =>
+      error instanceof ContextEnricherError &&
+      error.code === "SOURCE_IDENTITY_COLLISION",
+  );
+
+  const distinctContainer = sourceDefaults({
+    ref: "evidence-other-container",
+    sourceId: "sharepoint:acme:1",
+    container: "sharepoint-other-account-container",
+  });
+  const distinctContainerLedger = normalizeEvidenceLedger(rawLedger({
+    items: [sourceDefaults(), distinctContainer],
+    proposals: [],
+  }));
+  assert.equal(distinctContainerLedger.items.length, 2);
+
+  const tooManyItems = Array.from({ length: 501 }, (_, index) => sourceDefaults({
+    ref: `evidence-${index}`,
+    sourceId: `sharepoint:acme:${index}`,
+  }));
+  assert.throws(
+    () => normalizeEvidenceLedger(rawLedger({ items: tooManyItems, proposals: [] })),
+    (error) =>
+      error instanceof ContextEnricherError &&
+      error.code === "LEDGER_LIMIT_EXCEEDED",
+  );
+
+  const tooManyProposals = Array.from({ length: 501 }, (_, index) => proposalDefaults({
+    ref: `proposal-${index}`,
+  }));
+  assert.throws(
+    () => normalizeEvidenceLedger(rawLedger({ proposals: tooManyProposals })),
+    (error) =>
+      error instanceof ContextEnricherError &&
+      error.code === "LEDGER_LIMIT_EXCEEDED",
+  );
 });
 
 test("strips query strings and fragments from retained locators", () => {
@@ -939,6 +1058,62 @@ test("rejects out-of-window evidence unless explicitly selected, and never uses 
   assert.match(prepared[0].reasons.join(" "), /current actual/i);
 });
 
+test("foundational and OneNote selections must resolve to exactly one collected item", () => {
+  const sharedSourceId = "shared-container-source";
+  const first = sourceDefaults({
+    ref: "evidence-1",
+    sourceId: sharedSourceId,
+    container: "folder-a",
+    occurredAt: "2019-01-01",
+    modifiedAt: "2019-01-01",
+  });
+  const second = sourceDefaults({
+    ref: "evidence-2",
+    sourceId: sharedSourceId,
+    container: "folder-b",
+    occurredAt: "2019-01-01",
+    modifiedAt: "2019-01-01",
+  });
+  assert.throws(
+    () => normalizeEvidenceLedger(rawLedger({
+      items: [first, second],
+      proposals: [],
+      scope: { foundationalSourceIds: [sharedSourceId] },
+    })),
+    (error) => error instanceof ContextEnricherError && error.code === "AMBIGUOUS_SOURCE_SELECTION",
+  );
+
+  const oneNoteFirst = sourceDefaults({
+    ref: "evidence-1",
+    sourceType: "onenote",
+    sourceId: sharedSourceId,
+    container: "notebook-a",
+  });
+  const oneNoteSecond = sourceDefaults({
+    ref: "evidence-2",
+    sourceType: "onenote",
+    sourceId: sharedSourceId,
+    container: "notebook-b",
+    contentDigest: oneNoteFirst.contentDigest,
+  });
+  assert.throws(
+    () => normalizeEvidenceLedger(rawLedger({
+      items: [oneNoteFirst, oneNoteSecond],
+      proposals: [],
+      scope: {
+        oneNoteSelections: [{
+          notebook: "Account Notes",
+          section: "Acme",
+          page: "QBR",
+          sourceId: sharedSourceId,
+          captureDigest: oneNoteFirst.contentDigest,
+        }],
+      },
+    })),
+    (error) => error instanceof ContextEnricherError && error.code === "AMBIGUOUS_SOURCE_SELECTION",
+  );
+});
+
 test("rejects future-dated non-calendar actual evidence even inside a future search window", () => {
   const item = sourceDefaults({
     occurredAt: "2099-01-01",
@@ -1341,6 +1516,37 @@ test("repeated clarification rounds derive a new bundle and preserve prior recor
   assert.equal(second.records.length, 2);
   assert.notEqual(second.integrityDigest, first.integrityDigest);
   assert.deepEqual(first.records.map((item) => item.questionId), [firstQuestion.questionId]);
+});
+
+test("clarification requires the exact attestation lineage bound to its preview", async () => {
+  const fixture = await previewFixture({ raw: rawLedger({ proposals: [] }) });
+  const firstQuestion = fixture.preview.questionPlan.questions[0];
+  const first = await deriveAttestations(fixture, [
+    { questionId: firstQuestion.questionId, status: "unknown", response: "" },
+  ]);
+  const alternate = await deriveAttestations(fixture, [
+    { questionId: firstQuestion.questionId, status: "skipped", response: "" },
+  ]);
+  const bound = await previewWithAttestations(fixture, first, "lineage-first.json");
+  const nextQuestion = bound.preview.questionPlan.questions[0];
+  const answer = [{
+    questionId: nextQuestion.questionId,
+    status: "unknown",
+    response: "",
+  }];
+
+  await assert.rejects(
+    () => deriveAttestations(bound, answer, null, "2026-07-23T10:45:00Z"),
+    (error) =>
+      error instanceof ContextEnricherError &&
+      error.code === "ATTESTATION_LINEAGE_MISMATCH",
+  );
+  await assert.rejects(
+    () => deriveAttestations(bound, answer, alternate, "2026-07-23T10:45:00Z"),
+    (error) =>
+      error instanceof ContextEnricherError &&
+      error.code === "ATTESTATION_LINEAGE_MISMATCH",
+  );
 });
 
 test("account-team attestation supports motion but not protected commercial facts", async () => {
@@ -1785,6 +1991,8 @@ test("attested Green health requires separately approved status and evidence", a
       previewPath,
       ledger: refreshed,
       evidencePath: baseFixture.evidencePath,
+      salesforceRevalidation: baseFixture.salesforceRevalidation,
+      salesforceRevalidationPath: baseFixture.salesforceRevalidationPath,
       attestations: healthBundle,
       attestationsPath,
       approvedProposalIds: [statusProposal.proposalId],
@@ -1798,6 +2006,8 @@ test("attested Green health requires separately approved status and evidence", a
     previewPath,
     ledger: refreshed,
     evidencePath: baseFixture.evidencePath,
+    salesforceRevalidation: baseFixture.salesforceRevalidation,
+    salesforceRevalidationPath: baseFixture.salesforceRevalidationPath,
     attestations: healthBundle,
     attestationsPath,
     approvedProposalIds: [statusProposal.proposalId, evidenceProposal.proposalId],
@@ -1888,6 +2098,8 @@ test("typed product forecast updates only forecast and comments on a source-back
     previewPath,
     ledger: normalizeEvidenceLedger(refreshedRaw, { attestations: forecastBundle }),
     evidencePath: baseFixture.evidencePath,
+    salesforceRevalidation: baseFixture.salesforceRevalidation,
+    salesforceRevalidationPath: baseFixture.salesforceRevalidationPath,
     attestations: forecastBundle,
     attestationsPath,
     approvedProposalIds: [preview.proposals[0].proposalId],
@@ -1999,6 +2211,109 @@ test("account-team actual authority is limited to internal status, not realized 
   assert.match(prepared[1].reasons.join(" "), /not authorized|realized KPI|protected fact/i);
 });
 
+test("build requires a fresh Salesforce revalidation receipt bound to the preview", async () => {
+  const fixture = await previewFixture();
+  const refreshedRaw = refreshedLedger(fixture.ledgerRaw);
+  await writeJson(fixture.evidencePath, refreshedRaw);
+  const build = (salesforceRevalidation, salesforceRevalidationPath, suffix) =>
+    buildFromPreview({
+      preview: fixture.preview,
+      previewPath: fixture.previewPath,
+      ledger: normalizeEvidenceLedger(refreshedRaw),
+      evidencePath: fixture.evidencePath,
+      salesforceRevalidation,
+      salesforceRevalidationPath,
+      approvedProposalIds: [],
+      outputPath: path.join(fixture.directory, `revalidation-${suffix}.json`),
+      reportPath: path.join(fixture.directory, `revalidation-${suffix}.md`),
+    });
+
+  await assert.rejects(
+    () => build(null, null, "missing"),
+    (error) =>
+      error instanceof ContextEnricherError &&
+      error.code === "MISSING_SALESFORCE_REVALIDATION",
+  );
+
+  const staleTime = await writeSalesforceRevalidationReceipt(
+    fixture.directory,
+    fixture.salesforceReportPath,
+    {
+      filename: "stale-time-salesforce-revalidation.json",
+      verifiedAt: "2026-07-23T09:59:59Z",
+    },
+  );
+  await assert.rejects(
+    () => build(staleTime.receipt, staleTime.path, "stale-time"),
+    (error) =>
+      error instanceof ContextEnricherError &&
+      error.code === "STALE_SALESFORCE_REVALIDATION",
+  );
+
+  const staleSource = await writeSalesforceRevalidationReceipt(
+    fixture.directory,
+    fixture.salesforceReportPath,
+    {
+      filename: "stale-source-salesforce-revalidation.json",
+      verifiedAt: "2026-07-23T11:45:00Z",
+      overrides: {
+        source: {
+          ...fixture.salesforceRevalidation.source,
+          accountLastModifiedDate: "2026-07-23T15:30:00.000+0000",
+        },
+      },
+    },
+  );
+  await assert.rejects(
+    () => build(staleSource.receipt, staleSource.path, "stale-source"),
+    (error) =>
+      error instanceof ContextEnricherError &&
+      error.code === "STALE_SALESFORCE_REVALIDATION",
+  );
+
+  const staleValues = await writeSalesforceRevalidationReceipt(
+    fixture.directory,
+    fixture.salesforceReportPath,
+    {
+      filename: "stale-values-salesforce-revalidation.json",
+      verifiedAt: "2026-07-23T11:45:00Z",
+      overrides: {
+        source: {
+          ...fixture.salesforceRevalidation.source,
+          acceptedSourceValuesDigest: `sha256:${"0".repeat(64)}`,
+        },
+      },
+    },
+  );
+  await assert.rejects(
+    () => build(staleValues.receipt, staleValues.path, "stale-values"),
+    (error) =>
+      error instanceof ContextEnricherError &&
+      error.code === "STALE_SALESFORCE_REVALIDATION",
+  );
+
+  const staleFieldMap = await writeSalesforceRevalidationReceipt(
+    fixture.directory,
+    fixture.salesforceReportPath,
+    {
+      filename: "stale-field-map-salesforce-revalidation.json",
+      verifiedAt: "2026-07-23T11:45:00Z",
+      overrides: {
+        fieldMap: {
+          ...fixture.salesforceRevalidation.fieldMap,
+          digest: `sha256:${"0".repeat(64)}`,
+        },
+      },
+    },
+  );
+  await assert.rejects(
+    () => build(staleFieldMap.receipt, staleFieldMap.path, "stale-field-map"),
+    (error) =>
+      error instanceof ContextEnricherError &&
+      error.code === "STALE_SALESFORCE_REVALIDATION",
+  );
+});
+
 test("build rejects wildcard and path-only approvals", async () => {
   const fixture = await previewFixture();
   const refreshedRaw = refreshedLedger(fixture.ledgerRaw);
@@ -2010,6 +2325,8 @@ test("build rejects wildcard and path-only approvals", async () => {
         previewPath: fixture.previewPath,
         ledger: normalizeEvidenceLedger(refreshedRaw),
         evidencePath: fixture.evidencePath,
+        salesforceRevalidation: fixture.salesforceRevalidation,
+        salesforceRevalidationPath: fixture.salesforceRevalidationPath,
         approvedProposalIds: [invalid],
         outputPath: path.join(fixture.directory, `out-${invalid.length}.json`),
         reportPath: path.join(fixture.directory, `report-${invalid.length}.md`),
@@ -2032,6 +2349,8 @@ test("build rejects a changed dashboard input", async () => {
       previewPath: fixture.previewPath,
       ledger: normalizeEvidenceLedger(refreshedRaw),
       evidencePath: fixture.evidencePath,
+      salesforceRevalidation: fixture.salesforceRevalidation,
+      salesforceRevalidationPath: fixture.salesforceRevalidationPath,
       approvedProposalIds: [],
       outputPath: path.join(fixture.directory, "out.json"),
       reportPath: path.join(fixture.directory, "report.md"),
@@ -2051,6 +2370,8 @@ test("build rejects changed evidence content or scope", async () => {
       previewPath: fixture.previewPath,
       ledger: normalizeEvidenceLedger(changed),
       evidencePath: fixture.evidencePath,
+      salesforceRevalidation: fixture.salesforceRevalidation,
+      salesforceRevalidationPath: fixture.salesforceRevalidationPath,
       approvedProposalIds: [],
       outputPath: path.join(fixture.directory, "out.json"),
       reportPath: path.join(fixture.directory, "report.md"),
@@ -2067,6 +2388,8 @@ test("build requires discovery revalidation after preview", async () => {
       previewPath: fixture.previewPath,
       ledger: fixture.ledger,
       evidencePath: fixture.evidencePath,
+      salesforceRevalidation: fixture.salesforceRevalidation,
+      salesforceRevalidationPath: fixture.salesforceRevalidationPath,
       approvedProposalIds: [],
       outputPath: path.join(fixture.directory, "out.json"),
       reportPath: path.join(fixture.directory, "report.md"),
@@ -2152,6 +2475,8 @@ test("build with no approvals preserves contextual fields", async () => {
     previewPath: fixture.previewPath,
     ledger: normalizeEvidenceLedger(refreshedRaw),
     evidencePath: fixture.evidencePath,
+    salesforceRevalidation: fixture.salesforceRevalidation,
+    salesforceRevalidationPath: fixture.salesforceRevalidationPath,
     approvedProposalIds: [],
     outputPath,
     reportPath,
@@ -2168,9 +2493,10 @@ test("approved proposal writes JSON and compact provenance only", async () => {
       sourceUrl: privateLocator,
       accountMatch: {
         signals: ["canonical-name"],
-        rationale: "Validated by alice@example.com for the exact account.",
+        rationale:
+          "Validated by alice@example.com at (212) 555-1212 with Authorization: Bearer abcdefghijklmnop for the exact account.",
       },
-      limitations: ["Confirm scope with bob@example.com."],
+      limitations: ["Confirm scope with bob@example.com; password=do-not-retain."],
     })],
   });
   const fixture = await previewFixture({ raw });
@@ -2184,6 +2510,8 @@ test("approved proposal writes JSON and compact provenance only", async () => {
     previewPath: fixture.previewPath,
     ledger: normalizeEvidenceLedger(refreshedRaw),
     evidencePath: fixture.evidencePath,
+    salesforceRevalidation: fixture.salesforceRevalidation,
+    salesforceRevalidationPath: fixture.salesforceRevalidationPath,
     approvedProposalIds: [proposalId],
     outputPath,
     reportPath,
@@ -2198,7 +2526,13 @@ test("approved proposal writes JSON and compact provenance only", async () => {
   assert.doesNotMatch(result.report, /private\.example\.invalid/);
   assert.doesNotMatch(result.report, /token=secret/);
   assert.doesNotMatch(result.report, /alice@example\.com|bob@example\.com/);
+  assert.doesNotMatch(
+    result.report,
+    /\(212\) 555-1212|abcdefghijklmnop|do-not-retain/,
+  );
   assert.match(result.report, /email omitted/);
+  assert.match(result.report, /phone omitted/);
+  assert.match(result.report, /credential omitted/);
   assert.equal((await stat(outputPath)).mode & 0o777, 0o600);
   assert.equal((await stat(reportPath)).mode & 0o777, 0o600);
 });
@@ -2213,6 +2547,8 @@ test("re-approving the same evidence-backed fact does not duplicate sourceNotes"
     previewPath: fixture.previewPath,
     ledger: normalizeEvidenceLedger(firstRefreshed),
     evidencePath: fixture.evidencePath,
+    salesforceRevalidation: fixture.salesforceRevalidation,
+    salesforceRevalidationPath: fixture.salesforceRevalidationPath,
     approvedProposalIds: [fixture.preview.proposals[0].proposalId],
     outputPath: firstOutputPath,
     reportPath: path.join(fixture.directory, "first.md"),
@@ -2228,6 +2564,14 @@ test("re-approving the same evidence-backed fact does not duplicate sourceNotes"
     createdAt: "2026-07-23T12:00:00Z",
   });
   await writeJson(secondPreviewPath, secondPreview);
+  const secondRevalidation = await writeSalesforceRevalidationReceipt(
+    fixture.directory,
+    fixture.salesforceReportPath,
+    {
+      filename: "second-salesforce-revalidation.json",
+      verifiedAt: "2026-07-23T12:30:00Z",
+    },
+  );
   assert.equal(secondPreview.proposals[0].disposition, "no-change");
   const secondRefreshed = refreshedLedger(fixture.ledgerRaw, "2026-07-23T13:00:00Z");
   await writeJson(fixture.evidencePath, secondRefreshed);
@@ -2236,6 +2580,8 @@ test("re-approving the same evidence-backed fact does not duplicate sourceNotes"
     previewPath: secondPreviewPath,
     ledger: normalizeEvidenceLedger(secondRefreshed),
     evidencePath: fixture.evidencePath,
+    salesforceRevalidation: secondRevalidation.receipt,
+    salesforceRevalidationPath: secondRevalidation.path,
     approvedProposalIds: [secondPreview.proposals[0].proposalId],
     outputPath: path.join(fixture.directory, "second.json"),
     reportPath: path.join(fixture.directory, "second.md"),
@@ -2260,6 +2606,8 @@ test("approved Red health requires evidence, mitigation, and owner atomically", 
       previewPath: fixture.previewPath,
       ledger: normalizeEvidenceLedger(refreshedRaw),
       evidencePath: fixture.evidencePath,
+      salesforceRevalidation: fixture.salesforceRevalidation,
+      salesforceRevalidationPath: fixture.salesforceRevalidationPath,
       approvedProposalIds: [fixture.preview.proposals[0].proposalId],
       outputPath: path.join(fixture.directory, "out.json"),
       reportPath: path.join(fixture.directory, "report.md"),
@@ -2277,6 +2625,8 @@ test("successful build removes its preview but retains the evidence ledger", asy
     previewPath: fixture.previewPath,
     ledger: normalizeEvidenceLedger(refreshedRaw),
     evidencePath: fixture.evidencePath,
+    salesforceRevalidation: fixture.salesforceRevalidation,
+    salesforceRevalidationPath: fixture.salesforceRevalidationPath,
     approvedProposalIds: [],
     outputPath: path.join(fixture.directory, "out.json"),
     reportPath: path.join(fixture.directory, "report.md"),
@@ -2298,6 +2648,8 @@ test("a recomputed preview cannot authorize evidence-ledger deletion", async () 
       previewPath: fixture.previewPath,
       ledger: fixture.ledger,
       evidencePath: fixture.evidencePath,
+      salesforceRevalidation: fixture.salesforceRevalidation,
+      salesforceRevalidationPath: fixture.salesforceRevalidationPath,
       approvedProposalIds: [],
       outputPath: path.join(fixture.directory, "out.json"),
       reportPath: path.join(fixture.directory, "report.md"),
@@ -2318,6 +2670,8 @@ test("overwrite preflights both derived targets and leaves the dashboard unchang
     previewPath: fixture.previewPath,
     ledger: normalizeEvidenceLedger(firstRefreshed),
     evidencePath: fixture.evidencePath,
+    salesforceRevalidation: fixture.salesforceRevalidation,
+    salesforceRevalidationPath: fixture.salesforceRevalidationPath,
     approvedProposalIds: [fixture.preview.proposals[0].proposalId],
     outputPath,
     reportPath,
@@ -2340,6 +2694,14 @@ test("overwrite preflights both derived targets and leaves the dashboard unchang
     createdAt: "2026-07-23T12:00:00Z",
   });
   await writeJson(secondPreviewPath, secondPreview);
+  const secondRevalidation = await writeSalesforceRevalidationReceipt(
+    fixture.directory,
+    fixture.salesforceReportPath,
+    {
+      filename: "overwrite-salesforce-revalidation.json",
+      verifiedAt: "2026-07-23T12:30:00Z",
+    },
+  );
   const secondRefreshed = refreshedLedger(secondRaw, "2026-07-23T13:00:00Z");
   await writeJson(secondEvidencePath, secondRefreshed);
   await writeFile(reportPath, "user-owned report\n", { encoding: "utf8", mode: 0o600 });
@@ -2349,6 +2711,8 @@ test("overwrite preflights both derived targets and leaves the dashboard unchang
       previewPath: secondPreviewPath,
       ledger: normalizeEvidenceLedger(secondRefreshed),
       evidencePath: secondEvidencePath,
+      salesforceRevalidation: secondRevalidation.receipt,
+      salesforceRevalidationPath: secondRevalidation.path,
       approvedProposalIds: [secondPreview.proposals[0].proposalId],
       outputPath,
       reportPath,
@@ -2408,6 +2772,17 @@ test("preview refuses a confidential evidence ledger with group or other permiss
   );
 });
 
+test("clarify and build refuse a preview with group or other permissions", async () => {
+  const fixture = await previewFixture();
+  await chmod(fixture.previewPath, 0o644);
+  await assert.rejects(
+    () => loadContextPreview(fixture.previewPath),
+    (error) =>
+      error instanceof ContextEnricherError &&
+      error.code === "INSECURE_PERMISSIONS",
+  );
+});
+
 test("strict dashboard validation rejects noncanonical extra keys", async () => {
   const dashboard = await blankDashboard();
   dashboard.productCandidates = [];
@@ -2456,6 +2831,14 @@ test("CLI preview and build complete a synthetic direct-JSON workflow", async ()
   ], { encoding: "utf8" }));
   assert.equal(previewResult.eligible, 1);
   const preview = await readJsonFile(previewPath, "CLI preview");
+  const salesforceRevalidation = await writeSalesforceRevalidationReceipt(
+    directory,
+    salesforceReportPath,
+    {
+      filename: "cli-salesforce-revalidation.json",
+      verifiedAt: new Date().toISOString(),
+    },
+  );
   const refreshed = refreshedLedger(raw, new Date().toISOString());
   await writeJson(evidencePath, refreshed);
   const buildResult = JSON.parse(execFileSync(process.execPath, [
@@ -2463,6 +2846,7 @@ test("CLI preview and build complete a synthetic direct-JSON workflow", async ()
     "build",
     "--preview", previewPath,
     "--evidence", evidencePath,
+    "--salesforce-revalidation", salesforceRevalidation.path,
     "--approve-proposal", preview.proposals[0].proposalId,
     "--output", outputPath,
     "--report", reportPath,

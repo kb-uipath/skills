@@ -18,13 +18,15 @@ Before searching, confirm:
 
 Record each connector tenant/workspace/mailbox/site identifier as the discovery run's exact `tenantId`, plus its exact `containerIds`, query digest, pagination count, completion state, and limitations. Every accepted evidence item must match both that tenant and one searched parent container. Re-run the same bounded discovery at build; new, changed, missing, or contradictory evidence requires a new preview.
 
-Apply the inclusive search window using Calendar occurrence date; use source modification date for other sources, falling back to occurrence date. Retrieval time is not evidence freshness. An older source is eligible only when the user explicitly supplied its link or stable ID and that exact ID is recorded in `foundationalSourceIds`.
+Apply the inclusive search window using Calendar occurrence date; use source modification date for other sources, falling back to occurrence date. Retrieval time is not evidence freshness. An older source is eligible only when the user explicitly supplied its link or stable ID, that exact ID is recorded in `foundationalSourceIds`, and it resolves to exactly one collected item. Reject IDs that collide across containers.
 
 Reject acronym-only matches. The ledger's canonical name must exactly match the current Salesforce `Account.Name`; aliases are search aids only. Accept an item only when it contains the canonical name or an explicit linked source, or at least two corroborating signals such as alias plus domain, contact, or account-specific container.
 
 ## Salesforce
 
 Run the bundled `salesforce-layer/scripts/enrich-day2.mjs` first. Use its generated dashboard JSON as the contextual base. Require the layer's compact provenance block and verify that its `001...` Account ID matches the evidence ledger before any contextual preview. Do not reproduce or broaden its field mappings.
+
+After the final contextual preview, run the child layer's read-only `revalidate` command against the exact unmoved mapping report. The receipt binds the mapping-report path and digest, org and Account identity, field-map content, `LastModifiedDate`, exact accepted field/value pairs, and purchased-Asset candidates. Pass that receipt to contextual build. Any mismatch requires rebuilding the Salesforce base and contextual preview.
 
 ## SharePoint and OneDrive
 
@@ -71,6 +73,8 @@ Use public research only when the user includes it. It may support external cust
 ## Freshness before build
 
 Re-fetch stable Slack, Outlook, SharePoint, Teams, Calendar, and file locators after preview. Confirm unchanged content digest and source date. For OneNote, re-confirm the selected snapshot and its non-OneNote corroboration. Update `verifiedAt` without changing the stable evidence content.
+
+Use one current evidence record for each `{sourceType, tenantId, container, sourceId}` tuple. Do not represent changed or contradictory captures as parallel records with the same identity; record the conflict as a gap and create a new preview.
 
 ## Read-only and privacy boundary
 

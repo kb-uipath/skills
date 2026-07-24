@@ -69,7 +69,7 @@ OneNote is corroboration-only for every dashboard proposal. A proposal supported
 - Use Calendar occurrence date for window eligibility. For other sources, use modification date when present, otherwise occurrence date.
 - Retrieval or verification time never makes an old claim current.
 - Reject future-dated source modification times. Reject future source occurrence dates except for an Outlook Calendar item classified `meeting-scheduled`; a future date can never prove an actual.
-- Accept older foundational evidence only when the user explicitly supplies its link or stable ID and that exact `sourceId` appears in `scope.foundationalSourceIds`.
+- Accept older foundational evidence only when the user explicitly supplies its link or stable ID, that exact `sourceId` appears in `scope.foundationalSourceIds`, and the ID resolves to exactly one collected item. Reject ambiguous IDs across containers.
 - Preserve the source's claim date and class. A current plan referencing an older target does not turn the target into an actual.
 
 ## Proposal policy
@@ -80,6 +80,7 @@ OneNote is corroboration-only for every dashboard proposal. A proposal supported
 - Require one stable proposal ID per approval. Never accept an approval wildcard or `approve all`.
 - Preserve existing nonblank values unless their exact proposal ID is approved.
 - Surface contradictory evidence as a conflict. Do not select the newest item automatically.
+- Retain exactly one current evidence item for each `{sourceType, tenantId, container, sourceId}` identity. Reject parallel captures of the same identity; record a changed or contradictory capture as a gap requiring a new preview.
 - Treat array placement as part of the proposal. Page 1 displays the first three goals and workstreams, first two ELT asks, and first seven relationships.
 - Do not expose a generic JSON Patch surface. Permit only typed scalar `set` and atomic semantic-row `insert` or `update` operations from the deterministic helper allowlist.
 - De-duplicate arrays by meaning, not array index.
