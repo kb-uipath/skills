@@ -12,6 +12,9 @@ Last verified: 2026-07-24
 - Per-skill `SKILL.md` files plus bundled references, scripts, assets, and templates.
 - Skill-specific documentation in `docs/` with inputs, prompts, outputs, safety notes, and validation commands.
 - Repo-level validation through `make validate`, `tools/validate_repo.py`, Python unit tests, Node tests, syntax checks, and whitespace checks.
+- Beads development tracking with complete native history on
+  `refs/dolt/data`, plus Git-reviewable current state, issue-field history, and
+  a hashed manifest under [`.beads/`](./.beads/README.md).
 - Hidden backups, `.DS_Store` files, local zip artifacts, and upstream `UiPath/skills` exports are intentionally excluded.
 
 ## Latest validated state

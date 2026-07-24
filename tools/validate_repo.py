@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import json
 import re
+import subprocess
 import sys
 from datetime import date
 from pathlib import Path
@@ -93,9 +95,48 @@ REQ_PIN_RE = re.compile(
 )
 
 
+def git_visible_files(root: Path) -> list[Path] | None:
+    """Return tracked and non-ignored files when root is a Git worktree."""
+    try:
+        top_level = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
+        if Path(top_level).resolve() != root.resolve():
+            return None
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ],
+            check=True,
+            capture_output=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError, UnicodeDecodeError):
+        return None
+
+    return [
+        root / relative_path.decode("utf-8", errors="surrogateescape")
+        for relative_path in result.stdout.split(b"\0")
+        if relative_path
+    ]
+
+
 def text_files(root: Path = ROOT) -> list[Path]:
     files: list[Path] = []
-    for path in root.rglob("*"):
+    candidates = git_visible_files(root)
+    if candidates is None:
+        candidates = list(root.rglob("*"))
+    for path in candidates:
         if ".git" in path.parts or path.is_dir():
             continue
         try:
@@ -323,20 +364,73 @@ def validate_yaml_files(files: list[Path], root: Path = ROOT) -> list[str]:
     return errors
 
 
+def decoded_json_strings(path: Path) -> list[str]:
+    """Return recursively decoded strings from JSON/JSONL, including nested JSON."""
+    if path.suffix.lower() not in {".json", ".jsonl"}:
+        return []
+    try:
+        if path.suffix.lower() == ".json":
+            roots = [json.loads(path.read_text(encoding="utf-8"))]
+        else:
+            roots = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+    except json.JSONDecodeError:
+        return []
+
+    strings: list[str] = []
+    pending = list(roots)
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            strings.extend(
+                f"{key}={nested_value}"
+                for key, nested_value in value.items()
+                if isinstance(key, str) and isinstance(nested_value, str)
+            )
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+        elif isinstance(value, str):
+            strings.append(value)
+            stripped = value.strip()
+            if stripped.startswith(("{", "[")):
+                try:
+                    nested = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                pending.append(nested)
+    return strings
+
+
 def validate_no_local_paths(files: list[Path], root: Path = ROOT) -> list[str]:
     errors: list[str] = []
     for path in files:
         text = path.read_text(encoding="utf-8")
+        reported = False
         for line_number, line in enumerate(text.splitlines(), start=1):
             if str(root) in line:
                 errors.append(
                     f"{path.relative_to(root)}:{line_number}: local absolute path leak"
                 )
+                reported = True
                 continue
             if any(pattern.search(line) for pattern in LOCAL_PATH_PATTERNS):
                 errors.append(
                     f"{path.relative_to(root)}:{line_number}: local absolute path leak"
                 )
+                reported = True
+        if not reported and any(
+            str(root) in value
+            or any(pattern.search(value) for pattern in LOCAL_PATH_PATTERNS)
+            for value in decoded_json_strings(path)
+        ):
+            errors.append(
+                f"{path.relative_to(root)}: decoded JSON value contains a local absolute path"
+            )
     return errors
 
 
@@ -344,6 +438,7 @@ def validate_no_secrets(files: list[Path], root: Path = ROOT) -> list[str]:
     errors: list[str] = []
     for path in files:
         text = path.read_text(encoding="utf-8")
+        reported = False
         for line_number, line in enumerate(text.splitlines(), start=1):
             for pattern in SECRET_PATTERNS:
                 match = pattern.search(line)
@@ -353,6 +448,21 @@ def validate_no_secrets(files: list[Path], root: Path = ROOT) -> list[str]:
                 if PLACEHOLDER_RE.search(candidate):
                     continue
                 errors.append(f"{path.relative_to(root)}:{line_number}: possible secret material")
+                reported = True
+                break
+        if reported:
+            continue
+        for value in decoded_json_strings(path):
+            for pattern in SECRET_PATTERNS:
+                match = pattern.search(value)
+                if not match or PLACEHOLDER_RE.search(match.group(0)):
+                    continue
+                errors.append(
+                    f"{path.relative_to(root)}: decoded JSON value contains possible secret material"
+                )
+                reported = True
+                break
+            if reported:
                 break
     return errors
 

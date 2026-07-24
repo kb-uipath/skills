@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -38,6 +39,7 @@ Last verified: 2026-07-10
 ## Governance
 """,
         )
+
         self.write(
             root,
             "docs/README.md",
@@ -173,6 +175,40 @@ Report sensitive findings through a private advisory.
 """,
         )
 
+    def test_decoded_json_scan_rejects_escaped_windows_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            path = root / "history.jsonl"
+            self.write(
+                root,
+                "history.jsonl",
+                '{"event":"{\\"path\\":\\"C:\\\\\\\\Users\\\\\\\\person\\\\\\\\cache\\"}"}\n',
+            )
+
+            errors = validate_repo.validate_no_local_paths([path], root)
+
+            self.assertEqual(
+                ["history.jsonl: decoded JSON value contains a local absolute path"],
+                errors,
+            )
+
+    def test_decoded_json_scan_rejects_nested_secret(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            path = root / "history.jsonl"
+            self.write(
+                root,
+                "history.jsonl",
+                '{"event":"{\\"api_key\\":\\"abcdefghijklmnopqrstuvwx\\"}"}\n',
+            )
+
+            errors = validate_repo.validate_no_secrets([path], root)
+
+            self.assertEqual(
+                ["history.jsonl: decoded JSON value contains possible secret material"],
+                errors,
+            )
+
     def run_validator(self, mutate=None) -> list[str]:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -268,6 +304,39 @@ jobs:
         errors = self.run_validator(mutate)
         self.assert_error_contains(errors, "local absolute path leak")
         self.assert_error_contains(errors, "possible secret material")
+
+    def test_ignores_gitignored_beads_runtime_but_scans_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.create_minimal_repo(root)
+            local_path = "/Users" + "/person/project"
+            self.write(root, ".gitignore", ".beads/embeddeddolt/\n")
+            self.write(
+                root,
+                ".beads/embeddeddolt/skills/.dolt/repo_state.json",
+                f'{{"data_path": "{local_path}/.beads/embeddeddolt"}}\n',
+            )
+            self.write(
+                root,
+                ".beads/config.yaml",
+                f"data-path: {local_path}/.beads\n",
+            )
+            subprocess.run(
+                ["git", "init", "--quiet"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+
+            errors = validate_repo.run_validation(root)
+
+        self.assert_error_contains(
+            errors, ".beads/config.yaml:1: local absolute path leak"
+        )
+        self.assertFalse(
+            any("embeddeddolt" in error for error in errors),
+            f"ignored Beads runtime leaked into validation: {errors}",
+        )
 
     def test_rejects_non_exact_dependency_pin(self) -> None:
         def mutate(root: Path) -> None:

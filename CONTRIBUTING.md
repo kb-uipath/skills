@@ -17,6 +17,22 @@ Install the exact development dependencies from `requirements-dev.txt` when runn
 
 Run `make validate-online` separately when network access is available. External-link availability is monitored on a schedule and is intentionally outside the deterministic PR gate.
 
+## Development Tracking
+
+Beads is the source of truth for development and build work. A fresh clone must
+run the safe bootstrap sequence in [.beads/README.md](./.beads/README.md);
+do not run plain `bd init`.
+
+The complete native database is synchronized through `refs/dolt/data`.
+`.beads/issues.jsonl` and `.beads/history.jsonl` provide current-state and
+review projections in ordinary Git, and `.beads/history-manifest.json` anchors
+their exact bytes to a Dolt commit. Run `make beads-history-export` after
+tracker changes and commit all three files. Never force-push the Dolt ref.
+
+Beads is public repository data, including historical values. Do not record
+credentials, tokens, customer-confidential material, private exports, or local
+filesystem paths in issues, notes, comments, labels, or dependency metadata.
+
 ## Change Rules
 
 - Preserve skill directory names, `SKILL.md` frontmatter names, and primary invocation prompts unless a migration is explicitly approved.
