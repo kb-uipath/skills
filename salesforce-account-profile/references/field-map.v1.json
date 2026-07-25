@@ -1,0 +1,102 @@
+{
+  "schema_version": "salesforce-account-profile-field-map/v1",
+  "classification": "public",
+  "objects": {
+    "Account": {
+      "required": ["Id", "Name", "ParentId", "OwnerId"],
+      "optional": ["Ultimate_Parent_name__c", "Classification__c", "Region__c", "Geo__c", "Contract_End_Date__c", "Support_Type__c", "Support_Status__c", "CSM__c", "Support_Technical_Advisor__c", "PreSales__c"]
+    },
+    "Opportunity": {
+      "required": ["Id", "Name", "AccountId", "OwnerId", "StageName", "Amount", "CloseDate", "IsClosed", "IsWon", "CurrencyIsoCode", "HasOpportunityLineItem"],
+      "optional": ["Type", "Deal_Type__c", "Contract_Start_Date__c", "Contract_End_Date__c", "Renewal_Status__c"]
+    },
+    "OpportunityLineItem": {
+      "required": ["Id", "OpportunityId", "Quantity", "UnitPrice", "TotalPrice", "CurrencyIsoCode", "PricebookEntryId"],
+      "optional": ["ServiceDate"]
+    },
+    "PricebookEntry": {
+      "required": ["Id", "Product2Id"],
+      "optional": []
+    },
+    "Product2": {
+      "required": ["Id", "Name"],
+      "optional": []
+    },
+    "User": {
+      "required": ["Id", "Name", "Title", "ManagerId"],
+      "optional": []
+    }
+  },
+  "semantic_expectations": {
+    "Account": {
+      "Id": {"types": ["id"]},
+      "Name": {"types": ["string"]},
+      "ParentId": {"types": ["reference"], "referenceTo": "Account"},
+      "OwnerId": {"types": ["reference"], "referenceTo": "User"},
+      "Ultimate_Parent_name__c": {"types": ["string"]},
+      "Classification__c": {"types": ["string", "picklist"]},
+      "Region__c": {"types": ["string", "picklist"]},
+      "Geo__c": {"types": ["string", "picklist"]},
+      "Contract_End_Date__c": {"types": ["date", "datetime"]},
+      "Support_Type__c": {"types": ["string", "picklist"]},
+      "Support_Status__c": {"types": ["string", "picklist"]},
+      "CSM__c": {"types": ["reference"], "referenceTo": "User"},
+      "Support_Technical_Advisor__c": {"types": ["reference"], "referenceTo": "User"},
+      "PreSales__c": {"types": ["reference"], "referenceTo": "User"}
+    },
+    "Opportunity": {
+      "Id": {"types": ["id"]},
+      "Name": {"types": ["string"]},
+      "AccountId": {"types": ["reference"], "referenceTo": "Account"},
+      "OwnerId": {"types": ["reference"], "referenceTo": "User"},
+      "StageName": {"types": ["string", "picklist"]},
+      "Amount": {"types": ["currency", "double"]},
+      "CloseDate": {"types": ["date"]},
+      "IsClosed": {"types": ["boolean"]},
+      "IsWon": {"types": ["boolean"]},
+      "CurrencyIsoCode": {"types": ["picklist", "string"]},
+      "HasOpportunityLineItem": {"types": ["boolean"]},
+      "Type": {"types": ["picklist", "string"]},
+      "Deal_Type__c": {"types": ["picklist", "string"]},
+      "Contract_Start_Date__c": {"types": ["date", "datetime"]},
+      "Contract_End_Date__c": {"types": ["date", "datetime"]},
+      "Renewal_Status__c": {"types": ["picklist", "string"]}
+    },
+    "OpportunityLineItem": {
+      "Id": {"types": ["id"]},
+      "OpportunityId": {"types": ["reference"], "referenceTo": "Opportunity"},
+      "Quantity": {"types": ["double", "int"]},
+      "UnitPrice": {"types": ["currency", "double"]},
+      "TotalPrice": {"types": ["currency", "double"]},
+      "CurrencyIsoCode": {"types": ["picklist", "string"]},
+      "PricebookEntryId": {"types": ["reference"], "referenceTo": "PricebookEntry", "relationshipName": "PricebookEntry"},
+      "ServiceDate": {"types": ["date"]}
+    },
+    "PricebookEntry": {
+      "Id": {"types": ["id"]},
+      "Product2Id": {"types": ["reference"], "referenceTo": "Product2", "relationshipName": "Product2"}
+    },
+    "Product2": {
+      "Id": {"types": ["id"]},
+      "Name": {"types": ["string"]}
+    },
+    "User": {
+      "Id": {"types": ["id"]},
+      "Name": {"types": ["string"]},
+      "Title": {"types": ["string"]},
+      "ManagerId": {"types": ["reference"], "referenceTo": "User"}
+    }
+  },
+  "corporate_family": {
+    "preferred_field": "Ultimate_Parent_name__c",
+    "match": "exact",
+    "fallback": "bounded-parent-id-traversal"
+  },
+  "price_basis_certification": {
+    "org_version": null,
+    "price_basis": null,
+    "recurring_status": null,
+    "duration": null,
+    "annualization_certified": false
+  }
+}

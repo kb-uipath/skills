@@ -4,11 +4,11 @@ This repository contains Codex skills packaged for public GitHub use and broader
 
 The skills are copied as top-level directories so they can be installed or synced directly into a Codex skills folder. The `docs/` folder contains usage notes, required inputs, and example prompts for each skill.
 
-Last verified: 2026-07-24
+Last verified: 2026-07-25
 
 ## What is included
 
-- 11 top-level Codex skills.
+- 12 top-level Codex skills.
 - Per-skill `SKILL.md` files plus bundled references, scripts, assets, and templates.
 - Skill-specific documentation in `docs/` with inputs, prompts, outputs, safety notes, and validation commands.
 - Repo-level validation through `make validate`, `tools/validate_repo.py`, Python unit tests, Node tests, syntax checks, and whitespace checks.
@@ -19,7 +19,7 @@ Last verified: 2026-07-24
 
 ## Latest validated state
 
-As of 2026-07-24, all 11 skills meet the package-quality Org Baseline. Fresh offline forward tests also cover the planner, handoff, availability, GTM proposal, true five-advisor/five-review council, and adaptive Day 2 JSON workflows. Readiness is no longer represented by one score: the repository tracks package quality, functional outcome confidence, and operational certification separately. Salesforce and coded-app deployment remain explicitly uncertified until their opt-in nonproduction workflows run successfully.
+As of 2026-07-25, all 12 skills meet the package-quality Org Baseline. Fresh offline forward tests also cover the planner, handoff, availability, GTM proposal, true five-advisor/five-review council, adaptive Day 2 JSON workflows, and synthetic Salesforce account profiling. Readiness is no longer represented by one score: the repository tracks package quality, functional outcome confidence, and operational certification separately. Salesforce and coded-app deployment remain explicitly uncertified until their opt-in nonproduction workflows run successfully.
 
 See [docs/production-readiness-evaluation.md](./docs/production-readiness-evaluation.md) for the sorted three-axis table, evidence, blockers, and the superseded historical score comparison.
 
@@ -112,6 +112,7 @@ make validate PYTHON=/path/to/python-with-document-dependencies
 | [llm-council](./llm-council/SKILL.md) | Produces a hashed five-advisor/five-review decision record with seeded anonymization, execution evidence, and truthful fallback. | A consequential decision needs independent challenge, disconfirming evidence, and an explicit chairman verdict. | [docs](./docs/llm-council.md) |
 | [pubsec-big-rocks-row-research](./pubsec-big-rocks-row-research/SKILL.md) | Creates a validated preview and local workbook copy from manifest-controlled public-sector account evidence. | One Big Rocks account row needs exact matching, fill-eligible evidence, stale-lead separation, and no in-place source edits. | [docs](./docs/pubsec-big-rocks-row-research.md) |
 | [repo-hardening-sprint](./repo-hardening-sprint/SKILL.md) | Runs a bounded, base-aware repository validation and governance hardening workflow. | A repository needs scoped cleanup, regression tests, safety scans, or PR readiness without changing public contracts casually. | [docs](./docs/repo-hardening-sprint.md) |
+| [salesforce-account-profile](./salesforce-account-profile/SKILL.md) | Builds a confidential read-only Account profile through org receipts, exact selection, bounded family confirmation, and deterministic rendering. | An explicitly invoked Salesforce Account overview or scoped relationship profile is needed without fuzzy auto-selection, caching, writes, or uncertified annualization. | [docs](./docs/salesforce-account-profile.md) |
 | [salesforce-meddpicc-update](./salesforce-meddpicc-update/SKILL.md) | Builds freshness-bound MEDDPICC transactions, explicit receipts, and read-after-write verification artifacts. | An authorized Salesforce Opportunity update is requested and must pass schema, confirmation, privacy, and retry controls. | [docs](./docs/salesforce-meddpicc-update.md) |
 | [uipath-agentic-expansion-planner](./uipath-agentic-expansion-planner/SKILL.md) | Produces a one-to-two-page customer portfolio assessment backed by an analyst-confirmed process map, semantic review, and internal evidence artifacts. | A CSM, TAM, or AE needs the current automation footprint and up to three actionable opportunities with explicit customer-confirmation needs. | [docs](./docs/uipath-agentic-expansion-planner.md) |
 | [uipcodedappdeploy](./uipcodedappdeploy/SKILL.md) | Generates hashed deployment plans and redacted resumable receipts before any explicit UiPath deployment. | A coded app needs validated versioning, build, package, publish, deploy, and optional URL verification with no default writes. | [docs](./docs/uipcodedappdeploy.md) |
