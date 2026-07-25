@@ -1,0 +1,147 @@
+#!/usr/bin/env node
+import { readFileSync } from "node:fs";
+
+const args = process.argv.slice(2);
+const command = `${args[0] ?? ""} ${args[1] ?? ""}`;
+const flag = (name) => args[args.indexOf(name) + 1];
+const alias = flag("--target-org");
+
+const IDs = {
+  account1: "001000000000001AAA",
+  account2: "001000000000002AAA",
+  account3: "001000000000003AAA",
+  opportunity1: "006000000000001AAA",
+  opportunity2: "006000000000002AAA",
+  user1: "005000000000001AAA",
+  user2: "005000000000002AAA",
+  line1: "00k000000000001AAA",
+  line2: "00k000000000002AAA",
+};
+
+const customAccountFields = [
+  "Ultimate_Parent_name__c", "Classification__c", "Region__c", "Geo__c",
+  "Contract_End_Date__c", "Support_Type__c",
+  "Support_Status__c", "CSM__c", "Support_Technical_Advisor__c", "PreSales__c",
+];
+const descriptions = {
+  Account: ["Id", "Name", "ParentId", "OwnerId", ...(alias === "synthetic-missing" ? [] : customAccountFields)],
+  Opportunity: ["Id", "Name", "AccountId", "OwnerId", "StageName", "Amount", "CloseDate", "IsClosed", "IsWon", "CurrencyIsoCode", "HasOpportunityLineItem", "Type", "Deal_Type__c", "Contract_Start_Date__c", "Contract_End_Date__c", "Renewal_Status__c"],
+  OpportunityLineItem: ["Id", "OpportunityId", "Quantity", "UnitPrice", "TotalPrice", "CurrencyIsoCode", "PricebookEntryId", "ServiceDate"],
+  PricebookEntry: ["Id", "Product2Id"],
+  Product2: ["Id", "Name"],
+  User: ["Id", "Name", "Title", "ManagerId"],
+};
+
+const nameForAlias = alias === "synthetic-adversarial"
+  ? "O'Brien `$(touch CODE_EXECUTION_SENTINEL)`\u202e\u001b[31m"
+  : "Example Holdings";
+const accounts = [
+  {
+    Id: IDs.account1, Name: nameForAlias, ParentId: null, OwnerId: IDs.user1,
+    Ultimate_Parent_name__c: "Example Family", Classification__c: "Synthetic",
+  },
+  {
+    Id: IDs.account2, Name: "Example Division", ParentId: IDs.account1, OwnerId: IDs.user2,
+    Ultimate_Parent_name__c: "Example Family", Classification__c: "Synthetic",
+  },
+];
+const opportunities = [
+  {
+    Id: IDs.opportunity1, Name: "Open Synthetic Deal", AccountId: IDs.account1,
+    OwnerId: IDs.user1, StageName: "Discovery", Amount: 100, CloseDate: "2030-01-01",
+    IsClosed: false, IsWon: false, CurrencyIsoCode: "USD", HasOpportunityLineItem: true,
+  },
+  {
+    Id: IDs.opportunity2, Name: "Closed Synthetic Deal", AccountId: IDs.account2,
+    OwnerId: IDs.user2, StageName: "Closed Won", Amount: 200, CloseDate: "2029-01-01",
+    IsClosed: true, IsWon: true, CurrencyIsoCode: "EUR", HasOpportunityLineItem: true,
+  },
+];
+const lineItems = [
+  {
+    Id: IDs.line1, OpportunityId: IDs.opportunity1, Quantity: 2, UnitPrice: 50,
+    TotalPrice: 100, CurrencyIsoCode: "USD", PricebookEntryId: "01u000000000001AAA",
+    PricebookEntry: { Product2Id: "01t000000000001AAA", Product2: { Name: "Synthetic Product A" } },
+  },
+  {
+    Id: IDs.line2, OpportunityId: IDs.opportunity2, Quantity: 4, UnitPrice: 50,
+    TotalPrice: 200, CurrencyIsoCode: "EUR", PricebookEntryId: "01u000000000002AAA",
+    PricebookEntry: { Product2Id: "01t000000000002AAA", Product2: { Name: "Synthetic Product B" } },
+  },
+];
+const users = [
+  { Id: IDs.user1, Name: "Synthetic Owner", Title: "Account Executive", ManagerId: IDs.user2 },
+  { Id: IDs.user2, Name: "Synthetic Manager", Title: "Manager", ManagerId: null },
+];
+
+function emit(result) {
+  process.stdout.write(JSON.stringify({ status: 0, result }));
+}
+
+function fieldMetadata(name) {
+  const references = {
+    ParentId: ["Account"], OwnerId: ["User"], AccountId: ["Account"],
+    OpportunityId: ["Opportunity"], PricebookEntryId: ["PricebookEntry"],
+    Product2Id: ["Product2"], ManagerId: ["User"], CSM__c: ["User"],
+    Support_Technical_Advisor__c: ["User"], PreSales__c: ["User"],
+  };
+  const relationships = { PricebookEntryId: "PricebookEntry", Product2Id: "Product2" };
+  const booleans = new Set(["IsClosed", "IsWon", "HasOpportunityLineItem"]);
+  const currencies = new Set(["Amount", "UnitPrice", "TotalPrice"]);
+  return {
+    name,
+    type: name === "Id" ? "id"
+      : references[name] ? "reference"
+        : booleans.has(name) ? "boolean"
+          : currencies.has(name) ? "currency"
+            : name === "Quantity" ? "double"
+              : name.includes("Date") || name === "ServiceDate" ? "date"
+                : name === "CurrencyIsoCode" ? "picklist"
+                  : "string",
+    filterable: true,
+    referenceTo: references[name] ?? [],
+    relationshipName: relationships[name] ?? null,
+  };
+}
+
+if (command === "org display") {
+  emit({
+    id: "00D000000000001AAA",
+    username: `${alias}@example.invalid`,
+    instanceUrl: "https://synthetic.example.invalid",
+    connectedStatus: "Connected",
+    accessToken: "00D000000000001!SECRET_SHOULD_NOT_ESCAPE",
+  });
+} else if (command === "sobject describe") {
+  const objectName = flag("--sobject");
+  emit({ fields: (descriptions[objectName] ?? []).map(fieldMetadata) });
+} else if (command === "data query") {
+  const soql = readFileSync(flag("--file"), "utf8");
+  let records = [];
+  if (/FROM Account/u.test(soql)) {
+    if (alias === "synthetic-ambiguous" && /Name =/u.test(soql)) {
+      records = [
+        { Id: IDs.account1, Name: "Repeated Name", ParentId: null, OwnerId: IDs.user1 },
+        { Id: IDs.account3, Name: "Repeated Name", ParentId: null, OwnerId: IDs.user1 },
+      ];
+    } else if (/Ultimate_Parent_name__c =/u.test(soql)) {
+      records = accounts;
+    } else if (/WHERE Id =/u.test(soql)) {
+      records = accounts.filter((account) => soql.includes(account.Id));
+    } else if (/Name (?:=|LIKE)/u.test(soql)) {
+      records = [accounts[0]];
+    }
+  } else if (/FROM OpportunityLineItem/u.test(soql)) {
+    records = lineItems.filter((item) => soql.includes(item.OpportunityId));
+  } else if (/FROM Opportunity/u.test(soql)) {
+    records = opportunities.filter((item) => soql.includes(item.AccountId));
+    if (/IsClosed = false/u.test(soql)) records = records.filter((item) => !item.IsClosed);
+    if (/IsClosed = true/u.test(soql)) records = records.filter((item) => item.IsClosed);
+  } else if (/FROM User/u.test(soql)) {
+    records = users.filter((user) => soql.includes(user.Id));
+  }
+  emit({ totalSize: records.length, done: true, records });
+} else {
+  process.stderr.write("unsupported synthetic command");
+  process.exitCode = 1;
+}

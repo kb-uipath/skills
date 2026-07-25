@@ -4,7 +4,7 @@ Each page describes when to use the skill, what inputs to provide, and a starter
 
 See [production-readiness-evaluation.md](./production-readiness-evaluation.md) for separate package-quality, functional-confidence, and operational-certification evidence. Prior single scores are historical only.
 
-Last verified: 2026-07-24
+Last verified: 2026-07-25
 
 ## Documentation Contract
 
@@ -14,7 +14,7 @@ Do not claim full production certification from local validation alone. Certific
 
 ## Latest Readiness Snapshot
 
-All 11 skills meet the package-quality Org Baseline, but no live-write skill is operationally certified. The highest functional-confidence skills are:
+All 12 skills meet the package-quality Org Baseline, but no Salesforce-integrated or live-write skill is operationally certified. The highest functional-confidence skills are:
 
 | Rank | Skill | Package | Functional | Certification |
 | ---: | --- | ---: | ---: | --- |
@@ -33,6 +33,7 @@ Run `make validate` from the repo root before sharing changes. Use a Python runt
 | llm-council | Decision support | [llm-council.md](./llm-council.md) |
 | pubsec-big-rocks-row-research | Public-sector account research | [pubsec-big-rocks-row-research.md](./pubsec-big-rocks-row-research.md) |
 | repo-hardening-sprint | Engineering quality | [repo-hardening-sprint.md](./repo-hardening-sprint.md) |
+| salesforce-account-profile | Sales operations | [salesforce-account-profile.md](./salesforce-account-profile.md) |
 | salesforce-meddpicc-update | Sales operations | [salesforce-meddpicc-update.md](./salesforce-meddpicc-update.md) |
 | uipath-agentic-expansion-planner | GTM and executive proposals | [uipath-agentic-expansion-planner.md](./uipath-agentic-expansion-planner.md) |
 | uipcodedappdeploy | UiPath deploy | [uipcodedappdeploy.md](./uipcodedappdeploy.md) |
