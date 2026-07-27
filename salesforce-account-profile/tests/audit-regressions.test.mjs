@@ -16,8 +16,12 @@ import {
   status,
 } from "../scripts/orchestrator.mjs";
 import {
-  validateRegistryEntry,
+  markSandboxReadCertified,
 } from "../scripts/org-registry.mjs";
+import {
+  buildSandboxCertificationEvidence,
+} from "../scripts/certification-evidence.mjs";
+import { attestCertificationPackage } from "../scripts/package-attestation.mjs";
 import {
   issueApprovalReceipt,
 } from "../scripts/read-plan.mjs";
@@ -250,10 +254,26 @@ test("doctor refresh preserves an existing sandbox certification", async () => {
       now: run.dependencies.now,
     });
     const registry = await store.readOrgRegistry();
-    const certified = validateRegistryEntry({
-      ...registry.entries[0],
-      certification_state: "sandbox_read_certified",
-      certification_verified_at: new Date(START).toISOString(),
+    const packageAttestation = await attestCertificationPackage();
+    const evidence = buildSandboxCertificationEvidence({
+      orgFingerprint: registry.entries[0].org_fingerprint,
+      runtimeAttestationDigest: digest({
+        synthetic_test_runtime: fakeSf,
+      }),
+      packageDigest: packageAttestation.package_digest,
+      metadataCompatibilityDigest: digest(
+        run.diagnosis.metadata_compatibility,
+      ),
+      fixtureManifestDigest: "a".repeat(64),
+      authorizationScopeDigest: "b".repeat(64),
+      authorizationAssertionDigest: "c".repeat(64),
+      queryCount: 1,
+      startedAt: new Date(START),
+      completedAt: new Date(START),
+    });
+    const certified = markSandboxReadCertified(registry.entries[0], {
+      evidence,
+      now: new Date(START),
     });
     await store.writeOrgRegistry({
       ...registry,

@@ -22,6 +22,7 @@ const base = {
   sessionId: "0123456789abcdef0123456789abcdef",
   orgIdentity,
   runtimeAttestationDigest: "a".repeat(64),
+  registryReadinessDigest: "d".repeat(64),
   accountSelector: { mode: "exact_name", value: "Example Holdings" },
   issuedAt,
 };
@@ -99,6 +100,7 @@ test("approval receipt binds the complete read plan and is not reusable after sc
   );
   const validMutations = [
     { ...plan, runtime_attestation_digest: "c".repeat(64) },
+    { ...plan, registry_readiness_digest: "e".repeat(64) },
     { ...plan, account_receipt_digest: "d".repeat(64) },
     { ...plan, family_account_ids: [IDS.account1] },
     { ...plan, requested_sections: ["overview", "family"] },

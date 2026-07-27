@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { CONTRACTS } from "./constants.mjs";
+import { executeAdvancedPublic } from "./advanced-execution.mjs";
+import { executeCertification } from "./certification.mjs";
 import { executeConversational } from "./orchestrator.mjs";
 import {
   readJsonInput,
@@ -22,9 +24,16 @@ const ADVANCED_COMMANDS = new Set([
   "profile",
   "render",
 ]);
+const CERTIFICATION_COMMANDS = new Set([
+  "prepare-sandbox-certification",
+  "certify-sandbox",
+  "prepare-production-approval",
+  "approve-production",
+]);
 const COMMANDS = new Set([
   ...CONVERSATIONAL_COMMANDS,
   ...ADVANCED_COMMANDS,
+  ...CERTIFICATION_COMMANDS,
 ]);
 
 export function parseArguments(argv) {
@@ -32,7 +41,7 @@ export function parseArguments(argv) {
   if (!COMMANDS.has(command)) {
     throw new SafetyError(
       "UNKNOWN_COMMAND",
-      "Command must be doctor, start, continue, status, abort, preflight, resolve, profile, or render",
+      "Command must be doctor, start, continue, status, abort, preflight, resolve, profile, render, prepare-sandbox-certification, certify-sandbox, prepare-production-approval, or approve-production",
     );
   }
   let inputPath;
@@ -61,7 +70,12 @@ export async function main({
     const input = await readJsonInput(inputPath, stdin);
     const result = CONVERSATIONAL_COMMANDS.has(command)
       ? await executeConversational(command, input, dependencies)
-      : await execute(command, input, dependencies);
+      : CERTIFICATION_COMMANDS.has(command)
+        ? await executeCertification(command, input)
+        : ADVANCED_COMMANDS.has(command)
+          && ["resolve", "profile"].includes(command)
+          ? await executeAdvancedPublic(command, input, dependencies)
+          : await execute(command, input, dependencies);
     await writeJsonOutput(outputPath, result, stdout);
     return 0;
   } catch (error) {

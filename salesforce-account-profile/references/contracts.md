@@ -34,9 +34,49 @@ The allowed next actions are `confirm_org_and_plan`, `choose_account`,
 `approve_family_scope`, `narrow_query`, `reauthenticate`, `request_permissions`, and
 `cancel`. The user never supplies a plan, receipt, digest, schema version, or file path.
 
+## Administrative Readiness Commands
+
+These commands are deliberately excluded from the profile conversation. Codex operates
+them on behalf of an authorized administrator during one-time readiness work, carrying
+private stdin or an exact-mode `0600` file invisibly.
+
+| Command | Request schema | Result schema |
+| --- | --- | --- |
+| `prepare-sandbox-certification` | `salesforce-account-profile-sandbox-certification-scope-request/v1` | `salesforce-account-profile-sandbox-certification-scope-result/v1` |
+| `certify-sandbox` | `salesforce-account-profile-sandbox-certification-request/v1` | `salesforce-account-profile-sandbox-certification-result/v1` |
+| `prepare-production-approval` | `salesforce-account-profile-production-approval-scope-request/v1` | `salesforce-account-profile-production-approval-scope-result/v1` |
+| `approve-production` | `salesforce-account-profile-production-approval-request/v1` | `salesforce-account-profile-production-approval-result/v1` |
+
+Each preparation result contains a confidential, 30-minute approval scope. Sandbox scope
+binds the enrolled org fingerprint, pinned runtime, certification-critical package,
+metadata compatibility, field map, suite version, and complete synthetic fixture-manifest
+digest. Its authorization is an Ed25519-signed assertion from the configured sandbox
+certifier key. The signed payload binds issuer, key ID, subject digest, exact role,
+audience, opaque reference, scope digest, nonce, issue time, and expiry.
+
+Production scope resolves one current sandbox receipt internally by evidence digest and
+re-attests that sandbox before binding it to the exact production fingerprint, runtime,
+package, metadata, and field map. Administrator and risk-owner assertions must be signed by
+different trusted role keys, represent different subjects and references, occur inside the
+scope window, and bind the identical audience and scope. Assertions are atomically consumed
+by nonce before certification work and cannot be replayed. Production approval performs
+zero data queries.
+
+Final results expose only readiness state, version/count metadata, verification time, and a
+self-validating evidence digest. They do not expose aliases, usernames, org identifiers,
+hosts, Salesforce record IDs, local paths, approval references, tokens, or raw CLI output.
+See [certification.md](certification.md) for the complete runbook.
+
 ## Advanced V1 Commands
 
 These remain compatible internal primitives; they are not the normal user journey.
+The query-capable `resolve` and `profile` commands require an explicit enrolled alias whose
+private registry entry is currently `sandbox_read_certified` or
+`production_read_approved`. They re-attest the pinned runtime and certification-critical
+package before execution, compare the complete compatible-metadata digest with the
+certification receipt, and re-attest runtime/package state inside the serialized registry
+lease that issues each data query. Missing, offline-only, revoked, or drifted readiness
+fails before a query. `preflight` and `render` do not issue Salesforce data queries.
 
 | Command | Request schema | Result schema |
 | --- | --- | --- |
@@ -50,13 +90,21 @@ The v2 control-plane contracts are
 `salesforce-account-profile-approval-receipt/v2`. A read plan binds the exact org identity,
 Account selector and selected Account when known, sorted corporate-family Account IDs,
 preset, requested sections, selected/family scope, open/closed/all Opportunity scope,
-close-date and StageName filters, field-map version, output type, issue time, and expiry.
+close-date and StageName filters, field-map version, current private-registry readiness
+digest, output type, issue time, and expiry.
 Every plan and session expires exactly 30 minutes after issue; activity does not extend it.
 
 Approval receipts record that a conversational approval occurred and bind the complete
 current plan, including the pinned runtime and selected Account receipt. They are workflow
 consistency evidence, not cryptographic proof of a human
 identity or authorization. The runtime carries them privately; a user never copies a digest.
+
+The org registry uses `salesforce-account-profile-org-registry/v3`. A certified entry
+contains a recomputable evidence receipt plus a bounded signed-assertion replay ledger; a
+bare hash is insufficient. Legacy v1 and unsigned v2 registries are accepted only for safe
+migration and every prior certification is downgraded to `offline_validated`. Runtime,
+package, metadata, field-map, receipt, or dependent sandbox drift invalidates readiness and
+active plans before a Salesforce data query.
 
 Errors use `salesforce-account-profile-error/v1` with a stable `error.code` and safe
 `error.message`. The public CLI does not emit raw exception details.
@@ -89,7 +137,7 @@ Opportunities, and owner hierarchy. Other fixed presets are `snapshot`, `team`,
 ## V2 Read Plan Example
 
 ```json
-{"schema_version":"salesforce-account-profile-read-plan/v2","classification":"confidential","session_id":"0123456789abcdef0123456789abcdef","org_identity":{"target_org":"explicit-alias","org_id":"00D000000000001AAA","username":"synthetic@example.invalid","instance_url":"https://synthetic.example.invalid/","connected_status":"Connected"},"runtime_attestation_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","account_selector":{"mode":"exact_name","value":"Example Account"},"selected_account":null,"account_receipt_digest":null,"family_account_ids":[],"preset":"pipeline","requested_sections":["overview","opportunities","team"],"scope":"selected_account","opportunity_scope":"open","filters":{"close_date_from":null,"close_date_to":null,"stages":[]},"field_map_version":"salesforce-account-profile-field-map/v1","output_type":"rendered","issued_at":"2030-01-01T00:00:00.000Z","expires_at":"2030-01-01T00:30:00.000Z"}
+{"schema_version":"salesforce-account-profile-read-plan/v2","classification":"confidential","session_id":"0123456789abcdef0123456789abcdef","org_identity":{"target_org":"explicit-alias","org_id":"00D000000000001AAA","username":"synthetic@example.invalid","instance_url":"https://synthetic.example.invalid/","connected_status":"Connected"},"runtime_attestation_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","registry_readiness_digest":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","account_selector":{"mode":"exact_name","value":"Example Account"},"selected_account":null,"account_receipt_digest":null,"family_account_ids":[],"preset":"pipeline","requested_sections":["overview","opportunities","team"],"scope":"selected_account","opportunity_scope":"open","filters":{"close_date_from":null,"close_date_to":null,"stages":[]},"field_map_version":"salesforce-account-profile-field-map/v1","output_type":"rendered","issued_at":"2030-01-01T00:00:00.000Z","expires_at":"2030-01-01T00:30:00.000Z"}
 ```
 
 ## Confirmation Receipts

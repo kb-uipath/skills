@@ -11,7 +11,9 @@ export const CONTRACTS = Object.freeze({
   readPlan: "salesforce-account-profile-read-plan/v2",
   approvalReceipt: "salesforce-account-profile-approval-receipt/v2",
   profileView: "salesforce-account-profile-view/v2",
-  orgRegistry: "salesforce-account-profile-org-registry/v1",
+  orgRegistryLegacy: "salesforce-account-profile-org-registry/v1",
+  orgRegistryUnsigned: "salesforce-account-profile-org-registry/v2",
+  orgRegistry: "salesforce-account-profile-org-registry/v3",
   session: "salesforce-account-profile-session/v2",
   doctorRequest: "salesforce-account-profile-doctor-request/v2",
   doctorResult: "salesforce-account-profile-doctor-result/v2",
@@ -23,6 +25,22 @@ export const CONTRACTS = Object.freeze({
   statusResult: "salesforce-account-profile-status-result/v2",
   abortRequest: "salesforce-account-profile-abort-request/v2",
   abortResult: "salesforce-account-profile-abort-result/v2",
+  sandboxCertificationScopeRequest: "salesforce-account-profile-sandbox-certification-scope-request/v1",
+  sandboxCertificationScopeResult: "salesforce-account-profile-sandbox-certification-scope-result/v1",
+  sandboxCertificationRequest: "salesforce-account-profile-sandbox-certification-request/v1",
+  sandboxCertificationScope: "salesforce-account-profile-sandbox-certification-scope/v1",
+  sandboxFixtureManifest: "salesforce-account-profile-sandbox-fixtures/v1",
+  sandboxCertificationEvidence: "salesforce-account-profile-sandbox-certification-evidence/v1",
+  sandboxCertificationResult: "salesforce-account-profile-sandbox-certification-result/v1",
+  productionApprovalScopeRequest: "salesforce-account-profile-production-approval-scope-request/v1",
+  productionApprovalScopeResult: "salesforce-account-profile-production-approval-scope-result/v1",
+  productionApprovalScope: "salesforce-account-profile-production-approval-scope/v1",
+  productionApprovalRequest: "salesforce-account-profile-production-approval-request/v1",
+  productionApprovalEvidence: "salesforce-account-profile-production-approval-evidence/v1",
+  productionApprovalResult: "salesforce-account-profile-production-approval-result/v1",
+  approvalTrust: "salesforce-account-profile-approval-trust/v1",
+  approvalAssertion: "salesforce-account-profile-approval-assertion/v1",
+  packageAttestation: "salesforce-account-profile-package-attestation/v1",
   sfRuntimeAttestation: "salesforce-account-profile-sf-runtime-attestation/v1",
   error: "salesforce-account-profile-error/v1",
 });
@@ -42,6 +60,9 @@ export const CAPS = Object.freeze({
   executableBytes: 512 * 1024 * 1024,
   packageMetadataBytes: 1_048_576,
   authorizedOrgs: 200,
+  approvalTrustBytes: 65_536,
+  approvalTrustKeys: 32,
+  approvalAssertionsPerOrg: 64,
 });
 
 export const ACCOUNT_ID = /^001[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?$/;
@@ -55,6 +76,27 @@ export const CLASSIFICATION = "confidential";
 export const WARNING_ANNUALIZATION = "ANNUALIZATION_NOT_CERTIFIED";
 export const FIELD_MAP_VERSION = "salesforce-account-profile-field-map/v1";
 export const SESSION_TTL_MS = 30 * 60 * 1_000;
+export const CERTIFICATION_SCOPE_TTL_MS = 30 * 60 * 1_000;
+export const CERTIFICATION_APPROVAL_AUDIENCE =
+  "salesforce-account-profile-certification/v1";
+export const CERTIFICATION_APPROVAL_ROLES = Object.freeze({
+  sandbox: "sandbox_certifier",
+  productionAdministrator: "production_administrator",
+  productionRiskOwner: "production_risk_owner",
+});
+export const SANDBOX_SUITE_VERSION =
+  "salesforce-account-profile-sandbox-suite/v1";
+export const SANDBOX_SCENARIO_IDS = Object.freeze([
+  "org_identity",
+  "metadata_compatibility",
+  "unique_pipeline",
+  "ambiguous_chooser",
+  "literal_prefix",
+  "family_exact_scope",
+  "multicurrency",
+  "annualization_disabled",
+  "session_cleanup",
+]);
 export const PROFILE_SECTIONS = Object.freeze([
   "overview",
   "family",

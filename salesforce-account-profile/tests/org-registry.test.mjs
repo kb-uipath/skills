@@ -1,11 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { FIELD_MAP_VERSION } from "../scripts/constants.mjs";
+import {
+  CONTRACTS,
+  FIELD_MAP_VERSION,
+} from "../scripts/constants.mjs";
+import {
+  buildProductionApprovalEvidence,
+  buildSandboxCertificationEvidence,
+} from "../scripts/certification-evidence.mjs";
 import {
   assertRegistryReadiness,
   buildOfflineRegistryEntry,
   emptyOrgRegistry,
+  markProductionReadApproved,
+  markSandboxReadCertified,
   orgIdentityFingerprint,
   refreshRegistryVerification,
   resolveRegistryEntry,
@@ -34,6 +43,59 @@ function offline(overrides = {}) {
     }),
     ...overrides,
   };
+}
+
+function sandboxEvidence(entry, completedAt =
+  new Date("2030-01-02T00:00:00.000Z")) {
+  return buildSandboxCertificationEvidence({
+    orgFingerprint: entry.org_fingerprint,
+    runtimeAttestationDigest: "a".repeat(64),
+    packageDigest: "b".repeat(64),
+    metadataCompatibilityDigest: "c".repeat(64),
+    fixtureManifestDigest: "d".repeat(64),
+    authorizationScopeDigest: "e".repeat(64),
+    authorizationAssertionDigest: "f".repeat(64),
+    queryCount: 12,
+    startedAt: new Date("2030-01-01T23:59:00.000Z"),
+    completedAt,
+  });
+}
+
+function certifiedSandbox(entry = offline({
+  metadata_verified_at: "2030-01-02T00:00:00.000Z",
+})) {
+  const completedAt = new Date("2030-01-02T00:00:00.000Z");
+  return markSandboxReadCertified(entry, {
+    evidence: sandboxEvidence(entry, completedAt),
+    now: completedAt,
+  });
+}
+
+function productionEvidence(entry, sandboxDigest, completedAt =
+  new Date("2030-01-02T00:00:00.000Z")) {
+  return buildProductionApprovalEvidence({
+    productionOrgFingerprint: entry.org_fingerprint,
+    sandboxEvidenceDigest: sandboxDigest,
+    runtimeAttestationDigest: "a".repeat(64),
+    packageDigest: "b".repeat(64),
+    metadataCompatibilityDigest: "c".repeat(64),
+    approvalScopeDigest: "f".repeat(64),
+    administratorApproval: {
+      reference: "ADMIN-APPROVAL-1",
+      subject_digest: "1".repeat(64),
+      issued_at: completedAt.toISOString(),
+      scope_digest: "f".repeat(64),
+      assertion_digest: "3".repeat(64),
+    },
+    riskOwnerApproval: {
+      reference: "RISK-APPROVAL-1",
+      subject_digest: "2".repeat(64),
+      issued_at: completedAt.toISOString(),
+      scope_digest: "f".repeat(64),
+      assertion_digest: "4".repeat(64),
+    },
+    completedAt,
+  });
 }
 
 test("offline enrollment stores only a fingerprint and redacted identity metadata", () => {
@@ -85,6 +147,62 @@ test("registry is canonical, unique, and resolves friendly labels or aliases", (
   );
 });
 
+test("legacy bare-hash certifications migrate only as offline entries", () => {
+  const current = offline({
+    metadata_verified_at: "2030-01-02T00:00:00.000Z",
+  });
+  const {
+    certification_evidence: ignoredEvidence,
+    ...legacyEntry
+  } = current;
+  void ignoredEvidence;
+  const migrated = validateOrgRegistry({
+    schema_version: CONTRACTS.orgRegistryLegacy,
+    classification: "confidential",
+    entries: [{
+      ...legacyEntry,
+      certification_state: "sandbox_read_certified",
+      certification_verified_at: "2030-01-02T00:00:00.000Z",
+      approvals: {
+        sandbox_evidence_digest: "a".repeat(64),
+        administrator_reference: null,
+        administrator_approved_at: null,
+        risk_owner_reference: null,
+        risk_owner_approved_at: null,
+      },
+    }],
+  });
+  assert.equal(migrated.schema_version, CONTRACTS.orgRegistry);
+  assert.equal(migrated.entries[0].certification_state, "offline_validated");
+  assert.equal(migrated.entries[0].certification_evidence, null);
+  assert.equal(migrated.entries[0].certification_verified_at, null);
+  assert.throws(
+    () => assertRegistryReadiness(migrated.entries[0]),
+    { code: "SANDBOX_NOT_CERTIFIED" },
+  );
+});
+
+test("unsigned v2 registry certifications downgrade during v3 migration", () => {
+  const {
+    approval_assertion_ledger: ignoredLedger,
+    ...unsignedEntry
+  } = certifiedSandbox();
+  void ignoredLedger;
+  const migrated = validateOrgRegistry({
+    schema_version: CONTRACTS.orgRegistryUnsigned,
+    classification: "confidential",
+    entries: [unsignedEntry],
+  });
+  assert.equal(migrated.schema_version, CONTRACTS.orgRegistry);
+  assert.equal(migrated.entries[0].certification_state, "offline_validated");
+  assert.equal(migrated.entries[0].certification_evidence, null);
+  assert.deepEqual(migrated.entries[0].approval_assertion_ledger, []);
+  assert.throws(
+    () => assertRegistryReadiness(migrated.entries[0]),
+    { code: "SANDBOX_NOT_CERTIFIED" },
+  );
+});
+
 test("identity verification fails after org drift without retaining raw identity", () => {
   const entry = offline();
   assert.equal(verifyRegistryIdentity(entry, identity), entry);
@@ -130,28 +248,16 @@ test("production approval requires separate sandbox, administrator, and risk evi
     }),
     { code: "INVALID_ORG_REGISTRY" },
   );
-  const approved = validateRegistryEntry({
-    ...base,
-    certification_state: "production_read_approved",
-    certification_verified_at: "2030-01-02T00:00:00.000Z",
-    approvals: {
-      sandbox_evidence_digest: "a".repeat(64),
-      administrator_reference: "ADMIN-APPROVAL-1",
-      administrator_approved_at: "2030-01-02T00:00:00.000Z",
-      risk_owner_reference: "RISK-APPROVAL-1",
-      risk_owner_approved_at: "2030-01-02T00:00:00.000Z",
-    },
+  const evidence = productionEvidence(base, "9".repeat(64));
+  const approved = markProductionReadApproved(base, {
+    evidence,
+    now: new Date("2030-01-02T00:00:00.000Z"),
   });
   assert.equal(assertRegistryReadiness(approved), approved);
 });
 
 test("sandbox certification cannot be reused as production approval", () => {
-  const sandboxCertified = {
-    ...offline(),
-    certification_state: "sandbox_read_certified",
-    metadata_verified_at: "2030-01-02T00:00:00.000Z",
-    certification_verified_at: "2030-01-02T00:00:00.000Z",
-  };
+  const sandboxCertified = certifiedSandbox();
   assert.equal(assertRegistryReadiness(sandboxCertified), sandboxCertified);
   assert.throws(
     () => validateRegistryEntry({
@@ -209,25 +315,20 @@ test("org type and declared environment obey a fail-closed classification matrix
 });
 
 test("verified refresh preserves certification and approvals for an unchanged org", () => {
-  const approved = validateRegistryEntry({
+  const base = {
     ...buildOfflineRegistryEntry({
-      alias: "production",
-      friendlyLabel: "Production",
-      identity,
-      orgType: "production_or_developer",
-      environment: "production",
-      now: new Date("2030-01-01T00:00:00.000Z"),
-    }),
+        alias: "production",
+        friendlyLabel: "Production",
+        identity,
+        orgType: "production_or_developer",
+        environment: "production",
+        now: new Date("2030-01-01T00:00:00.000Z"),
+      }),
     metadata_verified_at: "2030-01-02T00:00:00.000Z",
-    certification_state: "production_read_approved",
-    certification_verified_at: "2030-01-02T00:00:00.000Z",
-    approvals: {
-      sandbox_evidence_digest: "a".repeat(64),
-      administrator_reference: "ADMIN-APPROVAL-1",
-      administrator_approved_at: "2030-01-02T00:00:00.000Z",
-      risk_owner_reference: "RISK-APPROVAL-1",
-      risk_owner_approved_at: "2030-01-02T00:00:00.000Z",
-    },
+  };
+  const approved = markProductionReadApproved(base, {
+    evidence: productionEvidence(base, "9".repeat(64)),
+    now: new Date("2030-01-02T00:00:00.000Z"),
   });
   const original = structuredClone(approved);
   const refreshed = refreshRegistryVerification(approved, {
@@ -235,6 +336,9 @@ test("verified refresh preserves certification and approvals for an unchanged or
     orgType: "production_or_developer",
     environment: "production",
     fieldMapVersion: FIELD_MAP_VERSION,
+    runtimeAttestationDigest: "a".repeat(64),
+    packageDigest: "b".repeat(64),
+    metadataCompatibilityDigest: "c".repeat(64),
     now: new Date("2030-01-03T00:00:00.000Z"),
   });
 

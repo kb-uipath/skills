@@ -6,6 +6,7 @@ import {
   lstat,
   mkdir,
   open,
+  readdir,
   rename,
   unlink,
 } from "node:fs/promises";
@@ -93,6 +94,9 @@ const TOKEN_VALUE = /(?:Bearer\s+[A-Za-z0-9._~+/-]+=*|00D[A-Za-z0-9]{10,}![A-Za-
 const MAX_JSON_DEPTH = 40;
 const MAX_LOCK_BYTES = 4_096;
 const LOCK_RECLAIM_ATTEMPTS = 3;
+const ORG_REGISTRY_WRITE_WAIT_MS = 5 * 60_000 + 10_000;
+const ORG_REGISTRY_WRITE_POLL_MS = 25;
+const ORG_REGISTRY_WRITER_TICKET = /^[a-f0-9]{32}\.lock$/u;
 
 function compareText(left, right) {
   const a = String(left ?? "");
@@ -335,7 +339,12 @@ function validateOrgRegistryDocument(document) {
     ["schema_version", "classification", "entries"],
     "org_registry",
   );
-  if (document.schema_version !== CONTRACTS.orgRegistry
+  if (![
+    CONTRACTS.orgRegistry,
+    CONTRACTS.orgRegistryUnsigned,
+    CONTRACTS.orgRegistryLegacy,
+  ]
+    .includes(document.schema_version)
     || document.classification !== CLASSIFICATION
     || !Array.isArray(document.entries)) {
     throw new SafetyError("INVALID_ORG_REGISTRY", "Org registry envelope is invalid");
@@ -626,6 +635,18 @@ export function createStateStore({
   const sessionIndexLockPath = join(skillDirectory, "session-index.lock");
   const orgRegistryPath = join(skillDirectory, "org-registry.json");
   const orgRegistryLockPath = join(skillDirectory, "org-registry.lock");
+  const orgRegistryWritePendingPath = join(
+    skillDirectory,
+    "org-registry-write-pending.lock",
+  );
+  const orgRegistryWriteIntentPath = join(
+    skillDirectory,
+    "org-registry-write-intent.lock",
+  );
+  const orgRegistryWriterTicketsDirectory = join(
+    skillDirectory,
+    "org-registry-writer-tickets",
+  );
   let initialization;
 
   const sessionPath = (sessionId) =>
@@ -637,6 +658,10 @@ export function createStateStore({
     await ensureDirectory(root, { exactPrivateMode: false });
     await ensureDirectory(skillDirectory, { exactPrivateMode: true });
     await ensureDirectory(sessionsDirectory, { exactPrivateMode: true });
+    await ensureDirectory(
+      orgRegistryWriterTicketsDirectory,
+      { exactPrivateMode: true },
+    );
     try {
       await atomicCreate(sessionIndexPath, sessionIndexDocument([]), "REGISTRY_EXISTS");
     } catch (error) {
@@ -656,6 +681,10 @@ export function createStateStore({
     await ensureDirectory(root, { exactPrivateMode: false });
     await ensureDirectory(skillDirectory, { exactPrivateMode: true });
     await ensureDirectory(sessionsDirectory, { exactPrivateMode: true });
+    await ensureDirectory(
+      orgRegistryWriterTicketsDirectory,
+      { exactPrivateMode: true },
+    );
   }
 
   async function readSessionIndexUnlocked() {
@@ -701,12 +730,213 @@ export function createStateStore({
     );
   }
 
+  async function acquireOrgRegistryLockForWrite(path) {
+    const deadline = Date.now() + ORG_REGISTRY_WRITE_WAIT_MS;
+    while (true) {
+      try {
+        return await acquireLock(
+          path,
+          "STATE_STORE_BUSY",
+          now,
+        );
+      } catch (error) {
+        if (error?.code !== "STATE_STORE_BUSY" || Date.now() >= deadline) {
+          throw error;
+        }
+        await new Promise((resolve) =>
+          setTimeout(resolve, ORG_REGISTRY_WRITE_POLL_MS));
+      }
+    }
+  }
+
+  async function acquireOrgRegistryWriterTicket() {
+    for (let attempt = 0; attempt < LOCK_RECLAIM_ATTEMPTS; attempt += 1) {
+      const path = join(
+        orgRegistryWriterTicketsDirectory,
+        `${randomBytes(16).toString("hex")}.lock`,
+      );
+      try {
+        return await acquireLock(path, "STATE_STORE_BUSY", now);
+      } catch (error) {
+        if (error?.code !== "STATE_STORE_BUSY") throw error;
+      }
+    }
+    throw new SafetyError(
+      "STATE_STORE_BUSY",
+      "Could not allocate a private org-registry writer ticket",
+    );
+  }
+
+  async function withOrgRegistryWriteLock(operation) {
+    const ticket = await acquireOrgRegistryWriterTicket();
+    let pending;
+    let lock;
+    let intent;
+    try {
+      pending = await acquireOrgRegistryLockForWrite(
+        orgRegistryWritePendingPath,
+      );
+      lock = await acquireOrgRegistryLockForWrite(orgRegistryLockPath);
+      intent = await acquireLock(
+        orgRegistryWriteIntentPath,
+        "STATE_STORE_BUSY",
+        now,
+      );
+      await pending.assertOwned();
+      await intent.assertOwned();
+      await lock.assertOwned();
+      const result = await operation();
+      await lock.assertOwned();
+      await intent.assertOwned();
+      await pending.assertOwned();
+      return result;
+    } finally {
+      try {
+        await intent?.release();
+      } finally {
+        try {
+          await lock?.release();
+        } finally {
+          try {
+            await pending?.release();
+          } finally {
+            await ticket.release();
+          }
+        }
+      }
+    }
+  }
+
+  async function assertNoOrgRegistryWritePending() {
+    const tickets = await readdir(orgRegistryWriterTicketsDirectory);
+    for (const name of tickets.sort()) {
+      if (!ORG_REGISTRY_WRITER_TICKET.test(name)) {
+        throw new SafetyError(
+          "INVALID_STATE_LOCK",
+          "Org-registry writer-ticket directory contains an invalid entry",
+        );
+      }
+      const path = join(orgRegistryWriterTicketsDirectory, name);
+      if (!await reclaimDeadLock(path)) {
+        throw new SafetyError(
+          "CERTIFICATION_CHANGE_PENDING",
+          "Org readiness is being changed; no Salesforce data query may start",
+        );
+      }
+    }
+    for (const path of [
+      orgRegistryWritePendingPath,
+      orgRegistryWriteIntentPath,
+    ]) {
+      if (await pathMetadata(path)
+        && !await reclaimDeadLock(path)) {
+        throw new SafetyError(
+          "CERTIFICATION_CHANGE_PENDING",
+          "Org readiness is being changed; no Salesforce data query may start",
+        );
+      }
+    }
+  }
+
+  async function withOrgRegistryReadiness(operation) {
+    await initialize();
+    if (typeof operation !== "function") {
+      throw new SafetyError(
+        "INVALID_ORG_REGISTRY_OPERATION",
+        "Readiness guard requires a function",
+      );
+    }
+    await assertNoOrgRegistryWritePending();
+    const lock = await acquireLock(
+      orgRegistryLockPath,
+      "STATE_STORE_BUSY",
+      now,
+    );
+    try {
+      await lock.assertOwned();
+      await assertNoOrgRegistryWritePending();
+      let current = await pathMetadata(orgRegistryPath)
+        ? validateOrgRegistryDocument(
+          await readPrivateJson(orgRegistryPath, "Org registry"),
+        )
+        : emptyOrgRegistry();
+      // Acquiring orgRegistryLock is the read linearization point. A writer may
+      // announce that it is pending after this point, but it cannot create the
+      // write-intent lease or mutate readiness until this guarded operation
+      // (including the Salesforce query) releases the same lock.
+      let leaseState = "idle";
+      const lease = Object.freeze({
+        async issueQuery(issue) {
+          if (typeof issue !== "function") {
+            throw new SafetyError(
+              "INVALID_ORG_REGISTRY_OPERATION",
+              "Readiness query issuance requires a function",
+            );
+          }
+          if (leaseState !== "idle") {
+            throw new SafetyError(
+              "INVALID_ORG_REGISTRY_OPERATION",
+              "A readiness lease may issue exactly one Salesforce data query",
+            );
+          }
+          leaseState = "query_active";
+          await lock.assertOwned();
+          await assertNoOrgRegistryWritePending();
+          // Invoke synchronously after the final pending-write check. The
+          // returned promise remains protected by orgRegistryLock.
+          try {
+            const result = await issue();
+            leaseState = "query_succeeded";
+            return result;
+          } catch (error) {
+            leaseState = "query_failed";
+            throw error;
+          }
+        },
+        async updateRegistry(update) {
+          if (typeof update !== "function") {
+            throw new SafetyError(
+              "INVALID_ORG_REGISTRY_OPERATION",
+              "Readiness registry update requires a function",
+            );
+          }
+          if (!["idle", "query_failed"].includes(leaseState)) {
+            throw new SafetyError(
+              "INVALID_ORG_REGISTRY_OPERATION",
+              "A readiness lease may update the registry once before query issuance or after a failed query",
+            );
+          }
+          leaseState = "registry_update_active";
+          await lock.assertOwned();
+          const next = validateOrgRegistryDocument(cloneJson(
+            await update(cloneJson(current)),
+          ));
+          if (await pathMetadata(orgRegistryPath)) {
+            await atomicReplace(orgRegistryPath, next);
+          } else {
+            await atomicCreate(
+              orgRegistryPath,
+              next,
+              "ORG_REGISTRY_EXISTS",
+            );
+          }
+          current = next;
+          leaseState = "registry_updated";
+          return cloneJson(next);
+        },
+      });
+      const result = await operation(cloneJson(current), lease);
+      await lock.assertOwned();
+      return result;
+    } finally {
+      await lock.release();
+    }
+  }
+
   async function writeOrgRegistry(document) {
     await initialize();
     const validated = validateOrgRegistryDocument(cloneJson(document));
-    const lock = await acquireLock(orgRegistryLockPath, "STATE_STORE_BUSY", now);
-    try {
-      await lock.assertOwned();
+    return await withOrgRegistryWriteLock(async () => {
       if (await pathMetadata(orgRegistryPath)) {
         validateOrgRegistryDocument(
           await readPrivateJson(orgRegistryPath, "Org registry"),
@@ -715,11 +945,8 @@ export function createStateStore({
       } else {
         await atomicCreate(orgRegistryPath, validated, "ORG_REGISTRY_EXISTS");
       }
-      await lock.assertOwned();
       return cloneJson(validated);
-    } finally {
-      await lock.release();
-    }
+    });
   }
 
   async function updateOrgRegistry(operation) {
@@ -730,13 +957,7 @@ export function createStateStore({
         "Org registry update requires a function",
       );
     }
-    const lock = await acquireLock(
-      orgRegistryLockPath,
-      "STATE_STORE_BUSY",
-      now,
-    );
-    try {
-      await lock.assertOwned();
+    return await withOrgRegistryWriteLock(async () => {
       const current = await pathMetadata(orgRegistryPath)
         ? validateOrgRegistryDocument(
           await readPrivateJson(orgRegistryPath, "Org registry"),
@@ -754,11 +975,8 @@ export function createStateStore({
           "ORG_REGISTRY_EXISTS",
         );
       }
-      await lock.assertOwned();
       return cloneJson(next);
-    } finally {
-      await lock.release();
-    }
+    });
   }
 
   async function readSessionFile(sessionId, { allowExpired }) {
@@ -1000,6 +1218,9 @@ export function createStateStore({
       session_index_lock: sessionIndexLockPath,
       org_registry: orgRegistryPath,
       org_registry_lock: orgRegistryLockPath,
+      org_registry_write_pending: orgRegistryWritePendingPath,
+      org_registry_write_intent: orgRegistryWriteIntentPath,
+      org_registry_writer_tickets: orgRegistryWriterTicketsDirectory,
       session: sessionPath,
       session_lock: sessionLockPath,
     }),
@@ -1007,6 +1228,7 @@ export function createStateStore({
     readSessionIndex,
     writeSessionIndex,
     readOrgRegistry,
+    withOrgRegistryReadiness,
     updateOrgRegistry,
     writeOrgRegistry,
     createSession,

@@ -57,7 +57,8 @@ and always returns a chooser, even for one result.
 
 Family expansion displays the complete bounded Account-ID set. Approval binds that exact
 set and the complete plan. Any change to membership, selected Account, org, runtime,
-sections, filters, Opportunity scope, field-map version, or output type invalidates it.
+certification receipt, sections, filters, Opportunity scope, field-map version, or output
+type invalidates it.
 
 ## Presets
 
@@ -116,8 +117,17 @@ Enrollment alone does not authorize data access. Readiness states are:
 | `production_read_approved` | Separate production administrator and risk-owner approval recorded |
 
 Sandbox success never implies production approval. Production entries require a sandbox
-evidence digest plus separate administrator and risk-owner references and timestamps in the
-private registry.
+self-validating evidence receipt plus distinct, Ed25519-signed administrator and risk-owner
+assertions bound to the exact audience, scope, nonce, and validity window. Trusted public
+keys are provisioned out of band in an exact-mode private state file; signing keys never
+enter Codex state.
+
+Ordinary profile users do not perform certification. An administrator follows the
+progressively disclosed [certification runbook](../salesforce-account-profile/references/certification.md).
+It first prepares a 30-minute scope, then runs the approved synthetic sandbox suite.
+Production uses a second 30-minute scope and two distinct approvals. Final evidence output
+is metadata-only and omits aliases, usernames, org identifiers, hosts, record IDs, local
+paths, approval references, tokens, and raw CLI output.
 
 ## Resumable Conversation
 
@@ -175,7 +185,9 @@ nonfatal, but the owner hierarchy is marked incomplete.
 
 The production helper invokes a pinned Salesforce CLI entrypoint using argument arrays and
 `shell: false`. It permits only org list/display, object describe, and bounded data query.
-Fake CLI injection is programmatic and test-only.
+Public administrative commands construct that production client directly and ignore the
+ordinary dependency-injection surface. Synthetic clients are available only through the
+separate programmatic test engine.
 
 Customer-controlled values travel through private standard input or exact-mode `0600`
 non-symlink files. The runtime uses no-follow descriptors, validates the opened descriptor,
@@ -188,16 +200,25 @@ profile cache.
 ## Classification And Retention
 
 Every request, private session, structured artifact, and rendered profile containing org or
-CRM data is confidential. The org registry retains only redacted identity and readiness
-metadata. Active session control state expires after 30 minutes; completed profiles are
-never stored there. Temporary request, SOQL, raw-result, and default rendered artifacts are
-deleted after use.
+CRM data is confidential. The private org registry retains redacted identity metadata and
+self-validating readiness receipts; it never stores credentials, tokens, raw CLI output, or
+completed profiles. Active session control state expires after 30 minutes. Temporary
+request, SOQL, raw-result, and default rendered artifacts are deleted after use.
 
 ## Compatibility
 
 The public v2 commands are `doctor`, `start`, `continue`, `status`, and `abort`. The previous
 `preflight`, `resolve`, `profile`, and `render` commands remain supported as advanced v1
-primitives, but they are not the documented user workflow.
+primitives, but they are not the documented user workflow. Advanced `resolve` and
+`profile` calls still require a currently certified enrolled alias, matching runtime and
+package attestations, a complete compatible-metadata re-attestation before execution, and a
+serialized readiness lease for every data query. Missing, offline-only, revoked, or drifted
+readiness blocks the query. `preflight` and `render` remain data-query-free.
+
+The administrative commands `prepare-sandbox-certification`, `certify-sandbox`,
+`prepare-production-approval`, and `approve-production` are setup controls, not user-facing
+profile commands. They accept only private stdin or exact-mode `0600` input files and are
+documented exclusively in the certification runbook.
 
 See the bundled [contract reference](../salesforce-account-profile/references/contracts.md),
 [field map](../salesforce-account-profile/references/field-map.md), and
@@ -210,7 +231,10 @@ history, package checks, secret scanning, online link checks, and upstream diff 
 Synthetic forward tests cover exact and ambiguous Accounts, literal-prefix choice,
 corporate-family approval, stale approvals, cap recovery, context-loss resume, abort and TTL
 cleanup, adversarial CRM/CLI output, metadata drift, multicurrency, and disabled
-annualization.
+annualization. Certification-path tests additionally cover expiring scopes, synthetic
+markers, signed role assertions, trust-file safety, assertion replay, current
+package/runtime/metadata binding, self-validating receipts, zero-query production approval,
+dependent-approval invalidation, and per-query cancellation after certification drift.
 
 No live Salesforce org was accessed for the published offline evidence.
 
@@ -219,7 +243,9 @@ No live Salesforce org was accessed for the published offline evidence.
 The skill is not an installed-product, entitlement, usage, consumption, legal-subsidiary, or
 ARR system. Optional Salesforce fields remain org-specific. A real org is unusable until its
 separate readiness state advances through the approved sandbox and, for production, risk
-approval process. Session recovery lasts only 30 minutes. Annualization remains disabled.
+approval process. Approval signatures prove possession of configured role keys, not a
+person's legal identity or authority; trust provisioning remains an external governance
+responsibility. Session recovery lasts only 30 minutes. Annualization remains disabled.
 
 ## Certification Status
 

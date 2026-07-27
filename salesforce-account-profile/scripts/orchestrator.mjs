@@ -23,15 +23,19 @@ import { inspectMetadataCompatibility } from "./metadata-compatibility.mjs";
 import {
   assertRegistryReadiness,
   buildOfflineRegistryEntry,
+  downgradeRegistryEntry,
+  downgradeRegistryReadiness,
   emptyOrgRegistry,
   markMetadataVerified,
   refreshRegistryVerification,
+  registryReadinessDigest,
   resolveRegistryEntry,
   upsertRegistryEntry,
   validateOrgRegistry,
   validateRegistryEntry,
   verifyRegistryIdentity,
 } from "./org-registry.mjs";
+import { attestCertificationPackage } from "./package-attestation.mjs";
 import {
   buildReadPlan,
   issueApprovalReceipt,
@@ -51,6 +55,7 @@ import {
   writeSfRuntimeManifest,
 } from "./sf-runtime.mjs";
 import {
+  digest,
   escapeSoqlLiteral,
   markdownText,
   SafetyError,
@@ -68,6 +73,13 @@ const ALLOWED_NEXT_ACTIONS = new Set([
   "request_permissions",
   "cancel",
 ]);
+const RUNTIME_DRIFT_CODES = new Set([
+  "INVALID_SF_RUNTIME",
+  "SF_EXECUTABLE_REATTESTATION_REQUIRED",
+  "SF_RUNTIME_NOT_ENROLLED",
+  "UNSUPPORTED_RUNTIME",
+]);
+const PERSISTED_RUNTIME_DRIFT_REVOCATIONS = new WeakSet();
 
 function clockFor(dependencies) {
   return () => {
@@ -160,6 +172,117 @@ async function clientFor(targetOrg, dependencies, options = {}) {
 async function readOrgRegistry(store) {
   const document = await store.readOrgRegistry();
   return validateOrgRegistry(document ?? emptyOrgRegistry());
+}
+
+function certificationDriftError(message) {
+  return new SafetyError(
+    "CERTIFICATION_DRIFT",
+    message,
+    { revoke_readiness: true },
+  );
+}
+
+async function checkCertificationAttestation(entry, client, {
+  inspectMetadata = true,
+} = {}) {
+  if (entry.certification_state === "offline_validated") return;
+  const evidence = entry.certification_evidence;
+  let packageAttestation;
+  try {
+    packageAttestation = await attestCertificationPackage();
+  } catch {
+    throw certificationDriftError(
+      "The certification-critical package can no longer be attested",
+    );
+  }
+  let metadataCompatibilityDigest =
+    evidence.metadata_compatibility_digest;
+  if (inspectMetadata) {
+    try {
+      metadataCompatibilityDigest = digest(
+        await inspectMetadataCompatibility(client),
+      );
+    } catch {
+      throw certificationDriftError(
+        "Salesforce metadata can no longer be attested",
+      );
+    }
+  }
+  if (evidence.runtime_attestation_digest !== client.attestationDigest
+    || evidence.package_digest !== packageAttestation.package_digest
+    || evidence.metadata_compatibility_digest
+      !== metadataCompatibilityDigest) {
+    throw certificationDriftError(
+      "Salesforce runtime, metadata, or certification-critical package changed after org certification",
+    );
+  }
+}
+
+async function revokeCertificationReadiness(store, entry) {
+  await store.updateOrgRegistry((current) =>
+    downgradeRegistryReadiness(current, entry));
+}
+
+async function withRuntimeDriftRevocation(store, entry, operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    if (RUNTIME_DRIFT_CODES.has(error?.code)) {
+      await revokeCertificationReadiness(store, entry);
+      if (error && typeof error === "object") {
+        PERSISTED_RUNTIME_DRIFT_REVOCATIONS.add(error);
+      }
+    }
+    throw error;
+  }
+}
+
+async function assertRegistryIdentity(store, entry, identity) {
+  try {
+    verifyRegistryIdentity(entry, identity);
+  } catch (error) {
+    if (error?.code === "ORG_IDENTITY_MISMATCH") {
+      await revokeCertificationReadiness(store, entry);
+    }
+    throw error;
+  }
+}
+
+async function assertCertificationAttestation(entry, client, store) {
+  try {
+    await checkCertificationAttestation(entry, client);
+  } catch (error) {
+    if (error?.details?.revoke_readiness === true) {
+      await revokeCertificationReadiness(store, entry);
+    }
+    throw error;
+  }
+}
+
+async function preQueryClient(entry, dependencies, store) {
+  const prepared = await withRuntimeDriftRevocation(
+    store,
+    entry,
+    async () => {
+      const client = await clientFor(entry.alias, dependencies);
+      const identity = await client.orgDisplay();
+      await assertRegistryIdentity(store, entry, identity);
+      await assertCertificationAttestation(entry, client, store);
+      return { client, identity };
+    },
+  );
+  const orgDisplay = prepared.client.orgDisplay.bind(prepared.client);
+  prepared.client.orgDisplay = async () =>
+    await withRuntimeDriftRevocation(
+      store,
+      entry,
+      async () => {
+        const identity = await orgDisplay();
+        await assertRegistryIdentity(store, entry, identity);
+        return identity;
+      },
+    );
+  return prepared;
 }
 
 function orgTypeFor(authorizedOrg) {
@@ -258,19 +381,35 @@ export async function doctor(input, dependencies = {}) {
   let enrolled = null;
   let metadataCompatibility = null;
   if (request.target_org) {
-    const client = await clientFor(request.target_org, dependencies);
-    const identity = await client.orgDisplay();
-    const authorizedMatches = authorizedOrgs.filter((org) =>
-      org.alias === request.target_org);
-    if (authorizedMatches.length !== 1) {
-      throw new SafetyError(
-        "ORG_DISCOVERY_MISMATCH",
-        "The selected org must match exactly one redacted authorized-org entry",
-      );
+    const existingEntry = registry.entries.find((entry) =>
+      entry.alias === request.target_org);
+    let client;
+    let identity;
+    let authorized;
+    let packageAttestation;
+    try {
+      client = await clientFor(request.target_org, dependencies);
+      identity = await client.orgDisplay();
+      const authorizedMatches = authorizedOrgs.filter((org) =>
+        org.alias === request.target_org);
+      if (authorizedMatches.length !== 1) {
+        throw new SafetyError(
+          "ORG_DISCOVERY_MISMATCH",
+          "The selected org must match exactly one redacted authorized-org entry",
+        );
+      }
+      [authorized] = authorizedMatches;
+      validateAuthorizedIdentity(authorized, identity);
+      metadataCompatibility = await inspectMetadataCompatibility(client);
+      packageAttestation = await attestCertificationPackage();
+    } catch (error) {
+      if (existingEntry
+        && existingEntry.certification_state !== "offline_validated") {
+        await revokeCertificationReadiness(store, existingEntry);
+      }
+      throw error;
     }
-    const [authorized] = authorizedMatches;
-    validateAuthorizedIdentity(authorized, identity);
-    metadataCompatibility = await inspectMetadataCompatibility(client);
+    const metadataCompatibilityDigest = digest(metadataCompatibility);
     const orgType = orgTypeFor(authorized);
     registry = await store.updateOrgRegistry((current) => {
       const validated = validateOrgRegistry(current);
@@ -287,6 +426,9 @@ export async function doctor(input, dependencies = {}) {
           identity,
           orgType,
           environment: request.environment,
+          runtimeAttestationDigest: client.attestationDigest,
+          packageDigest: packageAttestation.package_digest,
+          metadataCompatibilityDigest,
           now: clock(),
         });
       } else {
@@ -299,7 +441,24 @@ export async function doctor(input, dependencies = {}) {
           now: clock(),
         }), clock());
       }
-      return upsertRegistryEntry(validated, enrolled);
+      let updated = upsertRegistryEntry(validated, enrolled);
+      if (existing?.certification_state === "sandbox_read_certified"
+        && enrolled.certification_state === "offline_validated") {
+        const priorEvidence =
+          existing.certification_evidence.receipt_digest;
+        for (const candidate of [...updated.entries]) {
+          if (candidate.certification_state
+              === "production_read_approved"
+            && candidate.certification_evidence
+              ?.sandbox_evidence_digest === priorEvidence) {
+            updated = upsertRegistryEntry(
+              updated,
+              downgradeRegistryEntry(candidate),
+            );
+          }
+        }
+      }
+      return updated;
     });
   }
   return result(CONTRACTS.doctorResult, {
@@ -321,6 +480,7 @@ function buildPlanFromRequest(request, {
   entry,
   identity,
   runtimeAttestationDigest,
+  registryReadiness,
   issuedAt,
 }) {
   return buildReadPlan({
@@ -333,6 +493,7 @@ function buildPlanFromRequest(request, {
       connected_status: identity.connected_status,
     },
     runtimeAttestationDigest,
+    registryReadinessDigest: registryReadiness,
     accountSelector: request.account_selector,
     preset: request.preset,
     ...(request.preset === "custom" ? {
@@ -356,6 +517,7 @@ function rebuildPlan(plan, overrides = {}) {
     sessionId: plan.session_id,
     orgIdentity: plan.org_identity,
     runtimeAttestationDigest: plan.runtime_attestation_digest,
+    registryReadinessDigest: plan.registry_readiness_digest,
     accountSelector: overrides.accountSelector ?? plan.account_selector,
     selectedAccount: overrides.selectedAccount === undefined
       ? plan.selected_account
@@ -415,9 +577,11 @@ export async function start(input, dependencies = {}) {
   assertRegistryReadiness(entry, {
     allowOfflineExecution: dependencies.allowOfflineExecution === true,
   });
-  const client = await clientFor(entry.alias, dependencies);
-  const identity = await client.orgDisplay();
-  verifyRegistryIdentity(entry, identity);
+  const { client, identity } = await preQueryClient(
+    entry,
+    dependencies,
+    store,
+  );
   if (client.queryCount !== 0) {
     throw new SafetyError(
       "INVALID_SF_CLIENT",
@@ -431,6 +595,7 @@ export async function start(input, dependencies = {}) {
     entry,
     identity,
     runtimeAttestationDigest: client.attestationDigest,
+    registryReadiness: registryReadinessDigest(entry),
     issuedAt,
   });
   const summary = orgConfirmationSummary(entry, request, identity);
@@ -507,8 +672,75 @@ async function verifiedSessionClient(session, dependencies, store) {
   assertRegistryReadiness(entry, {
     allowOfflineExecution: dependencies.allowOfflineExecution === true,
   });
-  const client = await clientFor(entry.alias, dependencies);
+  if (session.read_plan.registry_readiness_digest
+      !== registryReadinessDigest(entry)) {
+    throw new SafetyError(
+      "CERTIFICATION_DRIFT",
+      "Org certification changed after this profile plan was created",
+    );
+  }
+  const { client } = await preQueryClient(entry, dependencies, store);
   client.queryCount = session.query_count;
+  if (typeof store.withOrgRegistryReadiness !== "function") {
+    throw new SafetyError(
+      "INVALID_STATE_STORE",
+      "Salesforce data queries require a guarded org-readiness lease",
+    );
+  }
+  const query = client.query.bind(client);
+  client.query = async (soql) => {
+    return await store.withOrgRegistryReadiness(
+      async (currentDocument, lease) => {
+        if (!lease
+          || typeof lease.issueQuery !== "function"
+          || typeof lease.updateRegistry !== "function") {
+          throw new SafetyError(
+            "INVALID_STATE_STORE",
+            "Org readiness guard did not provide query and revocation capabilities",
+          );
+        }
+        const currentRegistry = validateOrgRegistry(currentDocument);
+        const currentEntry = resolveRegistryEntry(
+          currentRegistry,
+          session.target_org,
+        );
+        assertRegistryReadiness(currentEntry, {
+          allowOfflineExecution:
+            dependencies.allowOfflineExecution === true,
+        });
+        if (session.read_plan.registry_readiness_digest
+            !== registryReadinessDigest(currentEntry)) {
+          throw new SafetyError(
+            "CERTIFICATION_DRIFT",
+            "Org certification changed before the next Salesforce data query",
+          );
+        }
+        try {
+          await checkCertificationAttestation(currentEntry, client, {
+            inspectMetadata: false,
+          });
+        } catch (error) {
+          if (error?.details?.revoke_readiness === true) {
+            await lease.updateRegistry((current) =>
+              downgradeRegistryReadiness(current, currentEntry));
+          }
+          throw error;
+        }
+        try {
+          return await lease.issueQuery(() => query(soql));
+        } catch (error) {
+          if (RUNTIME_DRIFT_CODES.has(error?.code)) {
+            await lease.updateRegistry((current) =>
+              downgradeRegistryReadiness(current, currentEntry));
+            if (error && typeof error === "object") {
+              PERSISTED_RUNTIME_DRIFT_REVOCATIONS.add(error);
+            }
+          }
+          throw error;
+        }
+      },
+    );
+  };
   return { client, entry };
 }
 
@@ -1005,18 +1237,27 @@ async function resumeAfterRecovery(
   now,
 ) {
   const resumeState = session.recovery?.resume_state;
-  if (resumeState === "account_resolution") {
-    await continuation.update({
+  if (["org_confirmation", "account_resolution"].includes(resumeState)) {
+    const updated = await continuation.update({
       state: "account_resolution",
+      ...(resumeState === "org_confirmation"
+        ? {
+          org_approval_receipt: issueApprovalReceipt(
+            session.read_plan,
+            "org_and_plan",
+            now,
+          ),
+        }
+        : {}),
       pending_action: null,
       recovery: null,
     });
     return await resolveAccount(
       continuation,
-      session,
+      updated,
       client,
       entry,
-      session.read_plan.account_selector,
+      updated.read_plan.account_selector,
       now,
     );
   }
@@ -1133,6 +1374,7 @@ export async function continueConversation(input, dependencies = {}) {
     async (continuation) => {
       let session = continuation.session;
       let client;
+      let verifiedEntry;
       try {
         ensureDecision(session, request.decision);
         if (request.decision.action === "cancel") {
@@ -1150,6 +1392,7 @@ export async function continueConversation(input, dependencies = {}) {
         );
         client = verified.client;
         const entry = verified.entry;
+        verifiedEntry = entry;
         const now = clock();
 
         if (request.decision.action === "confirm_org_and_plan") {
@@ -1337,6 +1580,12 @@ export async function continueConversation(input, dependencies = {}) {
         );
       } catch (error) {
         if (!(error instanceof SafetyError)) throw error;
+        if ((error.code === "SCHEMA_FAILURE"
+          || (RUNTIME_DRIFT_CODES.has(error.code)
+            && !PERSISTED_RUNTIME_DRIFT_REVOCATIONS.has(error)))
+          && verifiedEntry) {
+          await revokeCertificationReadiness(store, verifiedEntry);
+        }
         if (["UNEXPECTED_DECISION", "INVALID_ACCOUNT_CHOICE"].includes(
           error.code,
         )) {

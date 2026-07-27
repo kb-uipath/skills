@@ -136,6 +136,7 @@ export function validateReadPlan(plan) {
       "session_id",
       "org_identity",
       "runtime_attestation_digest",
+      "registry_readiness_digest",
       "account_selector",
       "selected_account",
       "account_receipt_digest",
@@ -156,6 +157,7 @@ export function validateReadPlan(plan) {
       "session_id",
       "org_identity",
       "runtime_attestation_digest",
+      "registry_readiness_digest",
       "account_selector",
       "selected_account",
       "account_receipt_digest",
@@ -179,6 +181,12 @@ export function validateReadPlan(plan) {
   validateOrgIdentity(plan.org_identity);
   if (!SHA256.test(plan.runtime_attestation_digest)) {
     throw new SafetyError("INVALID_READ_PLAN", "runtime_attestation_digest is invalid");
+  }
+  if (!SHA256.test(plan.registry_readiness_digest)) {
+    throw new SafetyError(
+      "INVALID_READ_PLAN",
+      "registry_readiness_digest is invalid",
+    );
   }
   validateAccountSelector(plan.account_selector);
   validateSelectedAccount(plan.selected_account);
@@ -235,6 +243,7 @@ export function buildReadPlan({
   sessionId,
   orgIdentity,
   runtimeAttestationDigest,
+  registryReadinessDigest,
   accountSelector,
   selectedAccount = null,
   accountReceiptDigest = null,
@@ -267,6 +276,7 @@ export function buildReadPlan({
     session_id: sessionId,
     org_identity: { ...orgIdentity },
     runtime_attestation_digest: runtimeAttestationDigest,
+    registry_readiness_digest: registryReadinessDigest,
     account_selector: { ...accountSelector },
     selected_account: selectedAccount ? { Id: selectedAccount.Id, Name: selectedAccount.Name } : null,
     account_receipt_digest: accountReceiptDigest,

@@ -22,7 +22,7 @@ const legacyProfile = {
   warnings: [],
 };
 
-test("legacy v1 rendering remains byte-compatible", () => {
+test("legacy v1 overview layout remains byte-compatible", () => {
   const expected = `# Confidential Salesforce Account Profile
 
 Account: **Legacy Account** (\`${IDS.account1}\`)
@@ -41,7 +41,7 @@ Scope: selected\\_account
   assert.equal(renderProfile(legacyProfile), expected);
 });
 
-test("legacy v1 products retain their original heading and warning", () => {
+test("legacy v1 rendering uses line-item language and plain warnings", () => {
   const rendered = renderProfile({
     ...legacyProfile,
     products: [{
@@ -57,10 +57,16 @@ test("legacy v1 products retain their original heading and warning", () => {
     }],
   });
 
-  assert(rendered.includes("## Products"));
-  assert(!rendered.includes("## Opportunity line items"));
+  assert(!rendered.includes("## Products"));
+  assert(rendered.includes("## Opportunity line items"));
   assert(!rendered.includes("## Decision Summary"));
-  assert(rendered.includes(`Warning: ${WARNING_ANNUALIZATION}`));
+  assert(rendered.includes(
+    "These are raw Salesforce Opportunity line items, not entitlements, utilization, consumption, or installed-product inventory.",
+  ));
+  assert(rendered.includes(
+    "Annualized revenue is not calculated because price basis, recurrence, and duration semantics are not certified.",
+  ));
+  assert(!rendered.includes(WARNING_ANNUALIZATION));
 });
 
 function completeView() {
