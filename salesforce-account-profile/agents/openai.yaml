@@ -1,6 +1,6 @@
 interface:
   display_name: "Salesforce Account Profile"
   short_description: "Build safe Salesforce account profiles"
-  default_prompt: "Use $salesforce-account-profile to resolve an account safely and build a confirmed, confidential profile."
+  default_prompt: "$salesforce-account-profile Give me a pipeline snapshot for Example Account in Production."
 policy:
   allow_implicit_invocation: false

@@ -39,10 +39,32 @@ const accounts = [
   {
     Id: IDs.account1, Name: nameForAlias, ParentId: null, OwnerId: IDs.user1,
     Ultimate_Parent_name__c: "Example Family", Classification__c: "Synthetic",
+    Region__c: null, Geo__c: null, Contract_End_Date__c: null,
+    Support_Type__c: null, Support_Status__c: null, CSM__c: null,
+    Support_Technical_Advisor__c: null, PreSales__c: null,
   },
   {
     Id: IDs.account2, Name: "Example Division", ParentId: IDs.account1, OwnerId: IDs.user2,
     Ultimate_Parent_name__c: "Example Family", Classification__c: "Synthetic",
+    Region__c: null, Geo__c: null, Contract_End_Date__c: null,
+    Support_Type__c: null, Support_Status__c: null, CSM__c: null,
+    Support_Technical_Advisor__c: null, PreSales__c: null,
+  },
+];
+const ambiguousAccounts = [
+  {
+    Id: IDs.account1, Name: "Repeated Name", ParentId: null, OwnerId: IDs.user1,
+    Ultimate_Parent_name__c: null, Classification__c: null, Region__c: null,
+    Geo__c: null, Contract_End_Date__c: null, Support_Type__c: null,
+    Support_Status__c: null, CSM__c: null,
+    Support_Technical_Advisor__c: null, PreSales__c: null,
+  },
+  {
+    Id: IDs.account3, Name: "Repeated Name", ParentId: null, OwnerId: IDs.user1,
+    Ultimate_Parent_name__c: null, Classification__c: null, Region__c: null,
+    Geo__c: null, Contract_End_Date__c: null, Support_Type__c: null,
+    Support_Status__c: null, CSM__c: null,
+    Support_Technical_Advisor__c: null, PreSales__c: null,
   },
 ];
 const opportunities = [
@@ -96,15 +118,43 @@ function fieldMetadata(name) {
           : currencies.has(name) ? "currency"
             : name === "Quantity" ? "double"
               : name.includes("Date") || name === "ServiceDate" ? "date"
-                : name === "CurrencyIsoCode" ? "picklist"
+                : name === "CurrencyIsoCode" || name === "StageName" ? "picklist"
                   : "string",
     filterable: true,
     referenceTo: references[name] ?? [],
     relationshipName: relationships[name] ?? null,
+    picklistValues: name === "StageName"
+      ? [
+        { active: true, label: "Closed Won", value: "Closed Won" },
+        { active: true, label: "Discovery", value: "Discovery" },
+        { active: true, label: "Qualification", value: "Qualification" },
+      ]
+      : [],
   };
 }
 
-if (command === "org display") {
+if (command === "org list") {
+  emit({
+    sandboxes: [
+      "synthetic-adversarial",
+      "synthetic-ambiguous",
+      "synthetic-complete",
+      "synthetic-missing",
+      "synthetic-no-match",
+    ].map((orgAlias) => ({
+      alias: orgAlias,
+      username: `${orgAlias}@example.invalid`,
+      orgId: "00D000000000001AAA",
+      instanceUrl: "https://synthetic.example.invalid",
+      connectedStatus: "not_checked",
+      accessToken: "00D000000000001!SECRET_SHOULD_NOT_ESCAPE",
+    })),
+    other: [],
+    devHubs: [],
+    scratchOrgs: [],
+    nonScratchOrgs: [],
+  });
+} else if (command === "org display") {
   emit({
     id: "00D000000000001AAA",
     username: `${alias}@example.invalid`,
@@ -120,14 +170,21 @@ if (command === "org display") {
   let records = [];
   if (/FROM Account/u.test(soql)) {
     if (alias === "synthetic-ambiguous" && /Name =/u.test(soql)) {
-      records = [
-        { Id: IDs.account1, Name: "Repeated Name", ParentId: null, OwnerId: IDs.user1 },
-        { Id: IDs.account3, Name: "Repeated Name", ParentId: null, OwnerId: IDs.user1 },
-      ];
+      records = ambiguousAccounts;
+    } else if (alias === "synthetic-no-match" && /Name =/u.test(soql)) {
+      records = [];
     } else if (/Ultimate_Parent_name__c =/u.test(soql)) {
       records = accounts;
+    } else if (/WHERE Id IN/u.test(soql)) {
+      const available = alias === "synthetic-ambiguous"
+        ? ambiguousAccounts
+        : accounts;
+      records = available.filter((account) => soql.includes(account.Id));
     } else if (/WHERE Id =/u.test(soql)) {
-      records = accounts.filter((account) => soql.includes(account.Id));
+      const available = alias === "synthetic-ambiguous"
+        ? ambiguousAccounts
+        : accounts;
+      records = available.filter((account) => soql.includes(account.Id));
     } else if (/Name (?:=|LIKE)/u.test(soql)) {
       records = [accounts[0]];
     }

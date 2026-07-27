@@ -19,6 +19,16 @@ export const DESCRIBE = Object.freeze({
   User: ["Id", "Name", "Title", "ManagerId"],
 });
 
+export const ACTIVE_STAGE_VALUES = Object.freeze([
+  "Closed",
+  "Closed Won",
+  "Discovery",
+  "Manager's Review",
+  "Negotiation",
+  "Open",
+  "Qualification",
+]);
+
 export function describeMap(fields) {
   const references = {
     ParentId: ["Account"], OwnerId: ["User"], AccountId: ["Account"],
@@ -37,11 +47,12 @@ export function describeMap(fields) {
           : currencies.has(name) ? "currency"
             : name === "Quantity" ? "double"
               : name.includes("Date") || name === "ServiceDate" ? "date"
-                : name === "CurrencyIsoCode" ? "picklist"
+                : name === "CurrencyIsoCode" || name === "StageName" ? "picklist"
                   : "string",
     filterable: true,
     referenceTo: references[name] ?? [],
     relationshipName: relationships[name] ?? null,
+    activePicklistValues: name === "StageName" ? [...ACTIVE_STAGE_VALUES] : [],
   }]));
 }
 

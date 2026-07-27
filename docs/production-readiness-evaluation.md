@@ -2,7 +2,7 @@
 
 This evaluation separates repository package quality from confidence that a skill produces its intended functional outcome and from evidence that its real operating path has been certified. A strong package is not the same thing as a certified live integration.
 
-Last verified: 2026-07-25
+Last verified: 2026-07-27
 
 ## Readiness Axes
 
@@ -44,7 +44,7 @@ The table is sorted by functional outcome confidence, then package quality. Live
 | 9 | `uipcodedappdeploy` | 9.2 | 8.6 | Not operationally certified | TOML-aware atomic versioning, immutable hashed plans, mandatory folder GUID, allowlisted stages, resumable redacted receipts, URL verification, and 33 offline tests. | The opt-in UiPath nonproduction deployment certification has not run; rollback is not implemented. |
 | 10 | `repo-hardening-sprint` | 9.1 | 8.6 | Offline workflow validated | Auto-discovered tests, real YAML parsing, local anchors, path and secret scans, base-aware whitespace checks, scheduled link checks, pinned CI/dependencies, and public governance. | Results remain limited by each target repository's own contracts and tests; GitHub Actions evidence is recorded per PR. |
 | 11 | `pubsec-big-rocks-row-research` | 9.0 | 8.6 | Offline workflow validated | Versioned source manifest, dynamic headers, exact account resolution, stale-lead separation, evidence-bound previews, and verified local-copy tests for formulas, dropdowns, values, and red font. | Generated fixtures do not certify every feature in a production workbook or current connector evidence. |
-| 12 | `salesforce-account-profile` | 9.0 | 8.5 | Not operationally certified | Offline-validated strict JSON contracts, versioned field and certification maps, fail-closed bounded Salesforce reads, confidential deterministic rendering, 73 targeted tests, and four independent final-tree synthetic journeys covering a complete corporate family, ambiguity, an adversarial name, and absent custom fields. The repository gate passed 12 skills and 236 Node tests plus all Python, Beads, secret, link, and diff checks. | No live Salesforce org, real permissions/FLS profile, org-specific custom-field semantics, operator recovery exercise, or retention process was certified. Annualization remains disabled and uncertified. |
+| 12 | `salesforce-account-profile` | 9.0 | 8.5 | Not operationally certified | Conversational v2 defaults with five public commands and v1 compatibility; private 30-minute resume; pinned CLI and redacted org discovery; runtime metadata inspection; plan-bound org/family approval; deterministic presets, filters, recovery, relationship hydration, currency-separated presentation, and 255 targeted tests. The repository gate passed 12 skills and 418 Node tests plus all Python, Beads, syntax, and diff checks. | No approved sandbox/UAT alias or synthetic live-org fixture was supplied, so real permissions/FLS, org-specific custom-field semantics, operator recovery, and cleanup remain uncertified. Production remains separately approval-gated; annualization remains disabled and uncertified. |
 
 ## Fresh Forward Tests
 
@@ -57,7 +57,7 @@ These scores come from independent synthetic runs without expected output files.
 | `account-meeting-availability` | Specificity 5; scheduling utility 4; determinism 5; privacy 5; actionability 4 | The forward test's optional-reason and truncation-test gaps now have deterministic coverage; real Outlook evidence remains uncertified. |
 | `gtm-org-proposal-generator` | Specificity 5; evidence coverage 4; value math 5; decision utility 4; actionability 5 | The output is pilot-authorizable, not yet an investment-grade business case. |
 | `llm-council` | Decision utility 5; independence 5; auditability 5; operational actionability 4 | Anonymous reviewers caught automation bias, statistical power, selection bias, and pilot economics; model IDs were not exposed by the orchestration tool. |
-| `salesforce-account-profile` | Contract safety 5; deterministic resolution 5; data minimization 4; rendering utility 4; operational confidence 3 | Four independent final-tree fake-CLI runs passed separately: a confirmed two-account corporate family with two Opportunities/products/users and no false cycle warning; an ambiguous exact name with no receipt; an inert shell/bidi/ANSI payload with no execution; and ten absent custom fields producing warnings with no invented values. No live-org evidence exists, so this is offline validation only. |
+| `salesforce-account-profile` | Contract safety 5; deterministic resolution 5; data minimization 4; rendering utility 4; operational confidence 3 | Synthetic conversational journeys passed for one-confirmation pipeline, ambiguity, literal-prefix choice, exact family approval, cap narrowing, context-loss resume, TTL/abort cleanup, token and Markdown attacks, metadata drift, multiple currencies, and disabled annualization. A fresh independent adversarial audit found and drove fixes for classification, approval, recovery, lock, and usability defects. No live-org evidence exists, so this remains offline validation only. |
 
 ## Supplied Draft Baseline
 
