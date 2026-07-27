@@ -1,28 +1,84 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
 
 import { CAPS } from "./constants.mjs";
 import { redactDeep, SafetyError, sanitizeText } from "./security.mjs";
+import {
+  loadVerifiedSfRuntime,
+  verifySfRuntimeMetadata,
+} from "./sf-runtime.mjs";
 
 const ALLOWED = new Set(["org display", "sobject describe", "data query"]);
+const SAFE_ENV_KEYS = Object.freeze([
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "TMPDIR",
+  "LANG",
+  "LC_ALL",
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "NO_PROXY",
+  "NODE_EXTRA_CA_CERTS",
+  "SF_CONFIG_DIR",
+  "SFDX_CONFIG_DIR",
+]);
+
+function sfEnvironment() {
+  const env = {};
+  for (const key of SAFE_ENV_KEYS) {
+    if (typeof process.env[key] === "string") env[key] = process.env[key];
+  }
+  env.PATH = [...new Set([
+    dirname(process.execPath),
+    "/usr/local/bin",
+    "/opt/homebrew/bin",
+    "/usr/bin",
+    "/bin",
+  ])].join(delimiter);
+  return env;
+}
 
 export class SfClient {
-  constructor({ sfPath = "sf", targetOrg, runner = spawn } = {}) {
-    this.sfPath = sfPath;
+  constructor({
+    commandSpec = null,
+    sfPath = null,
+    targetOrg,
+    runner = spawn,
+    runtimeVerifier = null,
+  } = {}) {
+    if (commandSpec) {
+      if (!isAbsolute(commandSpec.executable)
+        || !Array.isArray(commandSpec.fixedArgs)
+        || !/^[a-f0-9]{64}$/.test(commandSpec.attestationDigest)) {
+        throw new SafetyError("UNTRUSTED_SF_EXECUTABLE", "Salesforce CLI command specification is invalid");
+      }
+      this.sfPath = commandSpec.executable;
+      this.fixedArgs = [...commandSpec.fixedArgs];
+      this.attestationDigest = commandSpec.attestationDigest;
+    } else if (sfPath && runner !== spawn) {
+      this.sfPath = sfPath;
+      this.fixedArgs = [];
+      this.attestationDigest = null;
+    } else {
+      throw new SafetyError("SF_RUNTIME_NOT_ENROLLED", "Production Salesforce access requires a verified runtime command specification");
+    }
     this.targetOrg = targetOrg;
     this.runner = runner;
+    this.runtimeVerifier = runtimeVerifier;
     this.queryCount = 0;
   }
 
   async invoke(command, args) {
     if (!ALLOWED.has(command)) throw new SafetyError("SF_COMMAND_NOT_ALLOWED", "Salesforce CLI command is not allowlisted");
+    if (this.runtimeVerifier) await this.runtimeVerifier();
     return await new Promise((resolve, reject) => {
-      const child = this.runner(this.sfPath, [...command.split(" "), ...args], {
+      const child = this.runner(this.sfPath, [...this.fixedArgs, ...command.split(" "), ...args], {
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
-        env: { PATH: process.env.PATH ?? "" },
+        env: sfEnvironment(),
       });
       const stdout = [];
       const stderr = [];
@@ -108,6 +164,22 @@ export class SfClient {
       await rm(workspace, { recursive: true, force: true });
     }
   }
+}
+
+export async function createProductionSfClient({
+  targetOrg,
+  runner = spawn,
+  runtimeManifestPath,
+} = {}) {
+  const { manifest, command } = await loadVerifiedSfRuntime(runtimeManifestPath);
+  return new SfClient({
+    commandSpec: command,
+    targetOrg,
+    runner,
+    runtimeVerifier: async () => {
+      await verifySfRuntimeMetadata(manifest);
+    },
+  });
 }
 
 export function batchIds(ids, size = CAPS.idsPerBatch) {

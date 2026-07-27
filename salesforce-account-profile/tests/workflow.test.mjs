@@ -173,6 +173,17 @@ test("missing custom fields warn and do not invent values", async () => {
   assert(result.warnings.includes("OPTIONAL_FIELD_UNAVAILABLE:Account.PreSales__c"));
 });
 
+test("described Account team references must contain Salesforce User IDs", async () => {
+  const client = new MockClient({
+    describes: { ...DESCRIBE, Account: [...DESCRIBE.Account, "CSM__c"] },
+    query: () => [{ ...account, CSM__c: "not-a-user-id" }],
+  });
+  await assert.rejects(
+    () => profile(profileRequest(client), { client }),
+    { code: "RELATIONSHIP_INCONSISTENCY" },
+  );
+});
+
 test("products-only Account query reads core fields and no overview optionals", async () => {
   const accountQueries = [];
   const opportunityQueries = [];
@@ -297,15 +308,44 @@ test("family confirmation mismatch fails when supplied set changes", async () =>
   }), { client }), { code: "FAMILY_CONFIRMATION_MISMATCH" });
 });
 
-test("ParentId traversal detects cycles and warns explicitly", async () => {
+test("family approval is invalidated when requested sections or Opportunity scope change", async () => {
+  const client = new MockClient({
+    query: (soql) => soql.includes("Ultimate_Parent_name__c =") ? [account, secondAccount] : [account],
+  });
+  const staged = await profile(profileRequest(client, {
+    sections: ["family", "opportunities"],
+    scope: "corporate_family",
+  }), { client });
+  const changedScope = await profile(profileRequest(client, {
+    sections: ["family", "opportunities"],
+    scope: "corporate_family",
+    opportunity_scope: "all",
+    confirmed_family_digest: staged.family_confirmation.family_digest,
+  }), { client });
+  assert.equal(changedScope.status, "family_confirmation_required");
+  assert.notEqual(changedScope.family_confirmation.family_digest, staged.family_confirmation.family_digest);
+  const changedSections = await profile(profileRequest(client, {
+    sections: ["family", "opportunities", "products"],
+    scope: "corporate_family",
+    confirmed_family_digest: staged.family_confirmation.family_digest,
+  }), { client });
+  assert.equal(changedSections.status, "family_confirmation_required");
+  assert.notEqual(changedSections.family_confirmation.family_digest, staged.family_confirmation.family_digest);
+});
+
+test("ParentId traversal cycles fail closed before returning a family set", async () => {
   const cyclic = { ...account, ParentId: account.Id };
   const client = new MockClient({
     describes: { ...DESCRIBE, Account: ["Id", "Name", "ParentId", "OwnerId"] },
     query: (soql) => soql.includes("ParentId IN") ? [] : [cyclic],
   });
-  const result = await profile(profileRequest(client, { sections: ["family"] }), { client });
-  assert(result.warnings.includes("FAMILY_CYCLE_DETECTED"));
-  assert(result.warnings.includes("ULTIMATE_PARENT_FIELD_UNAVAILABLE_USING_PARENT_TRAVERSAL"));
+  await assert.rejects(
+    () => profile(profileRequest(client, { sections: ["family"] }), { client }),
+    {
+      code: "FAMILY_DISCOVERY_INCOMPLETE",
+      details: { next_action: "use_selected_account" },
+    },
+  );
 });
 
 test("ParentId traversal expands a deep selected path without inventing a cycle", async () => {
@@ -356,7 +396,7 @@ test("custom family discovery rejects duplicate IDs and mismatched family keys",
   );
 });
 
-test("ParentId traversal reports the deterministic depth boundary", async () => {
+test("ParentId traversal depth boundary fails closed before returning a family set", async () => {
   const ids = Array.from({ length: 12 }, (_, index) => `001${String(index + 1).padStart(12, "0")}AAA`);
   ids[0] = IDS.account1;
   const nodes = new Map(ids.map((id, index) => [id, {
@@ -374,8 +414,13 @@ test("ParentId traversal reports the deterministic depth boundary", async () => 
       return id ? [nodes.get(id)] : [];
     },
   });
-  const result = await profile(profileRequest(client, { sections: ["family"] }), { client });
-  assert(result.warnings.includes("FAMILY_DEPTH_LIMIT_REACHED"));
+  await assert.rejects(
+    () => profile(profileRequest(client, { sections: ["family"] }), { client }),
+    {
+      code: "FAMILY_DISCOVERY_INCOMPLETE",
+      details: { next_action: "use_selected_account" },
+    },
+  );
 });
 
 test("manager traversal detects cycles", async () => {
@@ -391,6 +436,7 @@ test("manager traversal detects cycles", async () => {
   });
   const result = await profile(profileRequest(client, { sections: ["overview", "team"] }), { client });
   assert(result.warnings.includes("MANAGER_CYCLE_DETECTED"));
+  assert(result.warnings.includes("MANAGER_HIERARCHY_INCOMPLETE"));
   assert.equal(result.team.length, 2);
 });
 
@@ -405,11 +451,18 @@ test("multiple team seeds with a shared hierarchy do not invent a manager cycle"
       return [];
     },
   });
-  const first = await profile(profileRequest(client, {
+  const staged = await profile(profileRequest(client, {
     sections: ["family", "team"],
     scope: "corporate_family",
   }), { client });
-  assert(!first.warnings.includes("MANAGER_CYCLE_DETECTED"));
+  assert.equal(staged.status, "family_confirmation_required");
+  const complete = await profile(profileRequest(client, {
+    sections: ["family", "team"],
+    scope: "corporate_family",
+    confirmed_family_digest: staged.family_confirmation.family_digest,
+  }), { client });
+  assert(!complete.warnings.includes("MANAGER_CYCLE_DETECTED"));
+  assert.equal(complete.team.length, 2);
 });
 
 test("sf row type violations fail atomically before a complete profile can escape", async () => {
@@ -486,6 +539,7 @@ test("manager traversal reports the deterministic depth boundary", async () => {
   });
   const result = await profile(profileRequest(client, { sections: ["overview", "team"] }), { client });
   assert(result.warnings.includes("MANAGER_DEPTH_LIMIT_REACHED"));
+  assert(result.warnings.includes("MANAGER_HIERARCHY_INCOMPLETE"));
   assert.equal(result.team.length, 10);
 });
 
@@ -646,12 +700,18 @@ test("User cap fails without a partial hierarchy", async () => {
       return [account];
     },
   });
-  await assert.rejects(() => profile(profileRequest(client, {
+  const staged = await profile(profileRequest(client, {
     sections: ["family", "team"],
     scope: "corporate_family",
-  }), { client }), {
-    code: "USER_CAP_EXCEEDED",
-  });
+  }), { client });
+  await assert.rejects(
+    () => profile(profileRequest(client, {
+      sections: ["family", "team"],
+      scope: "corporate_family",
+      confirmed_family_digest: staged.family_confirmation.family_digest,
+    }), { client }),
+    { code: "USER_CAP_EXCEEDED" },
+  );
 });
 
 test("multicurrency profile preserves currencies and does not aggregate", async () => {

@@ -38,7 +38,7 @@ test("Salesforce CLI uses argv arrays with shell false", async () => {
   assert.equal(captured.options.shell, false);
 });
 
-test("production workflow resolves only the sf executable", async () => {
+test("workflow test injection is explicit and never read from process environment", async () => {
   let captured;
   const runner = (file, args, options) => {
     captured = { file, args, options };
@@ -53,14 +53,18 @@ test("production workflow resolves only the sf executable", async () => {
   await preflight({
     schema_version: CONTRACTS.preflightRequest,
     target_org: "explicit-alias",
-  }, { runner });
-  assert.equal(captured.file, "sf");
+  }, { runner, sfPath: "/synthetic/test-only/sf" });
+  assert.equal(captured.file, "/synthetic/test-only/sf");
   assert.equal(captured.options.shell, false);
+});
+
+test("production Salesforce client cannot be created without an enrolled command specification", () => {
+  assert.throws(() => new SfClient({ targetOrg: "synthetic" }), { code: "SF_RUNTIME_NOT_ENROLLED" });
 });
 
 test("query rejects incomplete and truncated results", async () => {
   const runner = () => childWithJson({ result: { totalSize: 2, done: false, records: [{ Id: "x" }] } });
-  const client = new SfClient({ targetOrg: "synthetic", runner });
+  const client = new SfClient({ sfPath: "synthetic-sf", targetOrg: "synthetic", runner });
   await assert.rejects(() => client.query("SELECT Id FROM Account"), { code: "TRUNCATED_QUERY_RESULT" });
 });
 
@@ -71,14 +75,14 @@ test("query completeness requires explicit boolean done and integer totalSize", 
     { totalSize: "0", done: true, records: [] },
     { totalSize: -1, done: true, records: [] },
   ]) {
-    const client = new SfClient({ targetOrg: "synthetic", runner: () => childWithJson({ result }) });
+    const client = new SfClient({ sfPath: "synthetic-sf", targetOrg: "synthetic", runner: () => childWithJson({ result }) });
     await assert.rejects(() => client.query("SELECT Id FROM Account"), { code: "TRUNCATED_QUERY_RESULT" });
   }
 });
 
 test("CLI failures expose no raw stdout or stderr details", async () => {
   const runner = () => childWithJson({ message: "INVALID_SESSION unfamiliar-secret-shape" }, 1);
-  const client = new SfClient({ targetOrg: "synthetic", runner });
+  const client = new SfClient({ sfPath: "synthetic-sf", targetOrg: "synthetic", runner });
   await assert.rejects(async () => {
     try {
       await client.query("SELECT Id FROM Account");
@@ -92,13 +96,13 @@ test("CLI failures expose no raw stdout or stderr details", async () => {
 
 test("query rejects unauthorized responses without returning raw output", async () => {
   const runner = () => childWithJson({ message: "INVALID_SESSION Bearer secret.value" }, 1);
-  const client = new SfClient({ targetOrg: "synthetic", runner });
+  const client = new SfClient({ sfPath: "synthetic-sf", targetOrg: "synthetic", runner });
   await assert.rejects(() => client.query("SELECT Id FROM Account"), { code: "SCHEMA_OR_AUTHORIZATION_FAILURE" });
 });
 
 test("query count cap stops the thirty-first data query", async () => {
   const runner = () => childWithJson({ result: { totalSize: 0, done: true, records: [] } });
-  const client = new SfClient({ targetOrg: "synthetic", runner });
+  const client = new SfClient({ sfPath: "synthetic-sf", targetOrg: "synthetic", runner });
   for (let index = 0; index < 30; index += 1) await client.query("SELECT Id FROM Account");
   await assert.rejects(() => client.query("SELECT Id FROM Account"), { code: "QUERY_CAP_EXCEEDED" });
 });

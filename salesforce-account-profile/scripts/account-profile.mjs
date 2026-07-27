@@ -22,11 +22,17 @@ export function parseArguments(argv) {
   return { command, inputPath, outputPath };
 }
 
-export async function main({ argv = process.argv.slice(2), stdin = process.stdin, stdout = process.stdout, stderr = process.stderr } = {}) {
+export async function main({
+  argv = process.argv.slice(2),
+  stdin = process.stdin,
+  stdout = process.stdout,
+  stderr = process.stderr,
+  dependencies = {},
+} = {}) {
   try {
     const { command, inputPath, outputPath } = parseArguments(argv);
     const input = await readJsonInput(inputPath, stdin);
-    const result = await execute(command, input);
+    const result = await execute(command, input, dependencies);
     await writeJsonOutput(outputPath, result, stdout);
     return 0;
   } catch (error) {

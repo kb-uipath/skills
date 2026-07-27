@@ -188,23 +188,29 @@ function validateRenderedAccount(account, label) {
     || typeof account.Name !== "string"
     || account.Name.length < 1
     || (account.ParentId !== null && !ACCOUNT_ID.test(account.ParentId))
-    || ["Ultimate_Parent_name__c", "Classification__c", "Region__c", "Geo__c", "Contract_End_Date__c", "Support_Type__c", "Support_Status__c", "CSM__c", "Support_Technical_Advisor__c", "PreSales__c"]
+    || ["Ultimate_Parent_name__c", "Classification__c", "Region__c", "Geo__c", "Contract_End_Date__c", "Support_Type__c", "Support_Status__c"]
       .some((key) => key in account && account[key] !== null && typeof account[key] !== "string")) {
     throw new SafetyError("INVALID_PROFILE_RESULT", `${label} relationship fields are invalid`);
   }
+  for (const key of ["CSM__c", "Support_Technical_Advisor__c", "PreSales__c"]) {
+    if (key in account && account[key] !== null && !USER_ID.test(account[key])) {
+      throw new SafetyError("INVALID_PROFILE_RESULT", `${label}.${key} must be a Salesforce User ID`);
+    }
+  }
 }
 
-export function orgDigest(targetOrg, identity) {
+export function orgDigest(targetOrg, identity, runtimeAttestationDigest = null) {
   return digest({
     target_org: targetOrg,
     org_id: identity.org_id,
     username: identity.username,
     instance_url: identity.instance_url,
+    runtime_attestation_digest: runtimeAttestationDigest,
   });
 }
 
-export function validateConfirmedOrg(targetOrg, identity, confirmedDigest) {
-  const current = orgDigest(targetOrg, identity);
+export function validateConfirmedOrg(targetOrg, identity, confirmedDigest, runtimeAttestationDigest = null) {
+  const current = orgDigest(targetOrg, identity, runtimeAttestationDigest);
   if (current !== confirmedDigest) throw new SafetyError("ORG_IDENTITY_MISMATCH", "Current Salesforce org identity does not match the confirmed receipt");
   return current;
 }
