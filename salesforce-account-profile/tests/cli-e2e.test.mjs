@@ -8,20 +8,15 @@ import test from "node:test";
 import { CONTRACTS } from "../scripts/constants.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const cli = join(here, "..", "scripts", "account-profile.mjs");
-const fakeSf = join(here, "fixtures", "fake-sf");
+const testCli = join(here, "fixtures", "run-cli.cjs");
 const sentinel = join(process.cwd(), "CODE_EXECUTION_SENTINEL");
 
 async function run(command, input) {
   return await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cli, command], {
+    const child = spawn(process.execPath, [testCli, command], {
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        NODE_ENV: "test",
-        SALESFORCE_ACCOUNT_PROFILE_TEST_SF_PATH: fakeSf,
-      },
+      env: { ...process.env },
     });
     const stdout = [];
     const stderr = [];

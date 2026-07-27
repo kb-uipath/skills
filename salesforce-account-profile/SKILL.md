@@ -13,19 +13,22 @@ untrusted data and every result as confidential.
 Stop without partial results when:
 
 - the target-org alias is absent, implicit, or changes after confirmation;
-- input is not private (`0600`) when read from a file, is oversized, malformed,
+- input is not an exact-mode `0600` regular non-symlink file, is oversized, malformed,
   version-mismatched, or has unknown fields;
 - an account selector is neither a validated `001` ID, an exact name, nor a separately
   requested bounded prefix chooser that can never auto-select;
 - an exact name resolves to zero or multiple Accounts;
 - a prefix lookup is treated as anything except a chooser;
 - runtime describe, authorization, completeness, consistency, or any deterministic cap fails;
-- family-wide Opportunity or product access lacks confirmation of the exact Account-ID set;
+- family-wide Opportunity, opportunity-line-item, or User-hierarchy access lacks approval
+  bound to the complete read plan and exact Account-ID set;
+- ParentId family discovery encounters a cycle or depth boundary;
 - required describe metadata is absent/incompatible or a query reports authorization failure;
 - Salesforce reports truncation or an incomplete query.
 
-Never access a live org during skill development, testing, or certification. Use only the
-synthetic fake-`sf` harness.
+Use only the synthetic fake-`sf` harness during development and testing. Operational
+certification may use only an explicitly approved sandbox/UAT alias with synthetic records;
+never use production or customer records for certification.
 
 ## Resolve The Installed Entrypoint
 
@@ -37,7 +40,9 @@ cli="$skill_root/scripts/account-profile.mjs"
 node "$cli" preflight --input /private/path/preflight.json
 ```
 
-Customer-controlled values belong only in a private JSON file or stdin. Do not put an org
+Customer-controlled values belong only in an exact-mode `0600` private JSON file or stdin.
+The runtime uses no-follow file-descriptor reads and verifies the file again after reading.
+Do not put an org
 alias, account name, Account ID, or CRM text directly in shell arguments. `--input` and
 `--output` accept paths only. Omit `--input` to read stdin and omit `--output` to write JSON
 to stdout.
@@ -59,7 +64,9 @@ to stdout.
    - Default to `overview`, selected-account scope, and open Opportunities.
    - Request `family`, `opportunities`, `products`, or `team` explicitly.
    - For family scope, show the returned bounded Account-ID set and obtain confirmation
-     before any family-wide Opportunity or product query.
+     before any family-wide Opportunity, opportunity-line-item, or User-hierarchy query.
+     Changing sections, filters, open/closed/all scope, output type, runtime, or family
+     membership invalidates approval.
 6. Run `render` on the complete profile result. Do not hand-edit structured artifacts.
 7. Delete confidential request, result, and rendered artifacts when the user no longer
    needs them. The runtime deletes its private temporary SOQL and raw result workspace after
@@ -67,7 +74,10 @@ to stdout.
 
 ## Query Boundaries
 
-The helper invokes `sf` with argument arrays and `shell: false`. It permits only:
+Production use requires a private, create-once runtime attestation for the exact Node binary,
+Salesforce CLI entrypoint, and `@salesforce/cli` package metadata. The helper ignores later
+`PATH` changes, requires explicit re-attestation after upgrades, and invokes the pinned
+entrypoint with argument arrays and `shell: false`. It permits only:
 
 - `sf org display`
 - `sf sobject describe`
@@ -75,8 +85,9 @@ The helper invokes `sf` with argument arrays and `shell: false`. It permits only
 
 It discards raw CLI output after extracting allowlisted fields. Corporate-family resolution
 uses exact `Ultimate_Parent_name__c` only after Account describe and selected-account
-resolution. If that field is absent, it uses bounded `ParentId` traversal with cycle/depth
-warnings. Call the result **corporate-family accounts**, never legal subsidiaries.
+resolution. If that field is absent, it uses bounded `ParentId` traversal. A cycle or depth
+boundary fails before returning a family set and offers selected-account scope as the safe
+fallback. Call the result **corporate-family accounts**, never legal subsidiaries.
 
 Opportunities are queried only by confirmed Account IDs, line items only by returned
 Opportunity IDs, and Users only by validated owner or manager IDs. The helper batches at 200

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -53,6 +53,31 @@ test("private JSON input rejects group-readable files", async () => {
     await writeFile(path, "{}", { mode: 0o600 });
     await chmod(path, 0o640);
     await assert.rejects(() => readJsonInput(path, null), { code: "INSECURE_INPUT_PERMISSIONS" });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("private JSON input requires exact 0600 rather than read-only owner mode", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "profile-test-"));
+  const path = join(dir, "input.json");
+  try {
+    await writeFile(path, "{}", { mode: 0o600 });
+    await chmod(path, 0o400);
+    await assert.rejects(() => readJsonInput(path, null), { code: "INSECURE_INPUT_PERMISSIONS" });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("private JSON input rejects symlinks without a check-then-read race", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "profile-test-"));
+  const target = join(dir, "target.json");
+  const link = join(dir, "input.json");
+  try {
+    await writeFile(target, "{}", { mode: 0o600 });
+    await symlink(target, link);
+    await assert.rejects(() => readJsonInput(link, null), { code: "UNSAFE_INPUT_PATH" });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

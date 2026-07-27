@@ -3,9 +3,11 @@ import {
   CAPS,
   CLASSIFICATION,
   CONTRACTS,
+  FIELD_MAP_VERSION,
   OPPORTUNITY_ID,
   LINE_ITEM_ID,
   PRICEBOOK_ENTRY_ID,
+  PROFILE_SECTIONS,
   PRODUCT_ID,
   USER_ID,
   WARNING_ANNUALIZATION,
@@ -20,7 +22,7 @@ import {
   validateResolveRequest,
 } from "./contracts.mjs";
 import { buildRenderResult } from "./render.mjs";
-import { batchIds, SfClient } from "./sf-client.mjs";
+import { batchIds, createProductionSfClient, SfClient } from "./sf-client.mjs";
 import { digest, escapeSoqlLikePrefix, escapeSoqlLiteral, SafetyError, sanitizeText } from "./security.mjs";
 
 export const FIELD_POLICY = Object.freeze({
@@ -49,6 +51,11 @@ const LINE_ITEM_REQUIRED = FIELD_POLICY.OpportunityLineItem.required;
 const LINE_ITEM_OPTIONAL = FIELD_POLICY.OpportunityLineItem.optional;
 const PRICEBOOK_ENTRY_REQUIRED = FIELD_POLICY.PricebookEntry.required;
 const USER_REQUIRED = FIELD_POLICY.User.required;
+const ACCOUNT_USER_REFERENCE_FIELDS = Object.freeze([
+  "CSM__c",
+  "Support_Technical_Advisor__c",
+  "PreSales__c",
+]);
 export const FIELD_EXPECTATIONS = Object.freeze({
   Account: {
     Id: { types: ["id"] }, Name: { types: ["string"] },
@@ -176,6 +183,11 @@ function validateAccountRow(account, { expectedId, expectedParentIds } = {}) {
     throw new SafetyError("RELATIONSHIP_INCONSISTENCY", "Child Account ParentId does not match the queried parent batch");
   }
   if (!USER_ID.test(account.OwnerId)) throw new SafetyError("RELATIONSHIP_INCONSISTENCY", "Account result contains an invalid OwnerId");
+  for (const field of ACCOUNT_USER_REFERENCE_FIELDS) {
+    if (field in account && account[field] !== null && !USER_ID.test(account[field])) {
+      throw new SafetyError("RELATIONSHIP_INCONSISTENCY", `Account result contains an invalid ${field} User ID`);
+    }
+  }
   return account;
 }
 
@@ -191,23 +203,36 @@ function validateAccountReceipt(receipt, currentOrgDigest) {
   }
 }
 
-function createClient(targetOrg, dependencies) {
+async function createClient(targetOrg, dependencies) {
   if (dependencies.client) return dependencies.client;
-  const testSfPath = process.env.NODE_ENV === "test"
-    ? process.env.SALESFORCE_ACCOUNT_PROFILE_TEST_SF_PATH
-    : undefined;
-  return new SfClient({
-    sfPath: testSfPath ?? "sf",
+  if (dependencies.sfPath) {
+    return new SfClient({
+      commandSpec: {
+        executable: dependencies.sfPath,
+        fixedArgs: [],
+        attestationDigest: digest({ test_runtime_path: dependencies.sfPath }),
+      },
+      targetOrg,
+      runner: dependencies.runner,
+    });
+  }
+  return await createProductionSfClient({
     targetOrg,
     runner: dependencies.runner,
+    runtimeManifestPath: dependencies.runtimeManifestPath,
   });
+}
+
+function runtimeDigestFor(client) {
+  return client.attestationDigest ?? null;
 }
 
 export async function preflight(input, dependencies = {}) {
   validatePreflightRequest(input);
-  const client = createClient(input.target_org, dependencies);
+  const client = await createClient(input.target_org, dependencies);
   const identity = await client.orgDisplay();
-  const confirmedOrgDigest = orgDigest(input.target_org, identity);
+  const runtimeDigest = runtimeDigestFor(client);
+  const confirmedOrgDigest = orgDigest(input.target_org, identity, runtimeDigest);
   return {
     schema_version: CONTRACTS.preflightResult,
     classification: CLASSIFICATION,
@@ -218,15 +243,21 @@ export async function preflight(input, dependencies = {}) {
       instance_url: identity.instance_url,
       connected_status: identity.connected_status,
     },
+    runtime_attestation_digest: runtimeDigest,
     confirmed_org_digest: confirmedOrgDigest,
   };
 }
 
 export async function resolve(input, dependencies = {}) {
   validateResolveRequest(input);
-  const client = createClient(input.target_org, dependencies);
+  const client = await createClient(input.target_org, dependencies);
   const identity = await client.orgDisplay();
-  const currentOrgDigest = validateConfirmedOrg(input.target_org, identity, input.confirmed_org_digest);
+  const currentOrgDigest = validateConfirmedOrg(
+    input.target_org,
+    identity,
+    input.confirmed_org_digest,
+    runtimeDigestFor(client),
+  );
   const warnings = [];
   const accountDescribe = await client.describe("Account");
   const fields = requireFields(accountDescribe, ACCOUNT_REQUIRED, [], "Account", warnings);
@@ -328,8 +359,11 @@ async function discoverFamily(client, selected, accountFields, hasUltimate, warn
   for (let depth = 0; root.ParentId && depth < CAPS.familyDepth; depth += 1) {
     if (!ACCOUNT_ID.test(root.ParentId)) throw new SafetyError("INVALID_RELATIONSHIP_ID", "ParentId is invalid");
     if (visitedAncestors.has(root.ParentId)) {
-      warnings.push("FAMILY_CYCLE_DETECTED");
-      break;
+      throw new SafetyError(
+        "FAMILY_DISCOVERY_INCOMPLETE",
+        "Corporate-family discovery stopped because ParentId traversal contains a cycle",
+        { next_action: "use_selected_account" },
+      );
     }
     visitedAncestors.add(root.ParentId);
     const records = await client.query(
@@ -338,7 +372,13 @@ async function discoverFamily(client, selected, accountFields, hasUltimate, warn
     if (records.length !== 1) throw new SafetyError("FAMILY_INCONSISTENCY", "Parent traversal could not resolve exactly one Account");
     root = validateAccountRow(allowlist(records[0], accountFields), { expectedId: root.ParentId });
     byId.set(root.Id, root);
-    if (depth === CAPS.familyDepth - 1 && root.ParentId) warnings.push("FAMILY_DEPTH_LIMIT_REACHED");
+    if (depth === CAPS.familyDepth - 1 && root.ParentId) {
+      throw new SafetyError(
+        "FAMILY_DISCOVERY_INCOMPLETE",
+        "Corporate-family discovery exceeded the ParentId depth limit",
+        { next_action: "use_selected_account" },
+      );
+    }
   }
 
   let frontier = [root.Id];
@@ -362,8 +402,11 @@ async function discoverFamily(client, selected, accountFields, hasUltimate, warn
             if (!expanded.has(account.Id) && !next.includes(account.Id)) next.push(account.Id);
             continue;
           }
-          warnings.push("FAMILY_CYCLE_DETECTED");
-          continue;
+          throw new SafetyError(
+            "FAMILY_DISCOVERY_INCOMPLETE",
+            "Corporate-family discovery stopped because ParentId traversal contains a cycle",
+            { next_action: "use_selected_account" },
+          );
         }
         byId.set(account.Id, account);
         if (!expanded.has(account.Id) && !next.includes(account.Id)) next.push(account.Id);
@@ -371,7 +414,13 @@ async function discoverFamily(client, selected, accountFields, hasUltimate, warn
       }
     }
     frontier = next;
-    if (depth === CAPS.familyDepth - 1 && frontier.length) warnings.push("FAMILY_DEPTH_LIMIT_REACHED");
+    if (depth === CAPS.familyDepth - 1 && frontier.length) {
+      throw new SafetyError(
+        "FAMILY_DISCOVERY_INCOMPLETE",
+        "Corporate-family discovery exceeded the ParentId depth limit",
+        { next_action: "use_selected_account" },
+      );
+    }
   }
   return [...byId.values()].sort((a, b) => a.Id.localeCompare(b.Id));
 }
@@ -480,7 +529,9 @@ async function queryTeam(client, seedIds, fields, warnings) {
       }
     }
     frontier = [...new Set(next)];
-    if (depth === CAPS.managerDepth - 1 && frontier.length) warnings.push("MANAGER_DEPTH_LIMIT_REACHED");
+    if (depth === CAPS.managerDepth - 1 && frontier.length) {
+      warnings.push("MANAGER_DEPTH_LIMIT_REACHED", "MANAGER_HIERARCHY_INCOMPLETE");
+    }
   }
   const states = new Map();
   const visit = (id) => {
@@ -492,15 +543,41 @@ async function queryTeam(client, seedIds, fields, warnings) {
     states.set(id, "visited");
     return false;
   };
-  if ([...users.keys()].some(visit)) warnings.push("MANAGER_CYCLE_DETECTED");
+  if ([...users.keys()].some(visit)) {
+    warnings.push("MANAGER_CYCLE_DETECTED", "MANAGER_HIERARCHY_INCOMPLETE");
+  }
   return [...users.values()];
+}
+
+function familyPlanDigest(request, currentOrgDigest, selectedAccountId, accountIds) {
+  return digest({
+    schema_version: "salesforce-account-profile-family-read-plan/v2",
+    org_digest: currentOrgDigest,
+    selected_account_id: selectedAccountId,
+    account_ids: [...accountIds],
+    requested_sections: PROFILE_SECTIONS.filter((section) => request.sections.includes(section)),
+    scope: request.scope,
+    opportunity_scope: request.opportunity_scope,
+    filters: {
+      close_date_from: null,
+      close_date_to: null,
+      stages: [],
+    },
+    field_map_version: FIELD_MAP_VERSION,
+    output_type: "profile_result",
+  });
 }
 
 export async function profile(input, dependencies = {}) {
   const request = validateProfileRequest(input);
-  const client = createClient(request.target_org, dependencies);
+  const client = await createClient(request.target_org, dependencies);
   const identity = await client.orgDisplay();
-  const currentOrgDigest = validateConfirmedOrg(request.target_org, identity, request.confirmed_org_digest);
+  const currentOrgDigest = validateConfirmedOrg(
+    request.target_org,
+    identity,
+    request.confirmed_org_digest,
+    runtimeDigestFor(client),
+  );
   validateAccountReceipt(request.account_receipt, currentOrgDigest);
   const warnings = [];
 
@@ -545,7 +622,7 @@ export async function profile(input, dependencies = {}) {
     );
   }
   const accountIds = accounts.map((account) => account.Id).sort();
-  const familyDigest = digest({ org_digest: currentOrgDigest, selected_account_id: selected.Id, account_ids: accountIds });
+  const familyDigest = familyPlanDigest(request, currentOrgDigest, selected.Id, accountIds);
   const selectedOutput = request.sections.includes("overview")
     ? selected
     : { Id: selected.Id, Name: selected.Name, ParentId: selected.ParentId, OwnerId: selected.OwnerId };
@@ -557,7 +634,7 @@ export async function profile(input, dependencies = {}) {
   }));
 
   const needsFamilyConfirmation = request.scope === "corporate_family"
-    && (request.sections.includes("opportunities") || request.sections.includes("products"))
+    && ["opportunities", "products", "team"].some((section) => request.sections.includes(section))
     && request.confirmed_family_digest !== familyDigest;
   if (needsFamilyConfirmation) {
     return {

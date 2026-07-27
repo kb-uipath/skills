@@ -71,6 +71,7 @@ export function orgDigestFor(client, alias = "synthetic") {
     org_id: client.identity.org_id,
     username: client.identity.username,
     instance_url: client.identity.instance_url,
+    runtime_attestation_digest: client.attestationDigest ?? null,
   });
 }
 

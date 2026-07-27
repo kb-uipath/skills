@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, readFile, writeFile } from "node:fs/promises";
+import { open, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 
 import { CAPS } from "./constants.mjs";
@@ -64,18 +64,151 @@ export function assertExactKeys(object, allowed, required, label) {
   }
 }
 
+export async function readStableRegularFile(path, {
+  maximumBytes,
+  requiredMode = null,
+  forbidGroupOtherWrite = false,
+} = {}) {
+  if (!Number.isInteger(maximumBytes) || maximumBytes < 1) {
+    throw new SafetyError("INTERNAL_ERROR", "A positive file-size cap is required");
+  }
+  const noFollow = fsConstants.O_NOFOLLOW;
+  if (!Number.isInteger(noFollow)) {
+    throw new SafetyError("UNSAFE_INPUT_PATH", "This runtime cannot enforce no-follow file access");
+  }
+  let handle;
+  try {
+    handle = await open(
+      path,
+      fsConstants.O_RDONLY | noFollow | (fsConstants.O_CLOEXEC ?? 0) | (fsConstants.O_NONBLOCK ?? 0),
+    );
+  } catch {
+    throw new SafetyError("UNSAFE_INPUT_PATH", "Path must be an existing regular non-symlink file");
+  }
+  try {
+    const before = await handle.stat();
+    if (!before.isFile()) {
+      throw new SafetyError("UNSAFE_INPUT_PATH", "Path must be a regular non-symlink file");
+    }
+    if (requiredMode !== null && (before.mode & 0o777) !== requiredMode) {
+      throw new SafetyError("INSECURE_INPUT_PERMISSIONS", `File must have exact mode ${requiredMode.toString(8).padStart(4, "0")}`);
+    }
+    if (forbidGroupOtherWrite && (before.mode & 0o022) !== 0) {
+      throw new SafetyError("INSECURE_INPUT_PERMISSIONS", "File must not be group- or world-writable");
+    }
+    if (before.size > maximumBytes) throw new SafetyError("INPUT_TOO_LARGE", "File exceeds the size cap");
+    const bytes = await handle.readFile();
+    const after = await handle.stat();
+    if (bytes.length > maximumBytes) throw new SafetyError("INPUT_TOO_LARGE", "File exceeds the size cap");
+    if (before.dev !== after.dev
+      || before.ino !== after.ino
+      || before.size !== after.size
+      || before.mtimeMs !== after.mtimeMs
+      || before.ctimeMs !== after.ctimeMs
+      || bytes.length !== after.size) {
+      throw new SafetyError("INPUT_CHANGED", "File changed while it was being read");
+    }
+    return { bytes, metadata: after };
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function hashStableRegularFile(path, {
+  maximumBytes,
+  forbidGroupOtherWrite = false,
+} = {}) {
+  if (!Number.isInteger(maximumBytes) || maximumBytes < 1) {
+    throw new SafetyError("INTERNAL_ERROR", "A positive file-size cap is required");
+  }
+  const noFollow = fsConstants.O_NOFOLLOW;
+  if (!Number.isInteger(noFollow)) {
+    throw new SafetyError("UNSAFE_INPUT_PATH", "This runtime cannot enforce no-follow file access");
+  }
+  let handle;
+  try {
+    handle = await open(
+      path,
+      fsConstants.O_RDONLY | noFollow | (fsConstants.O_CLOEXEC ?? 0) | (fsConstants.O_NONBLOCK ?? 0),
+    );
+  } catch {
+    throw new SafetyError("UNSAFE_INPUT_PATH", "Path must be an existing regular non-symlink file");
+  }
+  try {
+    const before = await handle.stat();
+    if (!before.isFile()) throw new SafetyError("UNSAFE_INPUT_PATH", "Path must be a regular non-symlink file");
+    if ((before.mode & 0o111) === 0) throw new SafetyError("UNSAFE_INPUT_PATH", "Executable file is not executable");
+    if (forbidGroupOtherWrite && (before.mode & 0o022) !== 0) {
+      throw new SafetyError("INSECURE_INPUT_PERMISSIONS", "Executable must not be group- or world-writable");
+    }
+    if (before.size > maximumBytes) throw new SafetyError("INPUT_TOO_LARGE", "File exceeds the size cap");
+    const hash = createHash("sha256");
+    const chunk = Buffer.allocUnsafe(64 * 1024);
+    const prefix = Buffer.alloc(Math.min(256, before.size));
+    let position = 0;
+    while (position < before.size) {
+      const length = Math.min(chunk.length, before.size - position);
+      const { bytesRead } = await handle.read(chunk, 0, length, position);
+      if (bytesRead === 0) break;
+      if (position < prefix.length) {
+        chunk.copy(prefix, position, 0, Math.min(bytesRead, prefix.length - position));
+      }
+      hash.update(chunk.subarray(0, bytesRead));
+      position += bytesRead;
+      if (position > maximumBytes) throw new SafetyError("INPUT_TOO_LARGE", "File exceeds the size cap");
+    }
+    const after = await handle.stat();
+    if (before.dev !== after.dev
+      || before.ino !== after.ino
+      || before.size !== after.size
+      || before.mtimeMs !== after.mtimeMs
+      || before.ctimeMs !== after.ctimeMs
+      || position !== after.size) {
+      throw new SafetyError("INPUT_CHANGED", "File changed while it was being hashed");
+    }
+    return {
+      sha256: hash.digest("hex"),
+      prefix,
+      metadata: after,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function statRegularFileNoFollow(path, { forbidGroupOtherWrite = false } = {}) {
+  const noFollow = fsConstants.O_NOFOLLOW;
+  if (!Number.isInteger(noFollow)) {
+    throw new SafetyError("UNSAFE_INPUT_PATH", "This runtime cannot enforce no-follow file access");
+  }
+  let handle;
+  try {
+    handle = await open(
+      path,
+      fsConstants.O_RDONLY | noFollow | (fsConstants.O_CLOEXEC ?? 0) | (fsConstants.O_NONBLOCK ?? 0),
+    );
+  } catch {
+    throw new SafetyError("UNSAFE_INPUT_PATH", "Path must be an existing regular non-symlink file");
+  }
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile()) throw new SafetyError("UNSAFE_INPUT_PATH", "Path must be a regular non-symlink file");
+    if (forbidGroupOtherWrite && (metadata.mode & 0o022) !== 0) {
+      throw new SafetyError("INSECURE_INPUT_PERMISSIONS", "File must not be group- or world-writable");
+    }
+    return metadata;
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function readJsonInput(path, stdin) {
   let bytes;
   if (path) {
-    const metadata = await lstat(path);
-    if (!metadata.isFile() || metadata.isSymbolicLink()) {
-      throw new SafetyError("UNSAFE_INPUT_PATH", "Input must be a regular non-symlink file");
-    }
-    if ((metadata.mode & 0o077) !== 0) {
-      throw new SafetyError("INSECURE_INPUT_PERMISSIONS", "Input JSON file must have mode 0600");
-    }
-    if (metadata.size > CAPS.inputBytes) throw new SafetyError("INPUT_TOO_LARGE", "Input JSON exceeds the size cap");
-    bytes = await readFile(path);
+    ({ bytes } = await readStableRegularFile(path, {
+      maximumBytes: CAPS.inputBytes,
+      requiredMode: 0o600,
+    }));
   } else {
     const chunks = [];
     let length = 0;
@@ -111,8 +244,8 @@ export function escapeSoqlLikePrefix(value) {
 }
 
 export function validateAlias(value) {
-  if (typeof value !== "string" || value.length < 1 || value.length > 80 || /[\u0000-\u001f\u007f]/u.test(value)) {
-    throw new SafetyError("INVALID_TARGET_ORG", "target_org must be a non-empty alias of at most 80 characters");
+  if (typeof value !== "string" || value.length < 1 || value.length > 80 || sanitizeText(value) !== value) {
+    throw new SafetyError("INVALID_TARGET_ORG", "target_org must be safe text between 1 and 80 characters");
   }
   return value;
 }

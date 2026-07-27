@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { CONTRACTS } from "../scripts/constants.mjs";
 import {
+  orgDigest,
   validatePreflightRequest,
   validateProfileRequest,
   validateResolveRequest,
@@ -95,4 +96,12 @@ test("nested account receipt rejects unknown fields and invalid name types", () 
       account: { Id: IDS.account1, Name: 42 },
     },
   }), { code: "INVALID_ACCOUNT_RECEIPT" });
+});
+
+test("org consistency digest binds the pinned Salesforce runtime", () => {
+  const identity = new MockClient().identity;
+  assert.notEqual(
+    orgDigest("synthetic", identity, "a".repeat(64)),
+    orgDigest("synthetic", identity, "b".repeat(64)),
+  );
 });

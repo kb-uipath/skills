@@ -4,7 +4,7 @@ Build a confidential, read-only Salesforce Account profile through explicit org 
 exact Account selection, bounded corporate-family discovery, runtime schema checks, and
 deterministic Markdown rendering.
 
-**Last verified:** 2026-07-25
+**Last verified:** 2026-07-27
 **Certification status:** Not operationally certified
 
 ## When To Use
@@ -29,7 +29,9 @@ cli="$skill_root/scripts/account-profile.mjs"
 node "$cli" preflight --input /private/path/preflight.json
 ```
 
-Only the command name and input/output paths belong in shell arguments. Put the target-org
+Only the command name and input/output paths belong in shell arguments. Input paths must be
+regular non-symlink files with exact mode `0600`; they are opened with no-follow semantics
+and rechecked after reading. Put the target-org
 alias, Account name or ID, receipts, section choices, and all other customer-controlled values
 in a private JSON file or stdin.
 
@@ -74,14 +76,19 @@ relationships until I confirm the returned Account-ID set.
 4. If exact-name resolution is ambiguous, ask the user to select one returned Account ID.
 5. Run `profile`. Defaults are overview only, selected-account scope, and open
    Opportunities. Other sections must be requested explicitly.
-6. For corporate-family Opportunity or product scope, present the returned Account-ID set and
-   rerun only after the user confirms its digest.
+6. For corporate-family Opportunity, opportunity-line-item, or User-hierarchy scope, present
+   the returned Account-ID set and rerun only after approval is recorded for the complete
+   plan. Any change to sections, filters, open/closed/all scope, output type, runtime, or
+   family membership invalidates that approval.
 7. Run `render` against the complete profile result.
 8. Delete confidential request, result, and rendered artifacts after use.
 
-The runtime invokes only `sf org display`, `sf sobject describe`, and `sf data query` with
-argument arrays and `shell: false`. It uses private temporary SOQL files and deletes the
-temporary request/result workspace after every command.
+Production runtime setup writes a private, create-once attestation for the exact Node binary,
+Salesforce CLI entrypoint, and `@salesforce/cli` package metadata. Execution ignores later
+`PATH` changes and requires explicit re-attestation after upgrades. The runtime then invokes
+only `sf org display`, `sf sobject describe`, and `sf data query` with argument arrays and
+`shell: false`. It uses private temporary SOQL files and deletes the temporary request/result
+workspace after every command. Fake CLI injection exists only in the test harness.
 
 ## Runnable Example
 
@@ -113,7 +120,8 @@ The repository test harness runs the same four commands against
 - Substring search and likely-match auto-selection are absent by design.
 - `Ultimate_Parent_name__c` is used only when Account describe exposes it and only with exact
   equality after selected-account resolution.
-- If the custom field is absent, bounded `ParentId` traversal reports cycles or depth limits.
+- If the custom field is absent, bounded `ParentId` traversal fails closed on cycles or depth
+  limits and offers selected-account scope as the safe fallback.
 - The output calls these records corporate-family accounts, not legal subsidiaries.
 
 ## Safety
