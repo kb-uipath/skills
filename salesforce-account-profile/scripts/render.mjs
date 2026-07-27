@@ -43,12 +43,16 @@ function renderLegacyProfile(profile) {
     ), "");
   }
   if (profile.products?.length) {
-    lines.push("## Products", "", table(
+    lines.push("## Opportunity line items", "", table(
       ["ID", "Opportunity ID", "Pricebook Entry ID", "Product ID", "Product", "Quantity", "Unit Price", "Total Price", "Currency"],
       profile.products.map((item) => [
         item.Id, item.OpportunityId, item.PricebookEntryId, item.Product2Id, item.ProductName, item.Quantity, item.UnitPrice, item.TotalPrice, item.CurrencyIsoCode,
       ]),
-    ), "", `Warning: ${WARNING_ANNUALIZATION}`, "");
+    ), "",
+    "These are raw Salesforce Opportunity line items, not entitlements, utilization, consumption, or installed-product inventory.",
+    "",
+    WARNING_MESSAGES[WARNING_ANNUALIZATION],
+    "");
   }
   if (profile.team?.length) {
     lines.push("## Owner Hierarchy", "", table(
@@ -57,7 +61,13 @@ function renderLegacyProfile(profile) {
     ), "");
   }
   if (profile.warnings?.length) {
-    lines.push("## Warnings", "", ...profile.warnings.map((warning) => `- ${markdownText(warning)}`), "");
+    lines.push(
+      "## Warnings",
+      "",
+      ...profile.warnings.map((warning) =>
+        `- ${markdownText(warningMessage(warning))}`),
+      "",
+    );
   }
   return `${lines.join("\n").trimEnd()}\n`;
 }

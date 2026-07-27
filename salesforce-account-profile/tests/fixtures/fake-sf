@@ -10,6 +10,8 @@ const IDs = {
   account1: "001000000000001AAA",
   account2: "001000000000002AAA",
   account3: "001000000000003AAA",
+  account4: "001000000000004AAA",
+  account5: "001000000000005AAA",
   opportunity1: "006000000000001AAA",
   opportunity2: "006000000000002AAA",
   user1: "005000000000001AAA",
@@ -95,6 +97,52 @@ const users = [
   { Id: IDs.user1, Name: "Synthetic Owner", Title: "Account Executive", ManagerId: IDs.user2 },
   { Id: IDs.user2, Name: "Synthetic Manager", Title: "Manager", ManagerId: null },
 ];
+const certificationMarker = "SAPCERT001";
+const certificationAccounts = [
+  {
+    ...accounts[0],
+    Name: `${certificationMarker} Unique Holdings`,
+  },
+  {
+    ...accounts[1],
+    Name: `${certificationMarker} Family Division`,
+  },
+];
+const certificationAmbiguousAccounts = [
+  {
+    ...ambiguousAccounts[0],
+    Id: IDs.account3,
+    Name: `${certificationMarker} Repeated Name`,
+  },
+  {
+    ...ambiguousAccounts[1],
+    Id: IDs.account4,
+    Name: `${certificationMarker} Repeated Name`,
+  },
+];
+const certificationPrefixAccounts = [{
+  ...ambiguousAccounts[0],
+  Id: IDs.account5,
+  Name: `${certificationMarker} Prefix Candidate`,
+}];
+const certificationUsers = users.map((user) => ({
+  ...user,
+  Name: `${certificationMarker} ${user.Name}`,
+}));
+const certificationOpportunities = opportunities.map((opportunity) => ({
+  ...opportunity,
+  Name: `${certificationMarker} ${opportunity.Name}`,
+}));
+const certificationLineItems = lineItems.map((lineItem) => ({
+  ...lineItem,
+  PricebookEntry: {
+    ...lineItem.PricebookEntry,
+    Product2: {
+      ...lineItem.PricebookEntry.Product2,
+      Name: `${certificationMarker} ${lineItem.PricebookEntry.Product2.Name}`,
+    },
+  },
+}));
 
 function emit(result) {
   process.stdout.write(JSON.stringify({ status: 0, result }));
@@ -139,6 +187,7 @@ if (command === "org list") {
       "synthetic-adversarial",
       "synthetic-ambiguous",
       "synthetic-complete",
+      "synthetic-certification",
       "synthetic-missing",
       "synthetic-no-match",
     ].map((orgAlias) => ({
@@ -149,16 +198,27 @@ if (command === "org list") {
       connectedStatus: "not_checked",
       accessToken: "00D000000000001!SECRET_SHOULD_NOT_ESCAPE",
     })),
-    other: [],
+    other: [{
+      alias: "synthetic-production",
+      username: "synthetic-production@example.invalid",
+      orgId: "00D000000000002AAA",
+      instanceUrl: "https://production.example.invalid",
+      connectedStatus: "not_checked",
+      accessToken: "00D000000000002!SECRET_SHOULD_NOT_ESCAPE",
+    }],
     devHubs: [],
     scratchOrgs: [],
     nonScratchOrgs: [],
   });
 } else if (command === "org display") {
   emit({
-    id: "00D000000000001AAA",
+    id: alias === "synthetic-production"
+      ? "00D000000000002AAA"
+      : "00D000000000001AAA",
     username: `${alias}@example.invalid`,
-    instanceUrl: "https://synthetic.example.invalid",
+    instanceUrl: alias === "synthetic-production"
+      ? "https://production.example.invalid"
+      : "https://synthetic.example.invalid",
     connectedStatus: "Connected",
     accessToken: "00D000000000001!SECRET_SHOULD_NOT_ESCAPE",
   });
@@ -169,7 +229,26 @@ if (command === "org list") {
   const soql = readFileSync(flag("--file"), "utf8");
   let records = [];
   if (/FROM Account/u.test(soql)) {
-    if (alias === "synthetic-ambiguous" && /Name =/u.test(soql)) {
+    if (alias === "synthetic-certification") {
+      const available = [
+        ...certificationAccounts,
+        ...certificationAmbiguousAccounts,
+        ...certificationPrefixAccounts,
+      ];
+      if (/Ultimate_Parent_name__c =/u.test(soql)) {
+        records = certificationAccounts;
+      } else if (/WHERE Id (?:=|IN)/u.test(soql)) {
+        records = available.filter((account) => soql.includes(account.Id));
+      } else if (soql.includes(`${certificationMarker} Unique Holdings`)) {
+        records = [certificationAccounts[0]];
+      } else if (soql.includes(`${certificationMarker} Repeated Name`)) {
+        records = certificationAmbiguousAccounts;
+      } else if (soql.includes(`${certificationMarker} No Exact Match`)) {
+        records = [];
+      } else if (soql.includes(`${certificationMarker} Prefix`)) {
+        records = certificationPrefixAccounts;
+      }
+    } else if (alias === "synthetic-ambiguous" && /Name =/u.test(soql)) {
       records = ambiguousAccounts;
     } else if (alias === "synthetic-no-match" && /Name =/u.test(soql)) {
       records = [];
@@ -189,13 +268,22 @@ if (command === "org list") {
       records = [accounts[0]];
     }
   } else if (/FROM OpportunityLineItem/u.test(soql)) {
-    records = lineItems.filter((item) => soql.includes(item.OpportunityId));
+    const available = alias === "synthetic-certification"
+      ? certificationLineItems
+      : lineItems;
+    records = available.filter((item) => soql.includes(item.OpportunityId));
   } else if (/FROM Opportunity/u.test(soql)) {
-    records = opportunities.filter((item) => soql.includes(item.AccountId));
+    const available = alias === "synthetic-certification"
+      ? certificationOpportunities
+      : opportunities;
+    records = available.filter((item) => soql.includes(item.AccountId));
     if (/IsClosed = false/u.test(soql)) records = records.filter((item) => !item.IsClosed);
     if (/IsClosed = true/u.test(soql)) records = records.filter((item) => item.IsClosed);
   } else if (/FROM User/u.test(soql)) {
-    records = users.filter((user) => soql.includes(user.Id));
+    const available = alias === "synthetic-certification"
+      ? certificationUsers
+      : users;
+    records = available.filter((user) => soql.includes(user.Id));
   }
   emit({ totalSize: records.length, done: true, records });
 } else {

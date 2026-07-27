@@ -62,6 +62,7 @@ function readPlanFor(client, request, {
       ...client.identity,
     },
     runtimeAttestationDigest: client.attestationDigest,
+    registryReadinessDigest: "d".repeat(64),
     accountSelector: { mode: "id", value: request.account_receipt.account.Id },
     selectedAccount: request.account_receipt.account,
     accountReceiptDigest: request.account_receipt.receipt_digest,

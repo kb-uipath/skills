@@ -17,7 +17,7 @@ const { dirname, join } = require("node:path");
           executable: fakeSf,
           fixedArgs: [],
           attestationDigest: digest({
-            synthetic_test_runtime: fakeSf,
+            test_runtime_path: fakeSf,
           }),
         },
         targetOrg,

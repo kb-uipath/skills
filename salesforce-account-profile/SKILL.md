@@ -83,9 +83,12 @@ Do not begin a data read when:
 - the org is merely `offline_validated`;
 - a nonproduction org is not `sandbox_read_certified`;
 - a production org is not separately `production_read_approved`;
+- the required signed approval assertion is absent, untrusted, expired, replayed, or bound
+  to a different role, audience, or scope;
 - the current org fingerprint differs from the enrolled fingerprint;
 - the runtime attestation, metadata, permissions, completeness, relationships, or query
   predicates fail validation;
+- the private certification evidence receipt changed after the read plan was created;
 - a cap would return partial data;
 - family discovery is cyclic, depth-limited, incomplete, or no longer matches approval;
 - any family membership, requested section, filter, Opportunity scope, field-map version,
@@ -98,6 +101,13 @@ Development and repository tests use only the synthetic fake Salesforce CLI. Ope
 certification may use only an explicitly approved sandbox/UAT alias and synthetic records.
 Never infer production approval from sandbox success.
 
+Ordinary users never operate the administrative certification commands. When setup is
+required, follow [references/certification.md](references/certification.md); keep its
+expiring scopes, fixture manifest, evidence receipts, and approval metadata out of the
+profile conversation. Never invent an approval reference, identity digest, assertion,
+signature, or signing key. The external approval authority must sign with a configured
+role key whose private material never enters Codex state.
+
 ## Internal Execution Contract
 
 Use the installed Node entrypoint’s public `doctor`, `start`, `continue`, `status`, and
@@ -107,7 +117,11 @@ structured JSON only when the user explicitly asks for it. Otherwise return the 
 rendered profile and delete temporary artifacts.
 
 `preflight`, `resolve`, `profile`, and `render` remain supported v1 advanced primitives for
-compatibility. Do not expose that four-command workflow as the normal user experience.
+compatibility. `resolve` and `profile` still require the explicit enrolled alias, current
+operational readiness, matching runtime, package, and complete compatible-metadata
+attestations, and a private registry lease around every data query. `preflight` and `render`
+issue no Salesforce data query. Do not expose that four-command workflow as the normal user
+experience.
 
 The runtime pins the production `sf` executable and package metadata, invokes argument
 arrays with `shell: false`, and permits only org discovery/display, object describe, and

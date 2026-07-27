@@ -70,6 +70,7 @@ function planFor(client, sourceProfile, overrides = {}) {
       ...ORG_IDENTITY,
     },
     runtimeAttestationDigest: client.attestationDigest,
+    registryReadinessDigest: "d".repeat(64),
     accountSelector: {
       mode: "id",
       value: sourceProfile.selected_account.Id,

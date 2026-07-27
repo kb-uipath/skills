@@ -1,9 +1,16 @@
 import {
+  CAPS,
+  CERTIFICATION_APPROVAL_ROLES,
   CERTIFICATION_STATES,
   CLASSIFICATION,
   CONTRACTS,
   FIELD_MAP_VERSION,
 } from "./constants.mjs";
+import {
+  validateCertificationEvidence,
+  validateProductionApprovalEvidence,
+  validateSandboxCertificationEvidence,
+} from "./certification-evidence.mjs";
 import {
   assertExactKeys,
   digest,
@@ -29,6 +36,17 @@ const ENVIRONMENTS_BY_ORG_TYPE = Object.freeze({
   dev_hub: Object.freeze(["production"]),
   scratch: Object.freeze(["scratch"]),
 });
+const APPROVAL_LEDGER_KEYS = Object.freeze([
+  "assertion_digest",
+  "replay_key_digest",
+  "role",
+  "scope_digest",
+  "accepted_at",
+  "expires_at",
+]);
+const APPROVAL_ROLES = new Set(
+  Object.values(CERTIFICATION_APPROVAL_ROLES),
+);
 
 function safeText(value, label, maximum = 120) {
   if (typeof value !== "string"
@@ -56,6 +74,71 @@ function canonicalInstant(value, label, { nullable = false } = {}) {
     );
   }
   return value;
+}
+
+function validateApprovalAssertionLedger(ledger) {
+  if (!Array.isArray(ledger)
+    || ledger.length > CAPS.approvalAssertionsPerOrg) {
+    throw new SafetyError(
+      "INVALID_ORG_REGISTRY",
+      "Approval assertion replay ledger exceeds its safety cap",
+    );
+  }
+  for (const [index, item] of ledger.entries()) {
+    const label = `approval_assertion_ledger[${index}]`;
+    assertExactKeys(
+      item,
+      APPROVAL_LEDGER_KEYS,
+      APPROVAL_LEDGER_KEYS,
+      label,
+    );
+    if (!/^[a-f0-9]{64}$/u.test(item.assertion_digest)
+      || !/^[a-f0-9]{64}$/u.test(item.replay_key_digest)
+      || !/^[a-f0-9]{64}$/u.test(item.scope_digest)
+      || !APPROVAL_ROLES.has(item.role)) {
+      throw new SafetyError(
+        "INVALID_ORG_REGISTRY",
+        `${label} contains invalid assertion metadata`,
+      );
+    }
+    const acceptedAt = canonicalInstant(
+      item.accepted_at,
+      `${label}.accepted_at`,
+    );
+    const expiresAt = canonicalInstant(
+      item.expires_at,
+      `${label}.expires_at`,
+    );
+    if (new Date(expiresAt) <= new Date(acceptedAt)) {
+      throw new SafetyError(
+        "INVALID_ORG_REGISTRY",
+        `${label} expiry must follow acceptance`,
+      );
+    }
+  }
+  const sorted = [...ledger].sort((left, right) =>
+    left.accepted_at.localeCompare(right.accepted_at, "en-US")
+    || left.assertion_digest.localeCompare(
+      right.assertion_digest,
+      "en-US",
+    ));
+  if (sorted.some((item, index) =>
+    item.assertion_digest !== ledger[index].assertion_digest)) {
+    throw new SafetyError(
+      "INVALID_ORG_REGISTRY",
+      "Approval assertion replay ledger must use canonical order",
+    );
+  }
+  if (new Set(ledger.map((item) => item.assertion_digest)).size
+      !== ledger.length
+    || new Set(ledger.map((item) => item.replay_key_digest)).size
+      !== ledger.length) {
+    throw new SafetyError(
+      "INVALID_ORG_REGISTRY",
+      "Approval assertion replay ledger contains a duplicate",
+    );
+  }
+  return ledger;
 }
 
 function identityHost(instanceUrl) {
@@ -147,13 +230,32 @@ function validateApprovals(approvals, certificationState, environment) {
     ],
     "org_registry.entries[].approvals",
   );
-  const values = Object.values(approvals);
-  const allNull = values.every((value) => value === null);
-  if (certificationState !== "production_read_approved") {
-    if (!allNull) {
+  const productionApprovalValues = [
+    approvals.administrator_reference,
+    approvals.administrator_approved_at,
+    approvals.risk_owner_reference,
+    approvals.risk_owner_approved_at,
+  ];
+  const productionApprovalsNull = productionApprovalValues.every(
+    (value) => value === null,
+  );
+  if (certificationState === "offline_validated") {
+    if (approvals.sandbox_evidence_digest !== null
+      || !productionApprovalsNull) {
       throw new SafetyError(
         "INVALID_ORG_REGISTRY",
-        "Only production-approved entries may contain production approval metadata",
+        "Offline-only entries cannot contain certification or production approval metadata",
+      );
+    }
+    return;
+  }
+  if (certificationState === "sandbox_read_certified") {
+    if (environment !== "sandbox"
+      || !/^[a-f0-9]{64}$/u.test(approvals.sandbox_evidence_digest)
+      || !productionApprovalsNull) {
+      throw new SafetyError(
+        "INVALID_ORG_REGISTRY",
+        "Sandbox certification requires one redacted evidence digest and no production approval metadata",
       );
     }
     return;
@@ -205,6 +307,8 @@ export function validateRegistryEntry(entry) {
       "metadata_verified_at",
       "certification_verified_at",
       "approvals",
+      "certification_evidence",
+      "approval_assertion_ledger",
     ],
     [
       "alias",
@@ -221,6 +325,8 @@ export function validateRegistryEntry(entry) {
       "metadata_verified_at",
       "certification_verified_at",
       "approvals",
+      "certification_evidence",
+      "approval_assertion_ledger",
     ],
     "org_registry.entries[]",
   );
@@ -250,24 +356,33 @@ export function validateRegistryEntry(entry) {
     { nullable: true },
   );
   if (entry.certification_state === "offline_validated") {
-    if (entry.certification_verified_at !== null) {
+    if (entry.certification_verified_at !== null
+      || entry.certification_evidence !== null) {
       throw new SafetyError(
         "INVALID_ORG_REGISTRY",
-        "Offline-only entries cannot claim an operational certification date",
+        "Offline-only entries cannot claim operational certification evidence",
       );
     }
   } else if (entry.certification_verified_at === null
-    || entry.metadata_verified_at === null) {
+    || entry.metadata_verified_at === null
+    || entry.certification_evidence === null) {
     throw new SafetyError(
       "INVALID_ORG_REGISTRY",
       "Operational certification requires metadata and certification verification dates",
     );
   }
   if (entry.certification_state === "sandbox_read_certified"
-    && entry.environment === "production") {
+    && entry.environment !== "sandbox") {
     throw new SafetyError(
       "INVALID_ORG_REGISTRY",
-      "Sandbox certification cannot authorize a production org",
+      "Sandbox certification can authorize only an enrolled sandbox org",
+    );
+  }
+  if (entry.certification_state === "production_read_approved"
+    && entry.environment !== "production") {
+    throw new SafetyError(
+      "INVALID_ORG_REGISTRY",
+      "Production approval can authorize only an enrolled production org",
     );
   }
   validateApprovals(
@@ -275,6 +390,44 @@ export function validateRegistryEntry(entry) {
     entry.certification_state,
     entry.environment,
   );
+  validateApprovalAssertionLedger(entry.approval_assertion_ledger);
+  if (entry.certification_evidence !== null) {
+    const evidence = validateCertificationEvidence(
+      entry.certification_evidence,
+    );
+    if (entry.certification_state === "sandbox_read_certified") {
+      validateSandboxCertificationEvidence(evidence);
+      if (evidence.org_fingerprint !== entry.org_fingerprint
+        || evidence.receipt_digest
+          !== entry.approvals.sandbox_evidence_digest
+        || evidence.completed_at !== entry.certification_verified_at) {
+        throw new SafetyError(
+          "INVALID_ORG_REGISTRY",
+          "Sandbox certification evidence does not bind this registry entry",
+        );
+      }
+    } else if (entry.certification_state === "production_read_approved") {
+      validateProductionApprovalEvidence(evidence);
+      if (evidence.production_org_fingerprint
+          !== entry.org_fingerprint
+        || evidence.sandbox_evidence_digest
+          !== entry.approvals.sandbox_evidence_digest
+        || evidence.administrator_approval.reference
+          !== entry.approvals.administrator_reference
+        || evidence.administrator_approval.issued_at
+          !== entry.approvals.administrator_approved_at
+        || evidence.risk_owner_approval.reference
+          !== entry.approvals.risk_owner_reference
+        || evidence.risk_owner_approval.issued_at
+          !== entry.approvals.risk_owner_approved_at
+        || evidence.completed_at !== entry.certification_verified_at) {
+        throw new SafetyError(
+          "INVALID_ORG_REGISTRY",
+          "Production approval evidence does not bind this registry entry",
+        );
+      }
+    }
+  }
   return entry;
 }
 
@@ -293,7 +446,12 @@ export function validateOrgRegistry(registry) {
     ["schema_version", "classification", "entries"],
     "org_registry",
   );
-  if (registry.schema_version !== CONTRACTS.orgRegistry
+  if (![
+    CONTRACTS.orgRegistry,
+    CONTRACTS.orgRegistryUnsigned,
+    CONTRACTS.orgRegistryLegacy,
+  ]
+    .includes(registry.schema_version)
     || registry.classification !== CLASSIFICATION
     || !Array.isArray(registry.entries)
     || registry.entries.length > 200) {
@@ -301,6 +459,37 @@ export function validateOrgRegistry(registry) {
       "INVALID_ORG_REGISTRY",
       "Org registry metadata or entry count is invalid",
     );
+  }
+  if (registry.schema_version !== CONTRACTS.orgRegistry) {
+    registry = {
+      schema_version: CONTRACTS.orgRegistry,
+      classification: CLASSIFICATION,
+      entries: registry.entries.map((entry) => ({
+        ...entry,
+        certification_state: "offline_validated",
+        certification_verified_at: null,
+        approvals: {
+          sandbox_evidence_digest: null,
+          administrator_reference: null,
+          administrator_approved_at: null,
+          risk_owner_reference: null,
+          risk_owner_approved_at: null,
+        },
+        certification_evidence: null,
+        approval_assertion_ledger: [],
+      })),
+    };
+  }
+  if (registry.entries.some((entry) =>
+    !Object.hasOwn(entry, "approval_assertion_ledger"))) {
+    registry = {
+      ...registry,
+      entries: registry.entries.map((entry) => ({
+        ...entry,
+        approval_assertion_ledger:
+          entry.approval_assertion_ledger ?? [],
+      })),
+    };
   }
   registry.entries.forEach(validateRegistryEntry);
   const aliases = registry.entries.map((entry) =>
@@ -312,6 +501,19 @@ export function validateOrgRegistry(registry) {
     throw new SafetyError(
       "INVALID_ORG_REGISTRY",
       "Org aliases and friendly labels must be unique",
+    );
+  }
+  const assertionDigests = registry.entries.flatMap((entry) =>
+    entry.approval_assertion_ledger.map((item) =>
+      item.assertion_digest));
+  const replayKeyDigests = registry.entries.flatMap((entry) =>
+    entry.approval_assertion_ledger.map((item) =>
+      item.replay_key_digest));
+  if (new Set(assertionDigests).size !== assertionDigests.length
+    || new Set(replayKeyDigests).size !== replayKeyDigests.length) {
+    throw new SafetyError(
+      "INVALID_ORG_REGISTRY",
+      "Approval assertions cannot be consumed by more than one org",
     );
   }
   const sorted = [...registry.entries].sort((left, right) =>
@@ -358,6 +560,8 @@ export function buildOfflineRegistryEntry({
       risk_owner_reference: null,
       risk_owner_approved_at: null,
     },
+    certification_evidence: null,
+    approval_assertion_ledger: [],
   });
 }
 
@@ -370,11 +574,314 @@ export function markMetadataVerified(entry, now = new Date()) {
   });
 }
 
+export function downgradeRegistryEntry(entry) {
+  validateRegistryEntry(entry);
+  return validateRegistryEntry({
+    ...entry,
+    certification_state: "offline_validated",
+    certification_verified_at: null,
+    approvals: {
+      sandbox_evidence_digest: null,
+      administrator_reference: null,
+      administrator_approved_at: null,
+      risk_owner_reference: null,
+      risk_owner_approved_at: null,
+    },
+    certification_evidence: null,
+  });
+}
+
+export function downgradeRegistryReadiness(registry, originalEntry) {
+  let updated = validateOrgRegistry(registry);
+  validateRegistryEntry(originalEntry);
+  const latest = updated.entries.find((entry) =>
+    entry.alias === originalEntry.alias);
+  const sandboxEvidenceDigest =
+    originalEntry.environment === "sandbox"
+    && originalEntry.certification_state === "sandbox_read_certified"
+      ? originalEntry.certification_evidence?.receipt_digest ?? null
+      : null;
+
+  if (sandboxEvidenceDigest !== null) {
+    if (latest?.certification_state === "sandbox_read_certified"
+      && latest.certification_evidence?.receipt_digest
+        === sandboxEvidenceDigest) {
+      updated = upsertRegistryEntry(
+        updated,
+        downgradeRegistryEntry(latest),
+      );
+    }
+    for (const entry of [...updated.entries]) {
+      if (entry.certification_state === "production_read_approved"
+        && entry.certification_evidence?.sandbox_evidence_digest
+          === sandboxEvidenceDigest) {
+        updated = upsertRegistryEntry(
+          updated,
+          downgradeRegistryEntry(entry),
+        );
+      }
+    }
+    return updated;
+  }
+
+  if (latest
+    && latest.certification_state !== "offline_validated"
+    && digest(latest) === digest(originalEntry)) {
+    return upsertRegistryEntry(
+      updated,
+      downgradeRegistryEntry(latest),
+    );
+  }
+  return updated;
+}
+
+function ledgerEntryFor(verification, acceptedAt) {
+  const assertion = verification?.assertion;
+  if (!assertion
+    || !/^[a-f0-9]{64}$/u.test(
+      verification.assertion_digest ?? "",
+    )
+    || !/^[a-f0-9]{64}$/u.test(
+      verification.replay_key_digest ?? "",
+    )
+    || !APPROVAL_ROLES.has(assertion.role)
+    || !/^[a-f0-9]{64}$/u.test(assertion.scope_digest ?? "")) {
+    throw new SafetyError(
+      "INVALID_APPROVAL_ASSERTION",
+      "Verified approval assertion metadata is incomplete",
+    );
+  }
+  const expiresAt = canonicalInstant(
+    assertion.expires_at,
+    "approval_assertion.expires_at",
+  );
+  if (new Date(expiresAt) <= acceptedAt) {
+    throw new SafetyError(
+      "APPROVAL_ASSERTION_EXPIRED",
+      "Approval assertion expired before replay reservation",
+    );
+  }
+  return {
+    assertion_digest: verification.assertion_digest,
+    replay_key_digest: verification.replay_key_digest,
+    role: assertion.role,
+    scope_digest: assertion.scope_digest,
+    accepted_at: acceptedAt.toISOString(),
+    expires_at: expiresAt,
+  };
+}
+
+export function assertApprovalAssertionsUnused(
+  registry,
+  verifications,
+) {
+  const validated = validateOrgRegistry(registry);
+  if (!Array.isArray(verifications) || verifications.length < 1) {
+    throw new SafetyError(
+      "INVALID_APPROVAL_ASSERTION",
+      "At least one verified approval assertion is required",
+    );
+  }
+  const assertionDigests = verifications.map((verification) =>
+    verification?.assertion_digest);
+  const replayKeyDigests = verifications.map((verification) =>
+    verification?.replay_key_digest);
+  if (assertionDigests.some((value) =>
+    !/^[a-f0-9]{64}$/u.test(value ?? ""))
+    || replayKeyDigests.some((value) =>
+      !/^[a-f0-9]{64}$/u.test(value ?? ""))
+    || new Set(assertionDigests).size !== assertionDigests.length
+    || new Set(replayKeyDigests).size !== replayKeyDigests.length) {
+    throw new SafetyError(
+      "INVALID_APPROVAL_ASSERTION",
+      "Approval assertions must be complete and distinct",
+    );
+  }
+  const consumedAssertions = new Set(
+    validated.entries.flatMap((entry) =>
+      entry.approval_assertion_ledger.map((item) =>
+        item.assertion_digest)),
+  );
+  const consumedReplayKeys = new Set(
+    validated.entries.flatMap((entry) =>
+      entry.approval_assertion_ledger.map((item) =>
+        item.replay_key_digest)),
+  );
+  if (assertionDigests.some((value) => consumedAssertions.has(value))
+    || replayKeyDigests.some((value) => consumedReplayKeys.has(value))) {
+    throw new SafetyError(
+      "APPROVAL_ASSERTION_REPLAYED",
+      "A signed approval assertion was already consumed",
+    );
+  }
+  return validated;
+}
+
+export function appendApprovalAssertions(entry, {
+  verifications,
+  now = new Date(),
+} = {}) {
+  validateRegistryEntry(entry);
+  if (!Array.isArray(verifications) || verifications.length < 1) {
+    throw new SafetyError(
+      "INVALID_APPROVAL_ASSERTION",
+      "At least one verified approval assertion is required",
+    );
+  }
+  const instant = verificationInstant(now);
+  const additions = verifications.map((verification) =>
+    ledgerEntryFor(verification, instant));
+  const retained = entry.approval_assertion_ledger.filter((item) =>
+    new Date(item.expires_at) > instant);
+  const ledger = [...retained, ...additions].sort((left, right) =>
+    left.accepted_at.localeCompare(right.accepted_at, "en-US")
+    || left.assertion_digest.localeCompare(
+      right.assertion_digest,
+      "en-US",
+    ));
+  validateApprovalAssertionLedger(ledger);
+  return validateRegistryEntry({
+    ...entry,
+    approval_assertion_ledger: ledger,
+  });
+}
+
+export function markSandboxReadCertified(entry, {
+  evidence,
+  now = new Date(),
+} = {}) {
+  validateRegistryEntry(entry);
+  validateSandboxCertificationEvidence(evidence);
+  if (entry.environment !== "sandbox"
+    || entry.org_type !== "sandbox"
+    || evidence.org_fingerprint !== entry.org_fingerprint) {
+    throw new SafetyError(
+      "SANDBOX_CERTIFICATION_INVALID",
+      "Sandbox certification evidence does not bind the enrolled sandbox",
+    );
+  }
+  if (entry.metadata_verified_at === null) {
+    throw new SafetyError(
+      "SANDBOX_CERTIFICATION_INVALID",
+      "Sandbox certification requires current compatible metadata",
+    );
+  }
+  const instant = verificationInstant(now);
+  if (evidence.completed_at !== instant.toISOString()) {
+    throw new SafetyError(
+      "SANDBOX_CERTIFICATION_INVALID",
+      "Sandbox certification evidence does not bind the transition time",
+    );
+  }
+  const latestPriorVerification = Math.max(
+    new Date(entry.identity_verified_at).getTime(),
+    new Date(entry.metadata_verified_at).getTime(),
+    entry.certification_verified_at === null
+      ? Number.NEGATIVE_INFINITY
+      : new Date(entry.certification_verified_at).getTime(),
+  );
+  if (instant.getTime() < latestPriorVerification) {
+    throw new SafetyError(
+      "ORG_VERIFICATION_TIME_REGRESSION",
+      "Sandbox certification time cannot move backwards",
+    );
+  }
+  return validateRegistryEntry({
+    ...entry,
+    certification_state: "sandbox_read_certified",
+    certification_verified_at: instant.toISOString(),
+    approvals: {
+      sandbox_evidence_digest: evidence.receipt_digest,
+      administrator_reference: null,
+      administrator_approved_at: null,
+      risk_owner_reference: null,
+      risk_owner_approved_at: null,
+    },
+    certification_evidence: evidence,
+  });
+}
+
+export function markProductionReadApproved(entry, {
+  evidence,
+  now = new Date(),
+} = {}) {
+  validateRegistryEntry(entry);
+  validateProductionApprovalEvidence(evidence);
+  if (entry.environment !== "production"
+    || evidence.production_org_fingerprint !== entry.org_fingerprint
+    || entry.metadata_verified_at === null) {
+    throw new SafetyError(
+      "PRODUCTION_APPROVAL_INVALID",
+      "Production approval requires current production metadata and certified sandbox evidence",
+    );
+  }
+  const instant = verificationInstant(now);
+  if (evidence.completed_at !== instant.toISOString()) {
+    throw new SafetyError(
+      "PRODUCTION_APPROVAL_INVALID",
+      "Production approval evidence does not bind the transition time",
+    );
+  }
+  const administratorInstant = new Date(
+    evidence.administrator_approval.issued_at,
+  );
+  const riskOwnerInstant = new Date(
+    evidence.risk_owner_approval.issued_at,
+  );
+  if (!Number.isFinite(administratorInstant.getTime())
+    || administratorInstant.toISOString()
+      !== evidence.administrator_approval.issued_at
+    || !Number.isFinite(riskOwnerInstant.getTime())
+    || riskOwnerInstant.toISOString()
+      !== evidence.risk_owner_approval.issued_at
+    || administratorInstant > instant
+    || riskOwnerInstant > instant) {
+    throw new SafetyError(
+      "PRODUCTION_APPROVAL_INVALID",
+      "Production approval timestamps must be canonical and no later than the approval operation",
+    );
+  }
+  const latestPriorVerification = Math.max(
+    new Date(entry.identity_verified_at).getTime(),
+    new Date(entry.metadata_verified_at).getTime(),
+    administratorInstant.getTime(),
+    riskOwnerInstant.getTime(),
+    entry.certification_verified_at === null
+      ? Number.NEGATIVE_INFINITY
+      : new Date(entry.certification_verified_at).getTime(),
+  );
+  if (instant.getTime() < latestPriorVerification) {
+    throw new SafetyError(
+      "ORG_VERIFICATION_TIME_REGRESSION",
+      "Production approval time cannot move backwards",
+    );
+  }
+  return validateRegistryEntry({
+    ...entry,
+    certification_state: "production_read_approved",
+    certification_verified_at: instant.toISOString(),
+    approvals: {
+      sandbox_evidence_digest: evidence.sandbox_evidence_digest,
+      administrator_reference:
+        evidence.administrator_approval.reference,
+      administrator_approved_at:
+        evidence.administrator_approval.issued_at,
+      risk_owner_reference: evidence.risk_owner_approval.reference,
+      risk_owner_approved_at:
+        evidence.risk_owner_approval.issued_at,
+    },
+    certification_evidence: evidence,
+  });
+}
+
 export function refreshRegistryVerification(entry, {
   identity,
   orgType,
   environment,
   fieldMapVersion = FIELD_MAP_VERSION,
+  runtimeAttestationDigest = null,
+  packageDigest = null,
+  metadataCompatibilityDigest = null,
   now = new Date(),
 } = {}) {
   validateRegistryEntry(entry);
@@ -406,17 +913,31 @@ export function refreshRegistryVerification(entry, {
       "Registry verification time cannot move backwards",
     );
   }
-  return validateRegistryEntry({
+  const refreshed = validateRegistryEntry({
     ...entry,
     identity_verified_at: instant.toISOString(),
     metadata_verified_at: instant.toISOString(),
   });
+  if (refreshed.certification_state === "offline_validated") {
+    return refreshed;
+  }
+  const evidence = refreshed.certification_evidence;
+  if (!/^[a-f0-9]{64}$/u.test(runtimeAttestationDigest ?? "")
+    || !/^[a-f0-9]{64}$/u.test(packageDigest ?? "")
+    || !/^[a-f0-9]{64}$/u.test(metadataCompatibilityDigest ?? "")
+    || evidence.runtime_attestation_digest !== runtimeAttestationDigest
+    || evidence.package_digest !== packageDigest
+    || evidence.metadata_compatibility_digest
+      !== metadataCompatibilityDigest) {
+    return downgradeRegistryEntry(refreshed);
+  }
+  return refreshed;
 }
 
 export function upsertRegistryEntry(registry, entry) {
-  validateOrgRegistry(registry);
+  const validatedRegistry = validateOrgRegistry(registry);
   validateRegistryEntry(entry);
-  const entries = registry.entries
+  const entries = validatedRegistry.entries
     .filter((candidate) => candidate.alias !== entry.alias)
     .concat([{ ...entry }])
     .sort((left, right) => left.alias.localeCompare(right.alias, "en-US"));
@@ -428,10 +949,10 @@ export function upsertRegistryEntry(registry, entry) {
 }
 
 export function resolveRegistryEntry(registry, aliasOrLabel) {
-  validateOrgRegistry(registry);
+  const validatedRegistry = validateOrgRegistry(registry);
   const key = safeText(aliasOrLabel, "org selector", 80)
     .toLocaleLowerCase("en-US");
-  const matches = registry.entries.filter((entry) =>
+  const matches = validatedRegistry.entries.filter((entry) =>
     entry.alias.toLocaleLowerCase("en-US") === key
     || entry.friendly_label.toLocaleLowerCase("en-US") === key);
   if (matches.length !== 1) {
@@ -475,13 +996,25 @@ export function assertRegistryReadiness(entry, {
     }
     return entry;
   }
-  if (entry.certification_state !== "sandbox_read_certified") {
+  if (entry.environment !== "sandbox"
+    || entry.certification_state !== "sandbox_read_certified") {
     throw new SafetyError(
       "SANDBOX_NOT_CERTIFIED",
-      "Nonproduction reads require sandbox read certification",
+      "Nonproduction reads require an explicitly certified sandbox org",
     );
   }
   return entry;
+}
+
+export function registryReadinessDigest(entry) {
+  validateRegistryEntry(entry);
+  return digest({
+    org_fingerprint: entry.org_fingerprint,
+    field_map_version: entry.field_map_version,
+    certification_state: entry.certification_state,
+    certification_evidence_digest:
+      entry.certification_evidence?.receipt_digest ?? null,
+  });
 }
 
 export const orgRegistryInternals = Object.freeze({

@@ -19,6 +19,7 @@ function plan(overrides = {}) {
       connected_status: "Connected",
     },
     runtimeAttestationDigest: "b".repeat(64),
+    registryReadinessDigest: "d".repeat(64),
     accountSelector: { mode: "exact_name", value: "Example" },
     selectedAccount: { Id: IDS.account1, Name: "Example" },
     accountReceiptDigest: "c".repeat(64),
