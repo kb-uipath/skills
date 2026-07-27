@@ -10,6 +10,19 @@ export const CONTRACTS = Object.freeze({
   renderResult: "salesforce-account-profile-render-result/v1",
   readPlan: "salesforce-account-profile-read-plan/v2",
   approvalReceipt: "salesforce-account-profile-approval-receipt/v2",
+  profileView: "salesforce-account-profile-view/v2",
+  orgRegistry: "salesforce-account-profile-org-registry/v1",
+  session: "salesforce-account-profile-session/v2",
+  doctorRequest: "salesforce-account-profile-doctor-request/v2",
+  doctorResult: "salesforce-account-profile-doctor-result/v2",
+  startRequest: "salesforce-account-profile-start-request/v2",
+  startResult: "salesforce-account-profile-start-result/v2",
+  continueRequest: "salesforce-account-profile-continue-request/v2",
+  continueResult: "salesforce-account-profile-continue-result/v2",
+  statusRequest: "salesforce-account-profile-status-request/v2",
+  statusResult: "salesforce-account-profile-status-result/v2",
+  abortRequest: "salesforce-account-profile-abort-request/v2",
+  abortResult: "salesforce-account-profile-abort-result/v2",
   sfRuntimeAttestation: "salesforce-account-profile-sf-runtime-attestation/v1",
   error: "salesforce-account-profile-error/v1",
 });
@@ -28,6 +41,7 @@ export const CAPS = Object.freeze({
   runtimeManifestBytes: 65_536,
   executableBytes: 512 * 1024 * 1024,
   packageMetadataBytes: 1_048_576,
+  authorizedOrgs: 200,
 });
 
 export const ACCOUNT_ID = /^001[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?$/;
@@ -50,6 +64,11 @@ export const PROFILE_SECTIONS = Object.freeze([
 ]);
 export const OPPORTUNITY_SCOPES = Object.freeze(["open", "closed", "all"]);
 export const OUTPUT_TYPES = Object.freeze(["rendered", "json"]);
+export const CERTIFICATION_STATES = Object.freeze([
+  "offline_validated",
+  "sandbox_read_certified",
+  "production_read_approved",
+]);
 export const PRESETS = Object.freeze({
   snapshot: Object.freeze({
     sections: Object.freeze(["overview"]),

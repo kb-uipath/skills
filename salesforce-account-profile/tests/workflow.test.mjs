@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { CAPS, CONTRACTS, WARNING_ANNUALIZATION } from "../scripts/constants.mjs";
+import { buildReadPlan, issueApprovalReceipt } from "../scripts/read-plan.mjs";
 import { buildRenderResult } from "../scripts/render.mjs";
+import { SafetyError } from "../scripts/security.mjs";
 import { profile, render, resolve } from "../scripts/workflow.mjs";
 import { DESCRIBE, IDS, MockClient, describeMap, orgDigestFor, receiptFor } from "./helpers.mjs";
 
+const RUNTIME_ATTESTATION_DIGEST = "a".repeat(64);
 const account = {
   Id: IDS.account1,
   Name: "Example",
@@ -38,6 +41,39 @@ function profileRequest(client, overrides = {}) {
     account_receipt: receiptFor(client, { Id: account.Id, Name: account.Name }),
     ...overrides,
   };
+}
+
+function attest(client) {
+  client.attestationDigest = RUNTIME_ATTESTATION_DIGEST;
+  return client;
+}
+
+function readPlanFor(client, request, {
+  familyAccountIds = [],
+  filters = {},
+  sections = request.sections ?? ["overview"],
+  scope = request.scope ?? "selected_account",
+  opportunityScope = request.opportunity_scope ?? "open",
+} = {}) {
+  return buildReadPlan({
+    sessionId: "0123456789abcdef0123456789abcdef",
+    orgIdentity: {
+      target_org: request.target_org,
+      ...client.identity,
+    },
+    runtimeAttestationDigest: client.attestationDigest,
+    accountSelector: { mode: "id", value: request.account_receipt.account.Id },
+    selectedAccount: request.account_receipt.account,
+    accountReceiptDigest: request.account_receipt.receipt_digest,
+    familyAccountIds,
+    preset: "custom",
+    sections,
+    scope,
+    opportunityScope,
+    filters,
+    outputType: "json",
+    issuedAt: new Date(Date.now() - 1_000),
+  });
 }
 
 test("exact resolution selects exactly one Account", async () => {
@@ -102,6 +138,17 @@ test("candidate cap fails instead of truncating", async () => {
   await assert.rejects(
     () => resolve(resolveRequest(client, { mode: "prefix", value: "E" }), { client }),
     { code: "CANDIDATE_CAP_EXCEEDED" },
+  );
+});
+
+test("account resolution rejects duplicate candidate IDs", async () => {
+  const client = new MockClient({ query: () => [
+    { ...account, Name: "Repeated" },
+    { ...account, Name: "Repeated" },
+  ] });
+  await assert.rejects(
+    () => resolve(resolveRequest(client, { mode: "exact_name", value: "Repeated" }), { client }),
+    { code: "RELATIONSHIP_INCONSISTENCY" },
   );
 });
 
@@ -213,8 +260,274 @@ test("products-only Account query reads core fields and no overview optionals", 
   assert(!opportunityQueries[0].includes("OwnerId"));
   assert(!opportunityQueries[0].includes("StageName"));
   assert(!opportunityQueries[0].includes("CloseDate"));
+  assert(opportunityQueries[0].includes("IsClosed"));
+  assert(opportunityQueries[0].includes("IsWon"));
+  assert(opportunityQueries[0].includes("CurrencyIsoCode"));
   assert(!opportunityQueries[0].includes("Deal_Type__c"));
   assert(opportunityQueries[0].includes("ORDER BY Id"));
+});
+
+test("optional v2 read-plan context preserves the exact public v1 request contract", async () => {
+  const client = attest(new MockClient({ query: () => [account] }));
+  const request = profileRequest(client);
+  const plan = readPlanFor(client, request);
+  const result = await profile(request, { client, readPlan: plan });
+  assert.equal(result.status, "complete");
+
+  await assert.rejects(
+    () => profile({ ...request, read_plan: plan }, { client }),
+    { code: "UNKNOWN_INPUT_FIELD" },
+  );
+  await assert.rejects(
+    () => profile({ ...request, filters: plan.filters }, { client }),
+    { code: "UNKNOWN_INPUT_FIELD" },
+  );
+});
+
+test("v2 products-only execution adds the Opportunity context needed for filters and joins", async () => {
+  let opportunityQuery;
+  const opportunity = {
+    Id: IDS.opportunity1,
+    Name: "Synthetic Opportunity",
+    AccountId: IDS.account1,
+    StageName: "Qualification",
+    CloseDate: "2030-01-15",
+    IsClosed: false,
+    IsWon: false,
+    CurrencyIsoCode: "USD",
+  };
+  const client = attest(new MockClient({
+    query: (soql) => {
+      if (soql.includes("FROM OpportunityLineItem")) return [];
+      if (soql.includes("FROM Opportunity")) {
+        opportunityQuery = soql;
+        return [opportunity];
+      }
+      return [account];
+    },
+  }));
+  const request = profileRequest(client, { sections: ["products"] });
+  const plan = readPlanFor(client, request, {
+    filters: {
+      close_date_from: "2030-01-01",
+      stages: ["Qualification"],
+    },
+  });
+  const result = await profile(request, { client, readPlan: plan });
+  assert(opportunityQuery.includes("Name"));
+  assert(opportunityQuery.includes("StageName"));
+  assert(opportunityQuery.includes("CloseDate"));
+  assert(opportunityQuery.includes("CloseDate >= 2030-01-01"));
+  assert(opportunityQuery.includes("StageName IN ('Qualification')"));
+  assert.equal(result.status, "complete");
+  assert.deepEqual(result.opportunities, []);
+});
+
+test("v2 read-plan context binds request, Account receipt, org, and runtime before reads", async () => {
+  const client = attest(new MockClient({ query: () => [account] }));
+  const request = profileRequest(client);
+  const plan = readPlanFor(client, request);
+  const mismatches = [
+    { ...plan, requested_sections: ["overview", "team"] },
+    { ...plan, account_receipt_digest: "b".repeat(64) },
+    { ...plan, runtime_attestation_digest: "b".repeat(64) },
+    {
+      ...plan,
+      org_identity: {
+        ...plan.org_identity,
+        username: "other@example.invalid",
+      },
+    },
+  ];
+  for (const mismatchedPlan of mismatches) {
+    await assert.rejects(
+      () => profile(request, { client, readPlan: mismatchedPlan }),
+      { code: "READ_PLAN_MISMATCH" },
+    );
+  }
+  await assert.rejects(
+    () => profile(request, {
+      client,
+      readPlan: {
+        ...plan,
+        filters: {
+          ...plan.filters,
+          close_date_from: "2030-02-30",
+        },
+      },
+    }),
+    { code: "INVALID_READ_PLAN" },
+  );
+  assert.equal(client.queryCount, 0);
+});
+
+test("v2 read-plan expiry uses the injected execution clock", async () => {
+  const client = attest(new MockClient({ query: () => [account] }));
+  const request = profileRequest(client);
+  const plan = readPlanFor(client, request);
+  await assert.rejects(
+    () => profile(request, {
+      client,
+      readPlan: plan,
+      now: new Date(plan.expires_at),
+    }),
+    { code: "READ_PLAN_EXPIRED" },
+  );
+  assert.equal(client.queryCount, 0);
+});
+
+test("confirmed CloseDate and StageName filters are described, escaped, queried, and rebound", async () => {
+  let opportunityQuery;
+  const opportunity = {
+    Id: IDS.opportunity1,
+    Name: "Manager Review Renewal",
+    AccountId: IDS.account1,
+    OwnerId: IDS.user1,
+    StageName: "Manager's Review",
+    Amount: 100,
+    CloseDate: "2030-01-15",
+    IsClosed: false,
+    IsWon: false,
+    CurrencyIsoCode: "USD",
+    HasOpportunityLineItem: false,
+  };
+  const client = attest(new MockClient({
+    query: (soql) => {
+      if (soql.includes("FROM Opportunity")) {
+        opportunityQuery = soql;
+        return [opportunity];
+      }
+      return [account];
+    },
+  }));
+  const request = profileRequest(client, {
+    sections: ["overview", "opportunities"],
+    opportunity_scope: "open",
+  });
+  const plan = readPlanFor(client, request, {
+    filters: {
+      close_date_from: "2030-01-01",
+      close_date_to: "2030-01-31",
+      stages: ["Manager's Review"],
+    },
+  });
+  const result = await profile(request, { client, readPlan: plan });
+  assert(opportunityQuery.includes("IsClosed = false"));
+  assert(opportunityQuery.includes("CloseDate >= 2030-01-01"));
+  assert(opportunityQuery.includes("CloseDate <= 2030-01-31"));
+  assert(opportunityQuery.includes("StageName IN ('Manager\\'s Review')"));
+  assert.equal(result.selected_account.Name, "Example");
+  assert.equal(result.opportunities[0].Name, "Manager Review Renewal");
+  assert.equal(result.opportunities[0].CloseDate, "2030-01-15");
+  assert.equal(result.opportunities[0].IsClosed, false);
+  assert.equal(result.opportunities[0].IsWon, false);
+  assert.equal(result.opportunities[0].CurrencyIsoCode, "USD");
+});
+
+test("v2 Opportunity filters cannot be displayed when no transaction section executes", async () => {
+  const client = attest(new MockClient({
+    query: (soql) => soql.includes("FROM Account") ? [account] : [],
+  }));
+  const request = profileRequest(client, {
+    sections: ["overview", "team"],
+  });
+  const plan = readPlanFor(client, request, {
+    filters: { stages: ["Discovery"] },
+  });
+  await assert.rejects(
+    () => profile(request, { client, readPlan: plan, now: new Date() }),
+    { code: "UNSUPPORTED_FILTER" },
+  );
+  assert.equal(client.queryCount, 0);
+});
+
+test("Opportunity filter predicates fail closed when metadata or returned rows do not bind", async () => {
+  const outsideFilter = {
+    Id: IDS.opportunity1,
+    Name: "Outside Filter",
+    AccountId: IDS.account1,
+    OwnerId: IDS.user1,
+    StageName: "Discovery",
+    Amount: 100,
+    CloseDate: "2029-12-31",
+    IsClosed: false,
+    IsWon: false,
+    CurrencyIsoCode: "USD",
+    HasOpportunityLineItem: false,
+  };
+  const rowClient = attest(new MockClient({
+    query: (soql) => soql.includes("FROM Opportunity") ? [outsideFilter] : [account],
+  }));
+  const rowRequest = profileRequest(rowClient, { sections: ["opportunities"] });
+  const rowPlan = readPlanFor(rowClient, rowRequest, {
+    filters: {
+      close_date_from: "2030-01-01",
+      stages: ["Qualification"],
+    },
+  });
+  await assert.rejects(
+    () => profile(rowRequest, { client: rowClient, readPlan: rowPlan }),
+    { code: "PREDICATE_BINDING_FAILED" },
+  );
+
+  const metadataClient = attest(new MockClient({ query: () => [account] }));
+  metadataClient.describe = async (objectName) => {
+    const fields = describeMap(DESCRIBE[objectName] ?? []);
+    if (objectName === "Opportunity") {
+      fields.set("StageName", { ...fields.get("StageName"), filterable: false });
+    }
+    return fields;
+  };
+  const metadataRequest = profileRequest(metadataClient, { sections: ["opportunities"] });
+  const metadataPlan = readPlanFor(metadataClient, metadataRequest, {
+    filters: { stages: ["Qualification"] },
+  });
+  await assert.rejects(
+    () => profile(metadataRequest, { client: metadataClient, readPlan: metadataPlan }),
+    { code: "SCHEMA_FAILURE" },
+  );
+
+  const unknownStageClient = attest(new MockClient({ query: () => [account] }));
+  const unknownStageRequest = profileRequest(unknownStageClient, {
+    sections: ["opportunities"],
+  });
+  const unknownStagePlan = readPlanFor(unknownStageClient, unknownStageRequest, {
+    filters: { stages: ["qualification"] },
+  });
+  await assert.rejects(
+    () => profile(unknownStageRequest, {
+      client: unknownStageClient,
+      readPlan: unknownStagePlan,
+    }),
+    { code: "INVALID_STAGE_FILTER" },
+  );
+
+  const malformedValuesClient = attest(new MockClient({ query: () => [account] }));
+  malformedValuesClient.describe = async (objectName) => {
+    const fields = describeMap(DESCRIBE[objectName] ?? []);
+    if (objectName === "Opportunity") {
+      fields.set("StageName", {
+        ...fields.get("StageName"),
+        activePicklistValues: ["Qualification", "Discovery"],
+      });
+    }
+    return fields;
+  };
+  const malformedValuesRequest = profileRequest(malformedValuesClient, {
+    sections: ["opportunities"],
+  });
+  const malformedValuesPlan = readPlanFor(
+    malformedValuesClient,
+    malformedValuesRequest,
+    { filters: { stages: ["Qualification"] } },
+  );
+  await assert.rejects(
+    () => profile(malformedValuesRequest, {
+      client: malformedValuesClient,
+      readPlan: malformedValuesPlan,
+    }),
+    { code: "SCHEMA_FAILURE" },
+  );
 });
 
 test("generic Account overview never emits an unlabeled ARR amount", async () => {
@@ -331,6 +644,105 @@ test("family approval is invalidated when requested sections or Opportunity scop
   }), { client });
   assert.equal(changedSections.status, "family_confirmation_required");
   assert.notEqual(changedSections.family_confirmation.family_digest, staged.family_confirmation.family_digest);
+});
+
+test("v2 family approval binds the exact Account set and every Opportunity filter", async () => {
+  const opportunity = {
+    Id: IDS.opportunity1,
+    Name: "Family Opportunity",
+    AccountId: IDS.account1,
+    OwnerId: IDS.user1,
+    StageName: "Qualification",
+    Amount: 100,
+    CloseDate: "2030-01-15",
+    IsClosed: false,
+    IsWon: false,
+    CurrencyIsoCode: "USD",
+    HasOpportunityLineItem: false,
+  };
+  const client = attest(new MockClient({
+    query: (soql) => {
+      if (soql.includes("Ultimate_Parent_name__c =")) return [account, secondAccount];
+      if (soql.includes("FROM Opportunity")) return [opportunity];
+      return [account];
+    },
+  }));
+  const request = profileRequest(client, {
+    sections: ["family", "opportunities"],
+    scope: "corporate_family",
+    opportunity_scope: "open",
+  });
+  const plan = readPlanFor(client, request, {
+    familyAccountIds: [IDS.account1, IDS.account2],
+    filters: {
+      close_date_from: "2030-01-01",
+      close_date_to: "2030-12-31",
+      stages: ["Qualification"],
+    },
+  });
+  const changedFilterPlan = {
+    ...plan,
+    filters: {
+      ...plan.filters,
+      close_date_from: "2029-01-01",
+    },
+  };
+
+  const staged = await profile(request, { client, readPlan: plan });
+  const changedFilterStaged = await profile(request, {
+    client,
+    readPlan: changedFilterPlan,
+  });
+  assert.equal(staged.status, "family_confirmation_required");
+  assert.notEqual(
+    staged.family_confirmation.family_digest,
+    changedFilterStaged.family_confirmation.family_digest,
+  );
+
+  const approval = issueApprovalReceipt(plan, "family_scope", new Date());
+  const approvedAt = new Date(approval.approved_at);
+  const complete = await profile(request, {
+    client,
+    readPlan: plan,
+    familyApprovalReceipt: approval,
+    now: approvedAt,
+  });
+  assert.equal(complete.status, "complete");
+  assert.equal(complete.opportunities.length, 1);
+
+  await assert.rejects(
+    () => profile(request, {
+      client,
+      readPlan: changedFilterPlan,
+      familyApprovalReceipt: approval,
+      now: approvedAt,
+    }),
+    { code: "APPROVAL_RECEIPT_MISMATCH" },
+  );
+});
+
+test("v2 family-wide reads never trust the legacy family digest in place of a receipt", async () => {
+  const client = attest(new MockClient({
+    query: (soql) => soql.includes("Ultimate_Parent_name__c =")
+      ? [account, secondAccount]
+      : [account],
+  }));
+  const baseRequest = profileRequest(client, {
+    sections: ["family", "opportunities"],
+    scope: "corporate_family",
+  });
+  const plan = readPlanFor(client, baseRequest, {
+    familyAccountIds: [IDS.account1, IDS.account2],
+  });
+  const staged = await profile(baseRequest, { client, readPlan: plan });
+  const repeated = await profile({
+    ...baseRequest,
+    confirmed_family_digest: staged.family_confirmation.family_digest,
+  }, {
+    client,
+    readPlan: plan,
+  });
+  assert.equal(repeated.status, "family_confirmation_required");
 });
 
 test("ParentId traversal cycles fail closed before returning a family set", async () => {
@@ -495,7 +907,8 @@ test("sf row type violations fail atomically before a complete profile can escap
     },
   };
   const validLink = {
-    Id: IDS.opportunity1, AccountId: IDS.account1,
+    Id: IDS.opportunity1, Name: "Synthetic Opportunity", AccountId: IDS.account1,
+    StageName: "Open", CloseDate: "2030-01-01",
     IsClosed: false, IsWon: false, CurrencyIsoCode: "USD",
   };
   const badProductClient = new MockClient({
@@ -577,6 +990,7 @@ test("family Account cap fails without a truncated set", async () => {
   });
   await assert.rejects(() => profile(profileRequest(client, { sections: ["family"] }), { client }), {
     code: "FAMILY_ACCOUNT_CAP_EXCEEDED",
+    details: { next_action: ["selected_account"] },
   });
 });
 
@@ -599,7 +1013,30 @@ test("Opportunity cap fails without a partial result", async () => {
   });
   await assert.rejects(() => profile(profileRequest(client, { sections: ["overview", "opportunities"] }), { client }), {
     code: "OPPORTUNITY_CAP_EXCEEDED",
+    details: {
+      next_action: ["selected_account", "open_only", "date_narrowing", "stage_narrowing"],
+    },
   });
+});
+
+test("query-budget cap failures expose deterministic narrowing choices", async () => {
+  const client = new MockClient();
+  client.query = async (soql) => {
+    client.queryCount += 1;
+    if (soql.includes("FROM Opportunity")) {
+      throw new SafetyError("QUERY_CAP_EXCEEDED", "Query count exceeded 30");
+    }
+    return [account];
+  };
+  await assert.rejects(
+    () => profile(profileRequest(client, { sections: ["opportunities"] }), { client }),
+    {
+      code: "QUERY_CAP_EXCEEDED",
+      details: {
+        next_action: ["selected_account", "open_only", "date_narrowing", "stage_narrowing"],
+      },
+    },
+  );
 });
 
 test("Opportunity scope and duplicate predicates bind atomically", async () => {
@@ -648,12 +1085,16 @@ test("line-item cap fails without a partial result", async () => {
   });
   await assert.rejects(() => profile(profileRequest(client, { sections: ["overview", "products"] }), { client }), {
     code: "LINE_ITEM_CAP_EXCEEDED",
+    details: {
+      next_action: ["selected_account", "open_only", "date_narrowing", "stage_narrowing"],
+    },
   });
 });
 
 test("duplicate line-item IDs fail without a partial product result", async () => {
   const opportunity = {
-    Id: IDS.opportunity1, AccountId: IDS.account1,
+    Id: IDS.opportunity1, Name: "Synthetic Opportunity", AccountId: IDS.account1,
+    StageName: "Open", CloseDate: "2030-01-01",
     IsClosed: false, IsWon: false, CurrencyIsoCode: "USD",
   };
   const item = {
@@ -710,7 +1151,10 @@ test("User cap fails without a partial hierarchy", async () => {
       scope: "corporate_family",
       confirmed_family_digest: staged.family_confirmation.family_digest,
     }), { client }),
-    { code: "USER_CAP_EXCEEDED" },
+    {
+      code: "USER_CAP_EXCEEDED",
+      details: { next_action: ["selected_account"] },
+    },
   );
 });
 

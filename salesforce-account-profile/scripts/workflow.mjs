@@ -21,6 +21,7 @@ import {
   validateRenderRequest,
   validateResolveRequest,
 } from "./contracts.mjs";
+import { validateApprovalReceipt, validateReadPlan } from "./read-plan.mjs";
 import { buildRenderResult } from "./render.mjs";
 import { batchIds, createProductionSfClient, SfClient } from "./sf-client.mjs";
 import { digest, escapeSoqlLikePrefix, escapeSoqlLiteral, SafetyError, sanitizeText } from "./security.mjs";
@@ -47,10 +48,23 @@ const ACCOUNT_OPTIONAL = FIELD_POLICY.Account.optional;
 const OPPORTUNITY_REQUIRED = FIELD_POLICY.Opportunity.required;
 const OPPORTUNITY_OPTIONAL = FIELD_POLICY.Opportunity.optional;
 const OPPORTUNITY_PRODUCT_LINK_REQUIRED = ["Id", "AccountId", "IsClosed", "IsWon", "CurrencyIsoCode"];
+const OPPORTUNITY_PRODUCT_V2_CONTEXT = ["Name", "StageName", "CloseDate"];
 const LINE_ITEM_REQUIRED = FIELD_POLICY.OpportunityLineItem.required;
 const LINE_ITEM_OPTIONAL = FIELD_POLICY.OpportunityLineItem.optional;
 const PRICEBOOK_ENTRY_REQUIRED = FIELD_POLICY.PricebookEntry.required;
 const USER_REQUIRED = FIELD_POLICY.User.required;
+const EMPTY_OPPORTUNITY_FILTERS = Object.freeze({
+  close_date_from: null,
+  close_date_to: null,
+  stages: Object.freeze([]),
+});
+const VOLUME_NARROWING_ACTIONS = Object.freeze([
+  "selected_account",
+  "open_only",
+  "date_narrowing",
+  "stage_narrowing",
+]);
+const SELECTED_ACCOUNT_ACTION = Object.freeze(["selected_account"]);
 const ACCOUNT_USER_REFERENCE_FIELDS = Object.freeze([
   "CSM__c",
   "Support_Technical_Advisor__c",
@@ -137,6 +151,37 @@ function requireFilterable(describe, fields, objectName) {
   if (invalid.length) throw new SafetyError("SCHEMA_FAILURE", `${objectName} predicate fields are not filterable`, { fields: invalid });
 }
 
+function requireActiveStageValues(describe, stages) {
+  if (!stages.length) return;
+  const metadata = describe.get("StageName");
+  const activeValues = metadata?.activePicklistValues;
+  if (metadata?.type !== "picklist"
+    || !Array.isArray(activeValues)
+    || activeValues.length > 1_000
+    || activeValues.some((value) =>
+      typeof value !== "string"
+      || value.length < 1
+      || value.length > 80
+      || sanitizeText(value) !== value
+    )
+    || new Set(activeValues).size !== activeValues.length
+    || activeValues.some((value, index) =>
+      index > 0 && activeValues[index - 1].localeCompare(value, "en-US") > 0
+    )) {
+    throw new SafetyError(
+      "SCHEMA_FAILURE",
+      "Opportunity.StageName active values are missing or malformed",
+    );
+  }
+  const activeSet = new Set(activeValues);
+  if (stages.some((stage) => !activeSet.has(stage))) {
+    throw new SafetyError(
+      "INVALID_STAGE_FILTER",
+      "Every requested StageName must exactly match an active runtime-described value",
+    );
+  }
+}
+
 function allowlist(record, fields) {
   return Object.fromEntries(fields.map((field) => {
     const value = record[field];
@@ -148,8 +193,14 @@ function allowlist(record, fields) {
   }));
 }
 
-function enforceCap(records, cap, code) {
-  if (records.length > cap) throw new SafetyError(code, `Result exceeded deterministic cap ${cap}`);
+function enforceCap(records, cap, code, nextAction = undefined) {
+  if (records.length > cap) {
+    throw new SafetyError(
+      code,
+      `Result exceeded deterministic cap ${cap}`,
+      nextAction ? { next_action: [...nextAction] } : undefined,
+    );
+  }
 }
 
 function idListSoql(ids) {
@@ -227,6 +278,90 @@ function runtimeDigestFor(client) {
   return client.attestationDigest ?? null;
 }
 
+function canonicalSections(sections) {
+  return PROFILE_SECTIONS.filter((section) => sections.includes(section));
+}
+
+function sameOrderedValues(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function readPlanMismatch(field) {
+  throw new SafetyError(
+    "READ_PLAN_MISMATCH",
+    `The v2 read plan does not match the current ${field}`,
+  );
+}
+
+function validateReadPlanRequestBinding(plan, request, now) {
+  if (plan.org_identity.target_org !== request.target_org) readPlanMismatch("target org");
+  if (!sameOrderedValues(plan.requested_sections, canonicalSections(request.sections))) {
+    readPlanMismatch("requested sections");
+  }
+  if (plan.scope !== request.scope) readPlanMismatch("Account scope");
+  if (plan.opportunity_scope !== request.opportunity_scope) readPlanMismatch("Opportunity scope");
+  const hasOpportunityFilter = plan.filters.close_date_from !== null
+    || plan.filters.close_date_to !== null
+    || plan.filters.stages.length > 0;
+  if (hasOpportunityFilter
+    && !plan.requested_sections.some((section) =>
+      section === "opportunities" || section === "products")) {
+    throw new SafetyError(
+      "UNSUPPORTED_FILTER",
+      "Opportunity filters require the Opportunities or Opportunity line items section",
+    );
+  }
+  if (plan.selected_account?.Id !== request.account_receipt.account.Id
+    || plan.selected_account?.Name !== request.account_receipt.account.Name
+    || plan.account_receipt_digest !== request.account_receipt.receipt_digest) {
+    readPlanMismatch("selected Account receipt");
+  }
+  const selector = plan.account_selector;
+  const selected = request.account_receipt.account;
+  if ((selector.mode === "id" && selector.value !== selected.Id)
+    || (selector.mode === "exact_name"
+      && salesforceNameKey(selector.value) !== salesforceNameKey(selected.Name))
+    || (selector.mode === "prefix"
+      && !salesforceNameKey(selected.Name).startsWith(salesforceNameKey(selector.value)))) {
+    readPlanMismatch("Account selector");
+  }
+  if (now.getTime() >= new Date(plan.expires_at).getTime()) {
+    throw new SafetyError("READ_PLAN_EXPIRED", "The v2 read plan has expired");
+  }
+}
+
+function validateReadPlanRuntimeBinding(plan, request, identity, runtimeDigest) {
+  if (plan.org_identity.target_org !== request.target_org
+    || plan.org_identity.org_id !== identity.org_id
+    || plan.org_identity.username !== identity.username
+    || plan.org_identity.instance_url !== identity.instance_url
+    || plan.org_identity.connected_status !== identity.connected_status) {
+    readPlanMismatch("Salesforce org identity");
+  }
+  if (plan.runtime_attestation_digest !== runtimeDigest) {
+    readPlanMismatch("Salesforce CLI runtime");
+  }
+}
+
+function opportunityFiltersFrom(plan) {
+  if (!plan) return EMPTY_OPPORTUNITY_FILTERS;
+  return {
+    close_date_from: plan.filters.close_date_from,
+    close_date_to: plan.filters.close_date_to,
+    stages: [...plan.filters.stages],
+  };
+}
+
+function executionTime(value) {
+  const now = value === undefined
+    ? new Date()
+    : (value instanceof Date ? new Date(value.getTime()) : new Date(value));
+  if (!Number.isFinite(now.getTime())) {
+    throw new SafetyError("INVALID_PLAN_CONTEXT", "dependencies.now must identify a valid instant");
+  }
+  return now;
+}
+
 export async function preflight(input, dependencies = {}) {
   validatePreflightRequest(input);
   const client = await createClient(input.target_org, dependencies);
@@ -271,6 +406,12 @@ export async function resolve(input, dependencies = {}) {
   const records = await client.query(`SELECT ${fields.join(", ")} FROM Account WHERE ${clause} ORDER BY Name, Id LIMIT ${CAPS.candidates + 1}`);
   enforceCap(records, CAPS.candidates, "CANDIDATE_CAP_EXCEEDED");
   const candidates = records.map((record) => validateAccountRow(allowlist(record, fields)));
+  if (new Set(candidates.map((candidate) => candidate.Id)).size !== candidates.length) {
+    throw new SafetyError(
+      "RELATIONSHIP_INCONSISTENCY",
+      "Account resolution returned duplicate candidate IDs",
+    );
+  }
   const expectedNameKey = salesforceNameKey(value);
   if (mode === "id" && candidates.some((candidate) => candidate.Id !== value)) {
     throw new SafetyError("PREDICATE_BINDING_FAILED", "Account ID result did not match the requested ID");
@@ -333,7 +474,7 @@ async function discoverFamily(client, selected, accountFields, hasUltimate, warn
     const records = await client.query(
       `SELECT ${accountFields.join(", ")} FROM Account WHERE Ultimate_Parent_name__c = '${exactValue}' ORDER BY Id LIMIT ${CAPS.familyAccounts + 1}`,
     );
-    enforceCap(records, CAPS.familyAccounts, "FAMILY_ACCOUNT_CAP_EXCEEDED");
+    enforceCap(records, CAPS.familyAccounts, "FAMILY_ACCOUNT_CAP_EXCEEDED", SELECTED_ACCOUNT_ACTION);
     const accounts = records.map((record) => validateAccountRow(allowlist(record, accountFields)));
     const ids = accounts.map((account) => account.Id);
     const expectedFamilyKey = salesforceNameKey(selected.Ultimate_Parent_name__c);
@@ -410,7 +551,12 @@ async function discoverFamily(client, selected, accountFields, hasUltimate, warn
         }
         byId.set(account.Id, account);
         if (!expanded.has(account.Id) && !next.includes(account.Id)) next.push(account.Id);
-        enforceCap([...byId.values()], CAPS.familyAccounts, "FAMILY_ACCOUNT_CAP_EXCEEDED");
+        enforceCap(
+          [...byId.values()],
+          CAPS.familyAccounts,
+          "FAMILY_ACCOUNT_CAP_EXCEEDED",
+          SELECTED_ACCOUNT_ACTION,
+        );
       }
     }
     frontier = next;
@@ -425,16 +571,31 @@ async function discoverFamily(client, selected, accountFields, hasUltimate, warn
   return [...byId.values()].sort((a, b) => a.Id.localeCompare(b.Id));
 }
 
-async function queryOpportunities(client, accountIds, fields, opportunityScope) {
+async function queryOpportunities(client, accountIds, fields, opportunityScope, filters) {
   const all = [];
-  const scopeClause = opportunityScope === "open" ? " AND IsClosed = false" : opportunityScope === "closed" ? " AND IsClosed = true" : "";
+  const predicates = [`AccountId IN (${idListSoql(accountIds)})`];
+  if (opportunityScope === "open") predicates.push("IsClosed = false");
+  if (opportunityScope === "closed") predicates.push("IsClosed = true");
+  if (filters.close_date_from) predicates.push(`CloseDate >= ${filters.close_date_from}`);
+  if (filters.close_date_to) predicates.push(`CloseDate <= ${filters.close_date_to}`);
+  if (filters.stages.length) {
+    predicates.push(
+      `StageName IN (${filters.stages.map((stage) => `'${escapeSoqlLiteral(stage)}'`).join(",")})`,
+    );
+  }
   const orderBy = fields.includes("CloseDate") ? "CloseDate DESC, Id" : "Id";
   for (const batch of batchIds(accountIds)) {
+    predicates[0] = `AccountId IN (${idListSoql(batch)})`;
     const records = await client.query(
-      `SELECT ${fields.join(", ")} FROM Opportunity WHERE AccountId IN (${idListSoql(batch)})${scopeClause} ORDER BY ${orderBy} LIMIT ${CAPS.opportunities + 1}`,
+      `SELECT ${fields.join(", ")} FROM Opportunity WHERE ${predicates.join(" AND ")} ORDER BY ${orderBy} LIMIT ${CAPS.opportunities + 1}`,
     );
     all.push(...records.map((record) => allowlist(record, fields)));
-    enforceCap(all, CAPS.opportunities, "OPPORTUNITY_CAP_EXCEEDED");
+    enforceCap(
+      all,
+      CAPS.opportunities,
+      "OPPORTUNITY_CAP_EXCEEDED",
+      VOLUME_NARROWING_ACTIONS,
+    );
   }
   if (new Set(all.map((item) => item.Id)).size !== all.length) {
     throw new SafetyError("RELATIONSHIP_INCONSISTENCY", "Opportunity query returned duplicate IDs");
@@ -448,13 +609,29 @@ async function queryOpportunities(client, accountIds, fields, opportunityScope) 
   )) {
     throw new SafetyError("PREDICATE_BINDING_FAILED", "Opportunity result did not match the requested open/closed scope");
   }
+  const stageValues = new Set(filters.stages);
+  if (all.some((item) =>
+    (filters.close_date_from
+      && (typeof item.CloseDate !== "string" || item.CloseDate < filters.close_date_from))
+    || (filters.close_date_to
+      && (typeof item.CloseDate !== "string" || item.CloseDate > filters.close_date_to))
+    || (filters.stages.length
+      && (typeof item.StageName !== "string" || !stageValues.has(item.StageName)))
+  )) {
+    throw new SafetyError("PREDICATE_BINDING_FAILED", "Opportunity result did not match the confirmed date and StageName filters");
+  }
   if (all.some((item) =>
     ("OwnerId" in item && !USER_ID.test(item.OwnerId))
+    || ("Name" in item && (typeof item.Name !== "string" || item.Name.length === 0))
+    || ("StageName" in item && typeof item.StageName !== "string")
+    || ("CloseDate" in item && typeof item.CloseDate !== "string")
     || typeof item.IsClosed !== "boolean"
     || typeof item.IsWon !== "boolean"
+    || typeof item.CurrencyIsoCode !== "string"
+    || ("HasOpportunityLineItem" in item && typeof item.HasOpportunityLineItem !== "boolean")
     || ("Amount" in item && item.Amount !== null && (typeof item.Amount !== "number" || !Number.isFinite(item.Amount)))
   )) {
-    throw new SafetyError("RELATIONSHIP_INCONSISTENCY", "Opportunity result contains invalid owner or status fields");
+    throw new SafetyError("RELATIONSHIP_INCONSISTENCY", "Opportunity result contains invalid identity, owner, date, or status fields");
   }
   return all;
 }
@@ -476,7 +653,12 @@ async function queryProducts(client, opportunityIds, fields) {
         ProductName: sanitizeText(record.PricebookEntry.Product2.Name),
       };
     }));
-    enforceCap(all, CAPS.lineItems, "LINE_ITEM_CAP_EXCEEDED");
+    enforceCap(
+      all,
+      CAPS.lineItems,
+      "LINE_ITEM_CAP_EXCEEDED",
+      VOLUME_NARROWING_ACTIONS,
+    );
   }
   if (new Set(all.map((item) => item.Id)).size !== all.length) {
     throw new SafetyError("RELATIONSHIP_INCONSISTENCY", "Line-item query returned duplicate IDs");
@@ -521,7 +703,7 @@ async function queryTeam(client, seedIds, fields, warnings) {
           throw new SafetyError("INVALID_FIELD_TYPE", "User Name and Title have invalid types");
         }
         users.set(user.Id, user);
-        enforceCap([...users.values()], CAPS.users, "USER_CAP_EXCEEDED");
+        enforceCap([...users.values()], CAPS.users, "USER_CAP_EXCEEDED", SELECTED_ACCOUNT_ACTION);
         if (user.ManagerId) {
           if (!USER_ID.test(user.ManagerId)) throw new SafetyError("INVALID_RELATIONSHIP_ID", "ManagerId is invalid");
           if (!users.has(user.ManagerId) && !returnedIdSet.has(user.ManagerId)) next.push(user.ManagerId);
@@ -549,7 +731,7 @@ async function queryTeam(client, seedIds, fields, warnings) {
   return [...users.values()];
 }
 
-function familyPlanDigest(request, currentOrgDigest, selectedAccountId, accountIds) {
+function familyPlanDigest(request, currentOrgDigest, selectedAccountId, accountIds, filters) {
   return digest({
     schema_version: "salesforce-account-profile-family-read-plan/v2",
     org_digest: currentOrgDigest,
@@ -559,19 +741,39 @@ function familyPlanDigest(request, currentOrgDigest, selectedAccountId, accountI
     scope: request.scope,
     opportunity_scope: request.opportunity_scope,
     filters: {
-      close_date_from: null,
-      close_date_to: null,
-      stages: [],
+      close_date_from: filters.close_date_from,
+      close_date_to: filters.close_date_to,
+      stages: [...filters.stages],
     },
     field_map_version: FIELD_MAP_VERSION,
     output_type: "profile_result",
   });
 }
 
-export async function profile(input, dependencies = {}) {
+async function buildProfile(input, dependencies = {}) {
   const request = validateProfileRequest(input);
+  const readPlan = dependencies.readPlan === undefined
+    ? null
+    : validateReadPlan(dependencies.readPlan);
+  const now = readPlan ? executionTime(dependencies.now) : null;
+  if (!readPlan && dependencies.familyApprovalReceipt !== undefined) {
+    throw new SafetyError(
+      "INVALID_PLAN_CONTEXT",
+      "A family approval receipt requires its v2 read plan",
+    );
+  }
+  if (readPlan) validateReadPlanRequestBinding(readPlan, request, now);
+  const opportunityFilters = opportunityFiltersFrom(readPlan);
   const client = await createClient(request.target_org, dependencies);
   const identity = await client.orgDisplay();
+  if (readPlan) {
+    validateReadPlanRuntimeBinding(
+      readPlan,
+      request,
+      identity,
+      runtimeDigestFor(client),
+    );
+  }
   const currentOrgDigest = validateConfirmedOrg(
     request.target_org,
     identity,
@@ -622,7 +824,17 @@ export async function profile(input, dependencies = {}) {
     );
   }
   const accountIds = accounts.map((account) => account.Id).sort();
-  const familyDigest = familyPlanDigest(request, currentOrgDigest, selected.Id, accountIds);
+  if (readPlan?.family_account_ids.length
+    && !sameOrderedValues(readPlan.family_account_ids, accountIds)) {
+    readPlanMismatch("corporate-family Account set");
+  }
+  const familyDigest = familyPlanDigest(
+    request,
+    currentOrgDigest,
+    selected.Id,
+    accountIds,
+    opportunityFilters,
+  );
   const selectedOutput = request.sections.includes("overview")
     ? selected
     : { Id: selected.Id, Name: selected.Name, ParentId: selected.ParentId, OwnerId: selected.OwnerId };
@@ -633,9 +845,28 @@ export async function profile(input, dependencies = {}) {
     OwnerId: item.OwnerId,
   }));
 
-  const needsFamilyConfirmation = request.scope === "corporate_family"
-    && ["opportunities", "products", "team"].some((section) => request.sections.includes(section))
-    && request.confirmed_family_digest !== familyDigest;
+  const needsFamilyWideRead = request.scope === "corporate_family"
+    && ["opportunities", "products", "team"].some((section) => request.sections.includes(section));
+  let needsFamilyConfirmation = false;
+  if (needsFamilyWideRead && readPlan) {
+    needsFamilyConfirmation = !sameOrderedValues(readPlan.family_account_ids, accountIds)
+      || dependencies.familyApprovalReceipt === undefined;
+    if (!needsFamilyConfirmation) {
+      validateApprovalReceipt(
+        dependencies.familyApprovalReceipt,
+        readPlan,
+        "family_scope",
+        now,
+      );
+    }
+  } else if (needsFamilyWideRead) {
+    needsFamilyConfirmation = request.confirmed_family_digest !== familyDigest;
+  } else if (dependencies.familyApprovalReceipt !== undefined) {
+    throw new SafetyError(
+      "INVALID_PLAN_CONTEXT",
+      "A family approval receipt is only valid for a corporate-family transaction or team read",
+    );
+  }
   if (needsFamilyConfirmation) {
     return {
       schema_version: CONTRACTS.profileResult,
@@ -653,7 +884,9 @@ export async function profile(input, dependencies = {}) {
       query_count: client.queryCount,
     };
   }
-  if (request.confirmed_family_digest && request.confirmed_family_digest !== familyDigest) {
+  if (!readPlan
+    && request.confirmed_family_digest
+    && request.confirmed_family_digest !== familyDigest) {
     throw new SafetyError("FAMILY_CONFIRMATION_MISMATCH", "Confirmed corporate-family Account-ID set changed");
   }
 
@@ -662,9 +895,31 @@ export async function profile(input, dependencies = {}) {
     const describe = await client.describe("Opportunity");
     const fields = request.sections.includes("opportunities")
       ? requireFields(describe, OPPORTUNITY_REQUIRED, OPPORTUNITY_OPTIONAL, "Opportunity", warnings)
-      : requireFields(describe, OPPORTUNITY_PRODUCT_LINK_REQUIRED, [], "Opportunity", warnings);
-    requireFilterable(describe, request.opportunity_scope === "all" ? ["AccountId"] : ["AccountId", "IsClosed"], "Opportunity");
-    opportunities = await queryOpportunities(client, request.scope === "corporate_family" ? accountIds : [selected.Id], fields, request.opportunity_scope);
+      : requireFields(
+        describe,
+        [
+          ...OPPORTUNITY_PRODUCT_LINK_REQUIRED,
+          ...(readPlan ? OPPORTUNITY_PRODUCT_V2_CONTEXT : []),
+        ],
+        [],
+        "Opportunity",
+        warnings,
+      );
+    const predicateFields = [
+      "AccountId",
+      ...(request.opportunity_scope === "all" ? [] : ["IsClosed"]),
+      ...(opportunityFilters.close_date_from || opportunityFilters.close_date_to ? ["CloseDate"] : []),
+      ...(opportunityFilters.stages.length ? ["StageName"] : []),
+    ];
+    requireFilterable(describe, predicateFields, "Opportunity");
+    requireActiveStageValues(describe, opportunityFilters.stages);
+    opportunities = await queryOpportunities(
+      client,
+      request.scope === "corporate_family" ? accountIds : [selected.Id],
+      fields,
+      request.opportunity_scope,
+      opportunityFilters,
+    );
   }
 
   let products = [];
@@ -715,6 +970,23 @@ export async function profile(input, dependencies = {}) {
   };
   validateCompleteProfile(result);
   return result;
+}
+
+export async function profile(input, dependencies = {}) {
+  try {
+    return await buildProfile(input, dependencies);
+  } catch (error) {
+    if (error instanceof SafetyError
+      && error.code === "QUERY_CAP_EXCEEDED"
+      && error.details === undefined) {
+      throw new SafetyError(
+        error.code,
+        error.message,
+        { next_action: [...VOLUME_NARROWING_ACTIONS] },
+      );
+    }
+    throw error;
+  }
 }
 
 export async function render(input) {

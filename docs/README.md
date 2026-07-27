@@ -4,7 +4,7 @@ Each page describes when to use the skill, what inputs to provide, and a starter
 
 See [production-readiness-evaluation.md](./production-readiness-evaluation.md) for separate package-quality, functional-confidence, and operational-certification evidence. Prior single scores are historical only.
 
-Last verified: 2026-07-25
+Last verified: 2026-07-27
 
 ## Documentation Contract
 

@@ -7,11 +7,36 @@ Last verified: 2026-07-27
 The v1 command contracts remain compatible advanced primitives. The v2 conversational
 orchestrator owns their transport values and exposes only business decisions to the user.
 
-## Command Contracts
+## Public V2 Commands
 
 All inputs reject unknown keys. JSON input is limited to 1 MiB. A path input must be a regular,
 non-symlink file with exact mode `0600`; it is opened with no-follow semantics and rechecked
 after reading. Output files are created once with `0600`; existing paths are not overwritten.
+
+| Command | Request schema | Result schema |
+| --- | --- | --- |
+| `doctor` | `salesforce-account-profile-doctor-request/v2` | `salesforce-account-profile-doctor-result/v2` |
+| `start` | `salesforce-account-profile-start-request/v2` | `salesforce-account-profile-start-result/v2` |
+| `continue` | `salesforce-account-profile-continue-request/v2` | `salesforce-account-profile-continue-result/v2` |
+| `status` | `salesforce-account-profile-status-request/v2` | `salesforce-account-profile-status-result/v2` |
+| `abort` | `salesforce-account-profile-abort-request/v2` | `salesforce-account-profile-abort-result/v2` |
+
+Codex owns these transport contracts. The user sees only the rendered message, enriched
+Account chooser, exact family manifest, and business next action. `start` defaults to the
+selected-account `pipeline` preset and rendered output. `continue` accepts exactly the
+decision expected by the stored state.
+
+The state machine is `new → org_confirmation → account_resolution → account_choice? →
+family_approval? → executing → complete`. `status` returns a redacted resumable summary;
+`abort`, successful completion, and expiry delete the private session.
+
+The allowed next actions are `confirm_org_and_plan`, `choose_account`,
+`approve_family_scope`, `narrow_query`, `reauthenticate`, `request_permissions`, and
+`cancel`. The user never supplies a plan, receipt, digest, schema version, or file path.
+
+## Advanced V1 Commands
+
+These remain compatible internal primitives; they are not the normal user journey.
 
 | Command | Request schema | Result schema |
 | --- | --- | --- |
@@ -26,15 +51,15 @@ The v2 control-plane contracts are
 Account selector and selected Account when known, sorted corporate-family Account IDs,
 preset, requested sections, selected/family scope, open/closed/all Opportunity scope,
 close-date and StageName filters, field-map version, output type, issue time, and expiry.
-Every plan expires within 30 minutes.
+Every plan and session expires exactly 30 minutes after issue; activity does not extend it.
 
 Approval receipts record that a conversational approval occurred and bind the complete
 current plan, including the pinned runtime and selected Account receipt. They are workflow
 consistency evidence, not cryptographic proof of a human
 identity or authorization. The runtime carries them privately; a user never copies a digest.
 
-Errors use `salesforce-account-profile-error/v1` with a stable `error.code`, safe
-`error.message`, and optional redacted details.
+Errors use `salesforce-account-profile-error/v1` with a stable `error.code` and safe
+`error.message`. The public CLI does not emit raw exception details.
 
 ## Minimal Requests
 
@@ -54,9 +79,8 @@ Errors use `salesforce-account-profile-error/v1` with a stable `error.code`, saf
 {"schema_version":"salesforce-account-profile-render-request/v1","profile":{"schema_version":"salesforce-account-profile-profile-result/v1","classification":"confidential","status":"complete","selected_account":{"Id":"001000000000001AAA","Name":"Example Account","ParentId":null,"OwnerId":"005000000000001AAA"},"scope":"selected_account","opportunity_scope":"open","accounts":[],"family_confirmation":null,"opportunities":[],"products":[],"team":[],"currencies":[],"warnings":[],"query_count":1}}
 ```
 
-The default profile sections are `["overview"]`, scope is `selected_account`, and
-Opportunity scope is `open`. Request `family`, `opportunities`, `products`, or `team`
-explicitly.
+The advanced v1 profile defaults to `["overview"]`, `selected_account`, and open
+Opportunities. The v2 conversational default is different by design.
 
 The v2 conversational default is the `pipeline` preset: selected-account overview, open
 Opportunities, and owner hierarchy. Other fixed presets are `snapshot`, `team`,
@@ -98,7 +122,7 @@ Exact still means full-name equality: no substring or wildcard semantics are int
 | IDs per query batch | 200 |
 | Manager depth | 10 |
 | Parent traversal depth | 10 |
-| Salesforce data queries per command | 30 |
+| Salesforce data queries per conversational run or advanced command | 30 |
 
 Any cap, truncation, missing or non-boolean completeness flag, record-count mismatch,
 later-batch failure, schema failure, query authorization/FLS failure, or relationship
@@ -109,11 +133,23 @@ ParentId family discovery also fails without a family result on cycle or depth-l
 conditions and reports selected-account scope as the safe fallback. Manager cycles and depth
 limits remain nonfatal, but the result explicitly carries `MANAGER_HIERARCHY_INCOMPLETE`.
 
-## Retention And Recovery
+## Org Registry, Retention, And Recovery
 
 The runtime creates private temporary directories only for SOQL request files and deletes
 them in `finally` blocks. Raw Salesforce CLI output is parsed in memory, allowlisted, and
 discarded. The skill does not cache profiles.
 
-If a command fails, correct the input, permissions, schema map, or confirmation and rerun the
-whole command. Do not combine a failed partial run with a later result.
+The private org registry retains only an alias, friendly label, org fingerprint, org-ID
+suffix, instance host, org/environment type, field-map version, readiness state,
+verification dates, and—only for production approval—redacted evidence references. It never
+retains a username, full org ID, instance URL, credential, or token. `doctor` verifies all
+required object metadata and predicate fields before recording metadata verification.
+
+Active session control state is stored in an exact-mode `0700` directory and `0600` files.
+It contains only the plan, minimal Account/family manifest, receipts, state, cumulative
+query count, and fixed expiry. Raw CLI output, relationship hydration, completed profiles,
+and credentials are rejected recursively.
+
+Authentication and permission failures map to explicit correction and retry. Atomic cap
+failures map to deterministic narrowing. Security-sensitive, inconsistent, or unknown
+failures cancel the session. Never combine a failed partial run with a later result.
