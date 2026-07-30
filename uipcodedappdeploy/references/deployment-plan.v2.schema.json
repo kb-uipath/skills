@@ -1,0 +1,420 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kb-uipath.github.io/skills/uipcodedappdeploy/deployment-plan.v2.schema.json",
+  "title": "UiPath Coded App Deployment Plan v2.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "created_at",
+    "project",
+    "inputs",
+    "parameters",
+    "deployment_binding_hash",
+    "stages",
+    "execution",
+    "plan_hash"
+  ],
+  "properties": {
+    "kind": {
+      "const": "uipcodedappdeploy.plan"
+    },
+    "schema_version": {
+      "const": "2.0"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "manifest",
+        "uipath_manifest",
+        "name",
+        "old_version",
+        "new_version"
+      ],
+      "properties": {
+        "root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "manifest": {
+          "const": "pyproject.toml"
+        },
+        "uipath_manifest": {
+          "const": "uipath.json"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "old_version": {
+          "$ref": "#/$defs/semver"
+        },
+        "new_version": {
+          "$ref": "#/$defs/semver"
+        }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "initial",
+        "versioned"
+      ],
+      "properties": {
+        "scope": {
+          "const": [
+            "pyproject.toml",
+            "uipath.json"
+          ]
+        },
+        "initial": {
+          "$ref": "#/$defs/inputSnapshot"
+        },
+        "versioned": {
+          "$ref": "#/$defs/inputSnapshot"
+        }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app_name",
+        "app_type",
+        "author",
+        "candidate_package_file_digest",
+        "cli_executable",
+        "cli_executable_sha256",
+        "cli_profile",
+        "cli_profile_hash",
+        "cli_version",
+        "client_id",
+        "content_type",
+        "control_plane_url",
+        "description",
+        "dist",
+        "dist_digest",
+        "folder_key",
+        "main_file",
+        "org_id",
+        "org_name",
+        "package_name",
+        "package_digest",
+        "package_digest_algorithm",
+        "package_path",
+        "path_name",
+        "run_app_build",
+        "run_lock",
+        "run_tests",
+        "source_sha",
+        "tags",
+        "tenant_id",
+        "tenant_name",
+        "uipath_dir",
+        "verify_timeout",
+        "verify_url"
+      ],
+      "properties": {
+        "app_name": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "app_type": {
+          "enum": [
+            "Web",
+            "Action"
+          ]
+        },
+        "author": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "candidate_package_file_digest": {
+          "$ref": "#/$defs/nullableHash"
+        },
+        "cli_executable": {
+          "$ref": "#/$defs/nullableNonEmpty"
+        },
+        "cli_executable_sha256": {
+          "$ref": "#/$defs/nullableHash"
+        },
+        "cli_profile": {
+          "$ref": "#/$defs/nullableNonEmpty"
+        },
+        "cli_profile_hash": {
+          "$ref": "#/$defs/nullableHash"
+        },
+        "cli_version": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/semver"
+            }
+          ]
+        },
+        "client_id": {
+          "$ref": "#/$defs/nullableGuid"
+        },
+        "content_type": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "control_plane_url": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "const": "https://staging.uipath.com"
+            }
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "dist": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "dist_digest": {
+          "$ref": "#/$defs/nullableHash"
+        },
+        "folder_key": {
+          "$ref": "#/$defs/nullableGuid"
+        },
+        "main_file": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "org_id": {
+          "$ref": "#/$defs/nullableGuid"
+        },
+        "org_name": {
+          "$ref": "#/$defs/nullableNonEmpty"
+        },
+        "package_name": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "package_digest": {
+          "$ref": "#/$defs/nullableHash"
+        },
+        "package_digest_algorithm": {
+          "const": "uipath-coded-app-content-v1"
+        },
+        "package_path": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "path_name": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/slug"
+            }
+          ]
+        },
+        "run_app_build": {
+          "type": "boolean"
+        },
+        "run_lock": {
+          "type": "boolean"
+        },
+        "run_tests": {
+          "type": "boolean"
+        },
+        "source_sha": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            }
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/slug"
+          }
+        },
+        "tenant_id": {
+          "$ref": "#/$defs/nullableGuid"
+        },
+        "tenant_name": {
+          "$ref": "#/$defs/nullableNonEmpty"
+        },
+        "uipath_dir": {
+          "const": ".uipath"
+        },
+        "verify_timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120
+        },
+        "verify_url": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https://"
+            }
+          ]
+        }
+      }
+    },
+    "deployment_binding_hash": {
+      "$ref": "#/$defs/hash"
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 8,
+      "items": {
+        "type": "object"
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requires_execute",
+        "requires_plan",
+        "requires_plan_hash_approval",
+        "executable",
+        "blockers"
+      ],
+      "properties": {
+        "requires_execute": {
+          "const": true
+        },
+        "requires_plan": {
+          "const": true
+        },
+        "requires_plan_hash_approval": {
+          "const": true
+        },
+        "executable": {
+          "type": "boolean"
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "plan_hash": {
+      "$ref": "#/$defs/hash"
+    }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "nullableHash": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/hash"
+        }
+      ]
+    },
+    "guid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "nullableGuid": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/guid"
+        }
+      ]
+    },
+    "nonEmpty": {
+      "type": "string",
+      "minLength": 1
+    },
+    "nullableNonEmpty": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/nonEmpty"
+        }
+      ]
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "inputSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "files",
+        "hash"
+      ],
+      "properties": {
+        "files": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/fileHash"
+            },
+            {
+              "$ref": "#/$defs/fileHash"
+            }
+          ],
+          "items": false
+        },
+        "hash": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "fileHash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "enum": [
+            "pyproject.toml",
+            "uipath.json"
+          ]
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    }
+  }
+}
