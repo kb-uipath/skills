@@ -6,29 +6,41 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import io
 import json
 import os
 import re
 import shlex
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import tomllib
 import urllib.request
+import zipfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
 
 
 PLAN_KIND = "uipcodedappdeploy.plan"
-PLAN_SCHEMA_VERSION = "1.0"
+PLAN_SCHEMA_VERSION = "2.0"
 RECEIPT_KIND = "uipcodedappdeploy.receipt"
-RECEIPT_SCHEMA_VERSION = "1.0"
+RECEIPT_SCHEMA_VERSION = "2.0"
 RESULT_KIND = "uipcodedappdeploy.result"
 RESULT_SCHEMA_VERSION = "1.0"
+STAGING_CONTROL_PLANE_URL = "https://staging.uipath.com"
+PACKAGE_DIGEST_ALGORITHM = "uipath-coded-app-content-v1"
 HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+SOURCE_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+PATH_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+CORE_PROPERTIES_RE = re.compile(
+    r"^package/services/metadata/core-properties/[^/]+\.psmdcp$"
+)
 GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -52,19 +64,32 @@ PARAMETER_KEYS = {
     "app_name",
     "app_type",
     "author",
+    "candidate_package_file_digest",
+    "cli_executable",
+    "cli_executable_sha256",
+    "cli_profile",
+    "cli_profile_hash",
+    "cli_version",
+    "client_id",
     "content_type",
+    "control_plane_url",
     "description",
     "dist",
+    "dist_digest",
     "folder_key",
     "main_file",
     "org_id",
     "org_name",
     "package_name",
-    "reuse_client",
+    "package_digest",
+    "package_digest_algorithm",
+    "package_path",
+    "path_name",
     "run_app_build",
     "run_lock",
     "run_tests",
-    "target_url",
+    "source_sha",
+    "tags",
     "tenant_id",
     "tenant_name",
     "uipath_dir",
@@ -253,7 +278,7 @@ def _load_pyproject(path: Path) -> tuple[dict[str, Any], str]:
     return document, text
 
 
-def _load_uipath_json(path: Path, *, reuse_client: bool = False) -> dict[str, Any]:
+def _load_uipath_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         _fail(f"Missing required coded app manifest: {path}")
     try:
@@ -269,8 +294,6 @@ def _load_uipath_json(path: Path, *, reuse_client: bool = False) -> dict[str, An
             not isinstance(document[field], str) or not document[field].strip()
         ):
             _fail(f"{path} field {field!r} must be a non-empty string when present.")
-    if reuse_client and not document.get("clientId"):
-        _fail(f"--reuse-client requires a non-empty clientId in {path}.")
     return document
 
 
@@ -402,8 +425,273 @@ def _default_dist(root: Path) -> str:
     return "dist"
 
 
-def _auth_flags(parameters: dict[str, Any], *, publish: bool, deploy: bool) -> list[str]:
-    flags = ["--base-url", parameters["target_url"]]
+def _validate_hash(value: str | None, label: str) -> str | None:
+    if value is None:
+        return None
+    value = _safe_text(value, label)
+    if HASH_RE.fullmatch(value) is None:
+        _fail(f"{label} must be a sha256:<64 lowercase hex characters> value.")
+    return value
+
+
+def _validate_source_sha(value: str | None, label: str) -> str | None:
+    if value is None:
+        return None
+    value = _safe_text(value, label).lower()
+    if SOURCE_SHA_RE.fullmatch(value) is None:
+        _fail(f"{label} must be a full 40- or 64-character lowercase source commit SHA.")
+    return value
+
+
+def _normalize_tags(value: str | None, label: str) -> list[str]:
+    if value is None:
+        return []
+    tags = []
+    seen = set()
+    for raw in value.split(","):
+        tag = raw.strip().lower()
+        if not tag or PATH_NAME_RE.fullmatch(tag) is None:
+            _fail(f"{label} must be a comma-separated list of lowercase slug values.")
+        if tag not in seen:
+            tags.append(tag)
+            seen.add(tag)
+    return sorted(tags)
+
+
+def _hash_file(path: Path, label: str) -> str:
+    if not path.is_file():
+        _fail(f"{label} is not a regular file: {path}")
+    try:
+        return _hash_bytes(path.read_bytes())
+    except OSError as exc:
+        _fail(f"Could not hash {label} {path}: {exc}")
+
+
+def _package_evidence(
+    path: Path,
+    *,
+    package_name: str,
+    main_file: str,
+) -> tuple[str, str]:
+    """Return deterministic coded-app content and exact package-file digests."""
+    if not path.is_file():
+        _fail(f"UiPath candidate package is not a regular file: {path}")
+    try:
+        payload = path.read_bytes()
+    except OSError as exc:
+        _fail(f"Could not read UiPath package {path}: {exc}")
+    file_digest = _hash_bytes(payload)
+    expected_nuspec = f"{package_name}.nuspec"
+    expected_main = f"content/{main_file}"
+    records: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    envelope_paths: set[str] = set()
+    core_property_paths: set[str] = set()
+    generated_project_ids: dict[str, str] = {}
+    relationships_payload: bytes | None = None
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+            bad_member = archive.testzip()
+            if bad_member is not None:
+                _fail(f"UiPath package contains a corrupt ZIP member: {bad_member}")
+            for member in archive.infolist():
+                name = member.filename
+                if (
+                    not name
+                    or "\\" in name
+                    or "\x00" in name
+                    or PurePosixPath(name).is_absolute()
+                    or ".." in PurePosixPath(name).parts
+                ):
+                    _fail(f"UiPath package contains an unsafe member path: {name!r}")
+                if member.is_dir():
+                    continue
+                if name in seen_paths:
+                    _fail(f"UiPath package contains a duplicate member path: {name}")
+                seen_paths.add(name)
+                unix_mode = (member.external_attr >> 16) & 0o170000
+                if unix_mode == stat.S_IFLNK:
+                    _fail(f"UiPath package contains an unsupported symbolic link: {name}")
+                if member.flag_bits & 0x1:
+                    _fail(f"UiPath package contains an encrypted member: {name}")
+                member_payload = archive.read(member)
+                if name == "[Content_Types].xml":
+                    envelope_paths.add(name)
+                    records.append(
+                        {
+                            "path": name,
+                            "size": len(member_payload),
+                            "sha256": _hash_bytes(member_payload),
+                        }
+                    )
+                    continue
+                if name == "_rels/.rels":
+                    envelope_paths.add(name)
+                    relationships_payload = member_payload
+                    continue
+                if CORE_PROPERTIES_RE.fullmatch(name):
+                    core_property_paths.add(name)
+                    records.append(
+                        {
+                            "path": (
+                                "package/services/metadata/core-properties/"
+                                "<generated>.psmdcp"
+                            ),
+                            "size": len(member_payload),
+                            "sha256": _hash_bytes(member_payload),
+                        }
+                    )
+                    continue
+                if name != expected_nuspec and not name.startswith("content/"):
+                    _fail(f"UiPath package contains an unexpected member: {name}")
+                digest_payload = member_payload
+                if name in {"content/operate.json", "content/webAppManifest.json"}:
+                    try:
+                        generated_metadata = json.loads(member_payload.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        _fail(f"UiPath package contains invalid generated metadata: {name}")
+                    project_id = (
+                        generated_metadata.get("projectId")
+                        if isinstance(generated_metadata, dict)
+                        else None
+                    )
+                    if (
+                        not isinstance(project_id, str)
+                        or GUID_RE.fullmatch(project_id) is None
+                    ):
+                        _fail(f"UiPath package generated metadata lacks a project GUID: {name}")
+                    generated_project_ids[name] = project_id.lower()
+                    generated_metadata["projectId"] = "<generated-by-uip-cli>"
+                    digest_payload = _canonical_json(generated_metadata)
+                records.append(
+                    {
+                        "path": name,
+                        "size": len(digest_payload),
+                        "sha256": _hash_bytes(digest_payload),
+                    }
+                )
+    except (OSError, zipfile.BadZipFile, RuntimeError) as exc:
+        _fail(f"UiPath package is not a readable ZIP archive: {type(exc).__name__}")
+    if envelope_paths != {"[Content_Types].xml", "_rels/.rels"}:
+        _fail("UiPath package is missing its required NuGet envelope.")
+    if len(core_property_paths) != 1:
+        _fail("UiPath package must contain exactly one NuGet core-properties record.")
+    assert relationships_payload is not None
+    core_property_path = next(iter(core_property_paths))
+    try:
+        relationships_root = ET.fromstring(relationships_payload)
+    except ET.ParseError:
+        _fail("UiPath package contains invalid NuGet relationship metadata.")
+    expected_relationships = {
+        (
+            "http://schemas.microsoft.com/packaging/2010/07/manifest",
+            f"/{expected_nuspec}",
+        ),
+        (
+            "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties",
+            f"/{core_property_path}",
+        ),
+    }
+    observed_relationships: set[tuple[str, str]] = set()
+    for relationship in relationships_root:
+        if relationship.tag.rsplit("}", 1)[-1] != "Relationship":
+            _fail("UiPath package contains an unexpected NuGet relationship element.")
+        if set(relationship.attrib) != {"Type", "Target", "Id"}:
+            _fail("UiPath package contains unsupported NuGet relationship attributes.")
+        observed_relationships.add(
+            (relationship.attrib["Type"], relationship.attrib["Target"])
+        )
+    if observed_relationships != expected_relationships:
+        _fail("UiPath package NuGet relationships do not match its coded-app payload.")
+    normalized_relationships = [
+        {
+            "type": relationship_type,
+            "target": (
+                "/package/services/metadata/core-properties/<generated>.psmdcp"
+                if relationship_type.endswith("/core-properties")
+                else target
+            ),
+        }
+        for relationship_type, target in sorted(observed_relationships)
+    ]
+    normalized_relationships_payload = _canonical_json(
+        {"relationships": normalized_relationships}
+    )
+    records.append(
+        {
+            "path": "_rels/.rels",
+            "size": len(normalized_relationships_payload),
+            "sha256": _hash_bytes(normalized_relationships_payload),
+        }
+    )
+    if set(generated_project_ids) != {
+        "content/operate.json",
+        "content/webAppManifest.json",
+    } or len(set(generated_project_ids.values())) != 1:
+        _fail("UiPath package generated project IDs are missing or inconsistent.")
+    record_paths = {record["path"] for record in records}
+    if expected_nuspec not in record_paths:
+        _fail(f"UiPath package is missing its expected manifest: {expected_nuspec}")
+    if expected_main not in record_paths:
+        _fail(f"UiPath package is missing its expected coded-app entry point: {expected_main}")
+    records.sort(key=lambda record: record["path"])
+    content_digest = _hash_json(
+        {
+            "algorithm": PACKAGE_DIGEST_ALGORITHM,
+            "files": records,
+        }
+    )
+    return content_digest, file_digest
+
+
+def _resolve_cli_executable(value: str | None) -> tuple[str | None, str | None]:
+    candidate = value or shutil.which("uip")
+    if candidate is None:
+        return None, None
+    path = Path(candidate).expanduser().resolve()
+    if not path.is_file() or not os.access(path, os.X_OK):
+        _fail(f"--cli-executable must resolve to an executable file: {path}")
+    return str(path), _hash_file(path, "UiPath CLI executable")
+
+
+def _directory_digest(root: Path, relative: str) -> str | None:
+    directory = root / relative
+    if not directory.exists():
+        return None
+    if not directory.is_dir() or directory.is_symlink():
+        _fail(f"Coded app dist must be a real directory, not a symlink: {directory}")
+    records: list[dict[str, Any]] = []
+    for path in sorted(directory.rglob("*"), key=lambda item: item.relative_to(directory).as_posix()):
+        if path.is_symlink():
+            _fail(f"Coded app dist may not contain symlinks: {path}")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            _fail(f"Coded app dist contains an unsupported filesystem entry: {path}")
+        records.append(
+            {
+                "path": path.relative_to(directory).as_posix(),
+                "mode": path.stat().st_mode & 0o777,
+                "size": path.stat().st_size,
+                "sha256": _hash_file(path, "coded app dist file"),
+            }
+        )
+    if not records:
+        _fail(f"Coded app dist contains no files: {directory}")
+    return _hash_json({"files": records})
+
+
+def _package_path(package_name: str, version: str) -> str:
+    return f".uipath/{package_name}.{version}.nupkg"
+
+
+def _remote_auth_flags(
+    parameters: dict[str, Any], *, publish: bool, deploy: bool
+) -> list[str]:
+    flags = [
+        "--base-url",
+        parameters["control_plane_url"] or "[MISSING_CONTROL_PLANE_URL]",
+    ]
     if parameters["org_id"]:
         flags.extend(["--org-id", parameters["org_id"]])
     if deploy and parameters["org_name"]:
@@ -412,10 +700,45 @@ def _auth_flags(parameters: dict[str, Any], *, publish: bool, deploy: bool) -> l
         flags.extend(["--tenant-id", parameters["tenant_id"]])
     if publish and parameters["tenant_name"]:
         flags.extend(["--tenant-name", parameters["tenant_name"]])
+    flags.extend(
+        ["--profile", parameters["cli_profile"] or "[MISSING_CLI_PROFILE]"]
+    )
     return flags
 
 
+def _execution_blockers(parameters: dict[str, Any]) -> list[str]:
+    blockers = []
+    if parameters["control_plane_url"] != STAGING_CONTROL_PLANE_URL:
+        blockers.append(
+            f"Explicit --control-plane-url {STAGING_CONTROL_PLANE_URL} is mandatory."
+        )
+    if not parameters["folder_key"]:
+        blockers.append("A valid --folder-key is mandatory before execution.")
+    required_release_bindings = (
+        ("--org-id", parameters["org_id"]),
+        ("--tenant-id", parameters["tenant_id"]),
+        ("--path-name", parameters["path_name"]),
+        ("--client-id", parameters["client_id"]),
+        ("--tags", parameters["tags"]),
+        ("--source-sha", parameters["source_sha"]),
+        ("--dist-digest or a built dist", parameters["dist_digest"]),
+        ("a prepacked candidate package", parameters["candidate_package_file_digest"]),
+        ("--package-digest or a prepacked candidate", parameters["package_digest"]),
+        (
+            "--cli-executable or a resolvable uip",
+            parameters["cli_executable"],
+        ),
+        ("--cli-version", parameters["cli_version"]),
+        ("--cli-profile", parameters["cli_profile"]),
+    )
+    for label, value in required_release_bindings:
+        if not value:
+            blockers.append(f"{label} is mandatory before execution.")
+    return blockers
+
+
 def _build_stages(project: dict[str, Any], parameters: dict[str, Any]) -> list[dict[str, Any]]:
+    cli = parameters["cli_executable"] or "[MISSING_CLI_EXECUTABLE]"
     stages: list[dict[str, Any]] = [
         {"name": "version", "action": "write_version", "effect": "project_write"}
     ]
@@ -453,16 +776,19 @@ def _build_stages(project: dict[str, Any], parameters: dict[str, Any]) -> list[d
         [
             {"name": "dist", "action": "validate_dist", "effect": "local_read"},
             {
-                "name": "uip_probe",
-                "action": "command",
+                "name": "source",
+                "action": "validate_source",
                 "effect": "local_read",
-                "cwd": ".",
-                "command": ["uip", "--version"],
+            },
+            {
+                "name": "uip_probe",
+                "action": "validate_cli",
+                "effect": "local_read",
             },
         ]
     )
     pack_command = [
-        "uip",
+        cli,
         "codedapp",
         "pack",
         parameters["dist"],
@@ -478,14 +804,13 @@ def _build_stages(project: dict[str, Any], parameters: dict[str, Any]) -> list[d
         parameters["main_file"],
         "--content-type",
         parameters["content_type"],
-        *_auth_flags(parameters, publish=False, deploy=False),
     ]
     if parameters["description"]:
         pack_command.extend(["--description", parameters["description"]])
-    if parameters["reuse_client"]:
-        pack_command.append("--reuse-client")
+    if parameters["source_sha"]:
+        pack_command.extend(["--repository-commit", parameters["source_sha"]])
     publish_command = [
-        "uip",
+        cli,
         "codedapp",
         "publish",
         "--name",
@@ -496,17 +821,23 @@ def _build_stages(project: dict[str, Any], parameters: dict[str, Any]) -> list[d
         parameters["app_type"],
         "--uipath-dir",
         parameters["uipath_dir"],
-        *_auth_flags(parameters, publish=True, deploy=False),
+        *_remote_auth_flags(parameters, publish=True, deploy=False),
     ]
     deploy_command = [
-        "uip",
+        cli,
         "codedapp",
         "deploy",
         "--name",
         parameters["app_name"],
         "--version",
         project["new_version"],
-        *_auth_flags(parameters, publish=False, deploy=True),
+        "--path-name",
+        parameters["path_name"] or "[MISSING_PATH_NAME]",
+        "--client-id",
+        parameters["client_id"] or "[MISSING_CLIENT_ID]",
+        "--tags",
+        ",".join(parameters["tags"]),
+        *_remote_auth_flags(parameters, publish=False, deploy=True),
     ]
     if parameters["folder_key"]:
         deploy_command.extend(["--folder-key", parameters["folder_key"]])
@@ -518,6 +849,11 @@ def _build_stages(project: dict[str, Any], parameters: dict[str, Any]) -> list[d
                 "effect": "project_write",
                 "cwd": ".",
                 "command": pack_command,
+            },
+            {
+                "name": "package",
+                "action": "validate_package",
+                "effect": "local_read",
             },
             {
                 "name": "publish",
@@ -569,6 +905,16 @@ def _current_input_hash(root: Path) -> str:
 def _legacy_failure(args: argparse.Namespace) -> None:
     migrations = (
         (
+            args.target_url,
+            "--target-url is ambiguous and rejected. Migration: pass the CLI control "
+            "plane explicitly with --control-plane-url.",
+        ),
+        (
+            args.reuse_client,
+            "--reuse-client is unsupported by codedapp pack and is rejected. Migration: "
+            "bind the dedicated public OAuth client with --client-id for codedapp deploy.",
+        ),
+        (
             args.folder,
             "--folder is no longer resolved during deployment planning. Migration: resolve "
             "the folder with a read-only UiPath CLI query, then pass its GUID via --folder-key.",
@@ -611,7 +957,7 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
     pyproject_path = root / "pyproject.toml"
     uipath_path = root / "uipath.json"
     pyproject, pyproject_text = _load_pyproject(pyproject_path)
-    _load_uipath_json(uipath_path, reuse_client=args.reuse_client)
+    _load_uipath_json(uipath_path)
     metadata = _project_metadata(pyproject)
     old_version = metadata["version"]
     if args.set_version and args.part:
@@ -622,11 +968,18 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
     raw_dist = args.app_dist or _default_dist(root)
     dist = _project_relative_path(root, raw_dist, "--app-dist")
     main_file = _safe_relative_literal(args.main_file or "index.html", "--main-file")
-    target_url = _validate_url(
-        args.target_url or "https://alpha.uipath.com",
-        "--target-url",
-        base_only=True,
-    )
+    control_plane_url = None
+    if args.control_plane_url is not None:
+        control_plane_url = _validate_url(
+            args.control_plane_url,
+            "--control-plane-url",
+            base_only=True,
+        )
+        if control_plane_url != STAGING_CONTROL_PLANE_URL:
+            _fail(
+                f"--control-plane-url must be the explicit staging origin "
+                f"{STAGING_CONTROL_PLANE_URL}; alpha and implicit/default targets are rejected."
+            )
     if args.verify_timeout is not None and not args.verify_url:
         _fail("--verify-timeout requires --verify-url.")
     verify_url = (
@@ -646,6 +999,57 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         allow_empty=True,
     )
     content_type = _safe_text(args.content_type or "webapp", "--content-type")
+    path_name = (
+        _safe_text(args.path_name, "--path-name").lower() if args.path_name else None
+    )
+    if path_name and PATH_NAME_RE.fullmatch(path_name) is None:
+        _fail("--path-name must be a lowercase URL slug.")
+    client_id = _safe_text(args.client_id, "--client-id") if args.client_id else None
+    if client_id and GUID_RE.fullmatch(client_id) is None:
+        _fail("--client-id must be the GUID of a non-confidential UiPath OAuth client.")
+    tags = _normalize_tags(args.tags, "--tags")
+    source_sha = _validate_source_sha(args.source_sha, "--source-sha")
+    for label, value in (("--org-id", args.org_id), ("--tenant-id", args.tenant_id)):
+        if value is not None and GUID_RE.fullmatch(value) is None:
+            _fail(f"{label} must be an exact UiPath GUID.")
+    planned_dist_digest = _validate_hash(args.dist_digest, "--dist-digest")
+    observed_dist_digest = _directory_digest(root, dist)
+    if (
+        planned_dist_digest is not None
+        and observed_dist_digest is not None
+        and planned_dist_digest != observed_dist_digest
+    ):
+        _fail("--dist-digest does not match the current coded app dist.")
+    dist_digest = planned_dist_digest or observed_dist_digest
+    planned_package_digest = _validate_hash(args.package_digest, "--package-digest")
+    package_path = _package_path(package_name, new_version)
+    candidate_package = root / package_path
+    observed_package_digest = None
+    candidate_package_file_digest = None
+    if candidate_package.exists():
+        observed_package_digest, candidate_package_file_digest = _package_evidence(
+            candidate_package,
+            package_name=package_name,
+            main_file=main_file,
+        )
+    if (
+        planned_package_digest is not None
+        and observed_package_digest is not None
+        and planned_package_digest != observed_package_digest
+    ):
+        _fail("--package-digest does not match the candidate package content.")
+    package_digest = planned_package_digest or observed_package_digest
+    cli_executable, cli_executable_sha256 = _resolve_cli_executable(
+        args.cli_executable
+    )
+    cli_version = (
+        _safe_text(args.cli_version, "--cli-version") if args.cli_version else None
+    )
+    if cli_version:
+        _parse_semver(cli_version, "--cli-version")
+    cli_profile = (
+        _safe_text(args.cli_profile, "--cli-profile") if args.cli_profile else None
+    )
     for label, value in (
         ("--tenant-name", args.tenant_name),
         ("--tenant-id", args.tenant_id),
@@ -674,23 +1078,48 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "old_version": old_version,
         "new_version": new_version,
     }
+    cli_profile_hash = (
+        _hash_json(
+            {
+                "name": cli_profile,
+                "control_plane_url": control_plane_url,
+                "org_id": args.org_id,
+                "tenant_id": args.tenant_id,
+            }
+        )
+        if cli_profile
+        else None
+    )
     parameters = {
-        "target_url": target_url,
+        "control_plane_url": control_plane_url,
         "tenant_name": args.tenant_name,
         "tenant_id": args.tenant_id,
         "org_id": args.org_id,
         "org_name": args.org_name,
         "folder_key": folder_key,
         "dist": dist,
+        "dist_digest": dist_digest,
         "uipath_dir": ".uipath",
         "package_name": package_name,
+        "package_path": package_path,
+        "package_digest": package_digest,
+        "package_digest_algorithm": PACKAGE_DIGEST_ALGORITHM,
+        "candidate_package_file_digest": candidate_package_file_digest,
         "app_name": app_name,
         "app_type": args.app_type or "Web",
+        "path_name": path_name,
+        "client_id": client_id,
+        "tags": tags,
         "main_file": main_file,
         "content_type": content_type,
         "author": author,
         "description": description,
-        "reuse_client": bool(args.reuse_client),
+        "source_sha": source_sha,
+        "cli_executable": cli_executable,
+        "cli_executable_sha256": cli_executable_sha256,
+        "cli_version": cli_version,
+        "cli_profile": cli_profile,
+        "cli_profile_hash": cli_profile_hash,
         "run_lock": (root / "uv.lock").is_file(),
         "run_tests": not args.skip_tests,
         "run_app_build": (
@@ -699,9 +1128,22 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "verify_url": verify_url,
         "verify_timeout": verify_timeout,
     }
-    blockers = []
-    if not folder_key:
-        blockers.append("A valid --folder-key is mandatory before execution.")
+    deployment_binding = {
+        "cli_profile_hash": cli_profile_hash,
+        "cli_executable_sha256": cli_executable_sha256,
+        "control_plane_url": control_plane_url,
+        "org_id": args.org_id,
+        "tenant_id": args.tenant_id,
+        "path_name": path_name,
+        "client_id": client_id,
+        "tags": tags,
+        "source_sha": source_sha,
+        "dist_digest": dist_digest,
+        "package_digest": package_digest,
+        "package_digest_algorithm": PACKAGE_DIGEST_ALGORITHM,
+        "candidate_package_file_digest": candidate_package_file_digest,
+    }
+    blockers = _execution_blockers(parameters)
     plan = {
         "kind": PLAN_KIND,
         "schema_version": PLAN_SCHEMA_VERSION,
@@ -713,10 +1155,12 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
             "versioned": versioned,
         },
         "parameters": parameters,
+        "deployment_binding_hash": _hash_json(deployment_binding),
         "stages": _build_stages(project, parameters),
         "execution": {
             "requires_execute": True,
             "requires_plan": True,
+            "requires_plan_hash_approval": True,
             "executable": not blockers,
             "blockers": blockers,
         },
@@ -745,11 +1189,20 @@ def _validate_snapshot(snapshot: Any, label: str) -> None:
 
 def _validate_parameters(root: Path, parameters: Any) -> None:
     if not isinstance(parameters, dict) or set(parameters) != PARAMETER_KEYS:
-        _fail("Plan parameters do not match schema version 1.0.")
-    if _validate_url(parameters["target_url"], "Plan target_url", base_only=True) != parameters[
-        "target_url"
-    ]:
-        _fail("Plan target_url is not normalized.")
+        _fail(f"Plan parameters do not match schema version {PLAN_SCHEMA_VERSION}.")
+    control_plane_url = parameters["control_plane_url"]
+    if control_plane_url is not None:
+        if (
+            _validate_url(
+                control_plane_url,
+                "Plan control_plane_url",
+                base_only=True,
+            )
+            != control_plane_url
+        ):
+            _fail("Plan control_plane_url is not normalized.")
+        if control_plane_url != STAGING_CONTROL_PLANE_URL:
+            _fail("Plan control_plane_url is not the supported staging origin.")
     if parameters["verify_url"] is not None:
         _validate_url(parameters["verify_url"], "Plan verify_url", base_only=False)
     for field in ("tenant_name", "tenant_id", "org_id", "org_name"):
@@ -762,20 +1215,83 @@ def _validate_parameters(root: Path, parameters: Any) -> None:
         _fail("Plan folder_key must be null or a GUID.")
     if _project_relative_path(root, parameters["dist"], "Plan dist") != parameters["dist"]:
         _fail("Plan dist path is not normalized.")
+    for field in (
+        "dist_digest",
+        "package_digest",
+        "candidate_package_file_digest",
+        "cli_executable_sha256",
+        "cli_profile_hash",
+    ):
+        if parameters[field] is not None:
+            _validate_hash(parameters[field], f"Plan {field}")
     if parameters["uipath_dir"] != ".uipath":
         _fail("Plan uipath_dir must be the project-relative .uipath directory.")
+    if parameters["package_digest_algorithm"] != PACKAGE_DIGEST_ALGORITHM:
+        _fail("Plan package_digest_algorithm is unsupported.")
     if _safe_relative_literal(parameters["main_file"], "Plan main_file") != parameters[
         "main_file"
     ]:
         _fail("Plan main_file is not normalized.")
     for field in ("package_name", "app_name", "author", "content_type"):
         _safe_text(parameters[field], f"Plan {field}")
+    _safe_relative_literal(parameters["package_path"], "Plan package_path")
     _safe_text(parameters["description"], "Plan description", allow_empty=True)
     if parameters["app_type"] not in ("Web", "Action"):
         _fail("Plan app_type must be Web or Action.")
-    for field in ("reuse_client", "run_lock", "run_tests", "run_app_build"):
+    for field in ("run_lock", "run_tests", "run_app_build"):
         if not isinstance(parameters[field], bool):
             _fail(f"Plan {field} must be a boolean.")
+    for field in (
+        "path_name",
+        "client_id",
+        "source_sha",
+        "cli_executable",
+        "cli_version",
+        "cli_profile",
+    ):
+        value = parameters[field]
+        if value is not None:
+            _safe_text(value, f"Plan {field}")
+    if parameters["path_name"] is not None and PATH_NAME_RE.fullmatch(
+        parameters["path_name"]
+    ) is None:
+        _fail("Plan path_name must be a lowercase URL slug.")
+    if parameters["client_id"] is not None and GUID_RE.fullmatch(
+        parameters["client_id"]
+    ) is None:
+        _fail("Plan client_id must be a GUID.")
+    for field in ("org_id", "tenant_id"):
+        value = parameters[field]
+        if value is not None and GUID_RE.fullmatch(value) is None:
+            _fail(f"Plan {field} must be an exact UiPath GUID.")
+    _validate_source_sha(parameters["source_sha"], "Plan source_sha")
+    if parameters["cli_version"] is not None:
+        _parse_semver(parameters["cli_version"], "Plan cli_version")
+    if parameters["cli_executable"] is not None:
+        executable = Path(parameters["cli_executable"])
+        if not executable.is_absolute() or executable.resolve() != executable:
+            _fail("Plan cli_executable must be a canonical absolute path.")
+    tags = parameters["tags"]
+    if (
+        not isinstance(tags, list)
+        or tags != sorted(set(tags))
+        or any(not isinstance(tag, str) or PATH_NAME_RE.fullmatch(tag) is None for tag in tags)
+    ):
+        _fail("Plan tags must be a sorted unique array of lowercase slug values.")
+    expected_profile_hash = (
+        _hash_json(
+            {
+                "name": parameters["cli_profile"],
+                "control_plane_url": parameters["control_plane_url"],
+                "org_id": parameters["org_id"],
+                "tenant_id": parameters["tenant_id"],
+            }
+        )
+        if parameters["cli_profile"]
+        else None
+    )
+    if parameters["cli_profile_hash"] != expected_profile_hash:
+        _fail("Plan cli_profile_hash does not match its safe profile binding.")
     if (
         isinstance(parameters["verify_timeout"], bool)
         or not isinstance(parameters["verify_timeout"], int)
@@ -792,12 +1308,15 @@ def _validate_plan_document(plan: Any) -> dict[str, Any]:
         "project",
         "inputs",
         "parameters",
+        "deployment_binding_hash",
         "stages",
         "execution",
         "plan_hash",
     }
     if not isinstance(plan, dict) or set(plan) != expected_keys:
-        _fail("Deployment plan does not match the version 1.0 document shape.")
+        _fail(
+            f"Deployment plan does not match the version {PLAN_SCHEMA_VERSION} document shape."
+        )
     if plan["kind"] != PLAN_KIND or plan["schema_version"] != PLAN_SCHEMA_VERSION:
         _fail(
             f"Unsupported deployment plan kind/schema; expected {PLAN_KIND} "
@@ -819,7 +1338,7 @@ def _validate_plan_document(plan: Any) -> dict[str, Any]:
         "old_version",
         "new_version",
     }:
-        _fail("Plan project metadata does not match schema version 1.0.")
+        _fail(f"Plan project metadata does not match schema version {PLAN_SCHEMA_VERSION}.")
     root = Path(_safe_text(project["root"], "Plan project.root"))
     if not root.is_absolute() or root.resolve() != root:
         _fail("Plan project.root must be a canonical absolute path.")
@@ -830,7 +1349,7 @@ def _validate_plan_document(plan: Any) -> dict[str, Any]:
 
     inputs = plan["inputs"]
     if not isinstance(inputs, dict) or set(inputs) != {"scope", "initial", "versioned"}:
-        _fail("Plan inputs do not match schema version 1.0.")
+        _fail(f"Plan inputs do not match schema version {PLAN_SCHEMA_VERSION}.")
     if inputs["scope"] != ["pyproject.toml", "uipath.json"]:
         _fail("Plan input hash scope must be pyproject.toml and uipath.json.")
     _validate_snapshot(inputs["initial"], "Plan inputs.initial")
@@ -839,15 +1358,40 @@ def _validate_plan_document(plan: Any) -> dict[str, Any]:
         _fail("Plan versioning must not alter the uipath.json input hash.")
 
     _validate_parameters(root, plan["parameters"])
+    if plan["parameters"]["package_path"] != _package_path(
+        plan["parameters"]["package_name"], project["new_version"]
+    ):
+        _fail("Plan package_path does not match the package name and version.")
+    deployment_binding = {
+        "cli_profile_hash": plan["parameters"]["cli_profile_hash"],
+        "cli_executable_sha256": plan["parameters"]["cli_executable_sha256"],
+        "control_plane_url": plan["parameters"]["control_plane_url"],
+        "org_id": plan["parameters"]["org_id"],
+        "tenant_id": plan["parameters"]["tenant_id"],
+        "path_name": plan["parameters"]["path_name"],
+        "client_id": plan["parameters"]["client_id"],
+        "tags": plan["parameters"]["tags"],
+        "source_sha": plan["parameters"]["source_sha"],
+        "dist_digest": plan["parameters"]["dist_digest"],
+        "package_digest": plan["parameters"]["package_digest"],
+        "package_digest_algorithm": plan["parameters"]["package_digest_algorithm"],
+        "candidate_package_file_digest": plan["parameters"][
+            "candidate_package_file_digest"
+        ],
+    }
+    if (
+        not isinstance(plan["deployment_binding_hash"], str)
+        or plan["deployment_binding_hash"] != _hash_json(deployment_binding)
+    ):
+        _fail("Plan deployment_binding_hash does not match the release provenance.")
     expected_stages = _build_stages(project, plan["parameters"])
     if plan["stages"] != expected_stages:
         _fail("Plan stages do not match the allowlisted command sequence. Regenerate the plan.")
-    blockers = [] if plan["parameters"]["folder_key"] else [
-        "A valid --folder-key is mandatory before execution."
-    ]
+    blockers = _execution_blockers(plan["parameters"])
     expected_execution = {
         "requires_execute": True,
         "requires_plan": True,
+        "requires_plan_hash_approval": True,
         "executable": not blockers,
         "blockers": blockers,
     }
@@ -875,7 +1419,7 @@ def _load_plan(path: Path) -> dict[str, Any]:
 def _validate_current_inputs(plan: dict[str, Any], *, allow_versioned: bool) -> str:
     root = Path(plan["project"]["root"])
     pyproject, _ = _load_pyproject(root / "pyproject.toml")
-    _load_uipath_json(root / "uipath.json", reuse_client=plan["parameters"]["reuse_client"])
+    _load_uipath_json(root / "uipath.json")
     current_hash = _current_input_hash(root)
     initial_hash = plan["inputs"]["initial"]["hash"]
     versioned_hash = plan["inputs"]["versioned"]["hash"]
@@ -898,12 +1442,27 @@ def _receipt_path(plan_path: Path) -> Path:
     return plan_path.with_suffix(plan_path.suffix + ".receipt.json")
 
 
-def _new_receipt(plan: dict[str, Any]) -> dict[str, Any]:
+def _new_receipt(
+    plan: dict[str, Any], approved_plan_hash: str | None = None
+) -> dict[str, Any]:
+    approved_plan_hash = approved_plan_hash or plan["plan_hash"]
     receipt = {
         "kind": RECEIPT_KIND,
         "schema_version": RECEIPT_SCHEMA_VERSION,
         "plan_hash": plan["plan_hash"],
+        "approved_plan_hash": approved_plan_hash,
         "input_hash": plan["inputs"]["initial"]["hash"],
+        "deployment_binding_hash": plan["deployment_binding_hash"],
+        "cli_profile_hash": plan["parameters"]["cli_profile_hash"],
+        "cli_executable_sha256": plan["parameters"]["cli_executable_sha256"],
+        "source_sha": plan["parameters"]["source_sha"],
+        "dist_digest": plan["parameters"]["dist_digest"],
+        "package_digest": plan["parameters"]["package_digest"],
+        "package_digest_algorithm": plan["parameters"]["package_digest_algorithm"],
+        "candidate_package_file_digest": plan["parameters"][
+            "candidate_package_file_digest"
+        ],
+        "package_file_digest": None,
         "status": "in_progress",
         "started_at": _utc_now(),
         "updated_at": _utc_now(),
@@ -928,7 +1487,17 @@ def _validate_receipt(receipt: Any, plan: dict[str, Any]) -> dict[str, Any]:
         "kind",
         "schema_version",
         "plan_hash",
+        "approved_plan_hash",
         "input_hash",
+        "deployment_binding_hash",
+        "cli_profile_hash",
+        "cli_executable_sha256",
+        "source_sha",
+        "dist_digest",
+        "package_digest",
+        "package_digest_algorithm",
+        "candidate_package_file_digest",
+        "package_file_digest",
         "status",
         "started_at",
         "updated_at",
@@ -937,15 +1506,37 @@ def _validate_receipt(receipt: Any, plan: dict[str, Any]) -> dict[str, Any]:
         "receipt_hash",
     }
     if not isinstance(receipt, dict) or set(receipt) != expected_keys:
-        _fail("Resume receipt does not match the version 1.0 document shape.")
+        _fail(
+            f"Resume receipt does not match the version {RECEIPT_SCHEMA_VERSION} document shape."
+        )
     if receipt["kind"] != RECEIPT_KIND or receipt["schema_version"] != RECEIPT_SCHEMA_VERSION:
         _fail("Unsupported receipt schema. Start from a newly generated plan.")
     if receipt["receipt_hash"] != _document_hash(receipt, "receipt_hash"):
         _fail("Receipt hash mismatch; the receipt was edited or corrupted.")
     if receipt["plan_hash"] != plan["plan_hash"]:
         _fail("Receipt belongs to a different deployment plan.")
+    if receipt["approved_plan_hash"] != plan["plan_hash"]:
+        _fail("Receipt does not record approval of this exact deployment plan hash.")
     if receipt["input_hash"] != plan["inputs"]["initial"]["hash"]:
         _fail("Receipt input hash does not match the deployment plan.")
+    expected_provenance = {
+        "deployment_binding_hash": plan["deployment_binding_hash"],
+        "cli_profile_hash": plan["parameters"]["cli_profile_hash"],
+        "cli_executable_sha256": plan["parameters"]["cli_executable_sha256"],
+        "source_sha": plan["parameters"]["source_sha"],
+        "dist_digest": plan["parameters"]["dist_digest"],
+        "package_digest": plan["parameters"]["package_digest"],
+        "package_digest_algorithm": plan["parameters"]["package_digest_algorithm"],
+        "candidate_package_file_digest": plan["parameters"][
+            "candidate_package_file_digest"
+        ],
+    }
+    for field, expected in expected_provenance.items():
+        if receipt[field] != expected:
+            _fail(f"Receipt {field} does not match the deployment plan.")
+    package_file_digest = receipt["package_file_digest"]
+    if package_file_digest is not None:
+        _validate_hash(package_file_digest, "Receipt package_file_digest")
     if receipt["status"] not in ("in_progress", "failed", "succeeded"):
         _fail("Receipt status is invalid.")
     if receipt["redaction"] != REDACTION_POLICY:
@@ -977,6 +1568,13 @@ def _validate_receipt(receipt: Any, plan: dict[str, Any]) -> dict[str, Any]:
         else:
             seen_incomplete = True
     statuses = [stage["status"] for stage in receipt["stages"]]
+    package_stage = next(
+        stage for stage in receipt["stages"] if stage["name"] == "package"
+    )
+    if package_stage["status"] == "succeeded" and package_file_digest is None:
+        _fail("Receipt is missing the exact package file digest verified before publish.")
+    if package_stage["status"] != "succeeded" and package_file_digest is not None:
+        _fail("Receipt records a package file digest before package validation succeeded.")
     if receipt["status"] == "succeeded" and any(
         status != "succeeded" for status in statuses
     ):
@@ -1004,10 +1602,14 @@ def _prepare_resume(
         version_receipt["finished_at"] = _utc_now()
         version_receipt["recovery"] = "atomic_version_write_reconciled"
     for stage in receipt["stages"]:
-        if stage["status"] == "running" and stage["effect"] == "external_write":
+        if (
+            stage["status"] in ("running", "failed")
+            and stage["effect"] == "external_write"
+        ):
             _fail(
                 f"Cannot resume: external-write stage {stage['name']!r} has an indeterminate "
-                "outcome. Verify the target manually before creating a recovery plan."
+                "outcome. Reconcile remote state manually before creating a reviewed "
+                "recovery plan; blind retry is prohibited."
             )
         if stage["status"] in ("running", "failed"):
             stage["status"] = "pending"
@@ -1035,6 +1637,128 @@ def _validate_dist(root: Path, parameters: dict[str, Any]) -> None:
         main_file.resolve().relative_to(dist.resolve())
     except ValueError:
         _fail(f"Coded app main file resolves outside the dist directory: {main_file}")
+    observed_digest = _directory_digest(root, parameters["dist"])
+    if observed_digest != parameters["dist_digest"]:
+        _fail(
+            "Coded app dist digest changed after plan approval; rebuild, rehash, "
+            "and regenerate the deployment plan."
+        )
+
+
+def _run_capture(cmd: list[str], cwd: Path) -> str:
+    _log("+ " + shlex.join(cmd))
+    try:
+        completed = subprocess.run(
+            cmd,
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        _fail(f"Release preflight command failed: {type(exc).__name__}")
+    return completed.stdout
+
+
+def _validate_source(root: Path, parameters: dict[str, Any]) -> None:
+    observed = _run_capture(["git", "-C", str(root), "rev-parse", "HEAD"], root).strip()
+    if observed != parameters["source_sha"]:
+        _fail("Git source SHA does not match the approved deployment plan.")
+    dirty = _run_capture(
+        ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+        root,
+    ).strip()
+    if dirty:
+        _fail("Tracked source is dirty; commit and regenerate the deployment plan.")
+
+
+def _find_mapping_value(value: Any, names: set[str]) -> Any:
+    if isinstance(value, dict):
+        for key, candidate in value.items():
+            normalized = re.sub(r"[^a-z0-9]", "", str(key).lower())
+            if normalized in names:
+                return candidate
+        for candidate in value.values():
+            found = _find_mapping_value(candidate, names)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for candidate in value:
+            found = _find_mapping_value(candidate, names)
+            if found is not None:
+                return found
+    return None
+
+
+def _validate_cli(root: Path, parameters: dict[str, Any]) -> None:
+    executable = Path(parameters["cli_executable"])
+    if _hash_file(executable, "UiPath CLI executable") != parameters[
+        "cli_executable_sha256"
+    ]:
+        _fail("UiPath CLI executable digest changed after plan approval.")
+    version_output = _run_capture([str(executable), "--version"], root)
+    match = re.search(r"\b([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)\b", version_output)
+    if match is None or match.group(1) != parameters["cli_version"]:
+        _fail("UiPath CLI version does not match the approved deployment plan.")
+    status_output = _run_capture(
+        [
+            str(executable),
+            "login",
+            "status",
+            "--profile",
+            parameters["cli_profile"],
+            "--output",
+            "json",
+        ],
+        root,
+    )
+    try:
+        status = json.loads(status_output)
+    except json.JSONDecodeError:
+        _fail("UiPath CLI profile status did not return valid JSON.")
+    login_state = _find_mapping_value(status, {"status"})
+    if not isinstance(login_state, str) or login_state.lower() not in {
+        "loggedin",
+        "logged in",
+        "authenticated",
+    }:
+        _fail("UiPath CLI profile is not logged in.")
+    comparisons = (
+        ("org_id", {"organizationid", "organizationuid"}),
+        ("tenant_id", {"tenantid", "tenantuid"}),
+    )
+    for field, names in comparisons:
+        expected = parameters[field]
+        if expected is None:
+            continue
+        observed = _find_mapping_value(status, names)
+        if not isinstance(observed, str) or observed.lower() != expected.lower():
+            _fail(f"UiPath CLI profile {field} does not match the deployment plan.")
+
+
+def _validate_package(
+    root: Path,
+    parameters: dict[str, Any],
+    *,
+    expected_file_digest: str | None = None,
+) -> str:
+    package = root / parameters["package_path"]
+    observed_content, observed_file = _package_evidence(
+        package,
+        package_name=parameters["package_name"],
+        main_file=parameters["main_file"],
+    )
+    if observed_content != parameters["package_digest"]:
+        _fail(
+            "Packed UiPath package content digest does not match the approved plan; "
+            "do not publish or deploy it."
+        )
+    if expected_file_digest is not None and observed_file != expected_file_digest:
+        _fail(
+            "The exact packed UiPath package changed after package validation; "
+            "do not publish or deploy it."
+        )
+    return observed_file
 
 
 def _validate_plan_output_path(path: Path, plan: dict[str, Any]) -> None:
@@ -1083,7 +1807,9 @@ def _verify_url(url: str, timeout: int) -> None:
         _fail("Verification redirected to a non-HTTPS URL.")
 
 
-def _execute_stage(stage: dict[str, Any], plan: dict[str, Any], env: dict[str, str]) -> None:
+def _execute_stage(
+    stage: dict[str, Any], plan: dict[str, Any], env: dict[str, str]
+) -> str | None:
     root = Path(plan["project"]["root"])
     if stage["action"] == "write_version":
         _write_version_atomic(
@@ -1091,34 +1817,54 @@ def _execute_stage(stage: dict[str, Any], plan: dict[str, Any], env: dict[str, s
             plan["project"]["old_version"],
             plan["project"]["new_version"],
         )
-        return
+        return None
     if stage["action"] == "command":
         cwd = root if stage["cwd"] == "." else root / stage["cwd"]
         _run(stage["command"], cwd, env)
-        return
+        return None
     if stage["action"] == "validate_dist":
         _validate_dist(root, plan["parameters"])
-        return
+        return None
+    if stage["action"] == "validate_source":
+        _validate_source(root, plan["parameters"])
+        return None
+    if stage["action"] == "validate_cli":
+        _validate_cli(root, plan["parameters"])
+        return None
+    if stage["action"] == "validate_package":
+        return _validate_package(root, plan["parameters"])
     if stage["action"] == "verify_url":
         _verify_url(
             plan["parameters"]["verify_url"],
             plan["parameters"]["verify_timeout"],
         )
-        return
+        return None
     _fail(f"Unsupported stage action: {stage['action']}")
 
 
 def _execute_plan(
-    plan: dict[str, Any], plan_path: Path, *, resume: bool
+    plan: dict[str, Any],
+    plan_path: Path,
+    *,
+    resume: bool,
+    approved_plan_hash: str | None,
 ) -> tuple[dict[str, Any], Path]:
-    if not plan["execution"]["executable"] or not plan["parameters"]["folder_key"]:
+    if approved_plan_hash != plan["plan_hash"]:
         _fail(
-            "Execution blocked: the plan has no folder key. Regenerate it with "
-            "--folder-key <GUID>; folder names are not resolved during execution."
+            "Execution requires --approved-plan-hash with the exact persisted plan hash "
+            "that a human approved."
         )
+    if not plan["execution"]["executable"]:
+        _fail("Execution blocked: " + "; ".join(plan["execution"]["blockers"]))
     root = Path(plan["project"]["root"])
     if not plan["parameters"]["run_app_build"]:
         _validate_dist(root, plan["parameters"])
+    if not resume:
+        _validate_package(
+            root,
+            plan["parameters"],
+            expected_file_digest=plan["parameters"]["candidate_package_file_digest"],
+        )
     receipt_path = _receipt_path(plan_path)
     if resume:
         receipt = _prepare_resume(plan, _load_receipt(receipt_path, plan), receipt_path)
@@ -1129,19 +1875,28 @@ def _execute_plan(
                 f"Receipt already exists: {receipt_path}. Use --resume after reviewing it, "
                 "or generate a new plan."
             )
-        receipt = _new_receipt(plan)
+        receipt = _new_receipt(plan, approved_plan_hash)
         _write_receipt(receipt_path, receipt)
 
     env = os.environ.copy()
     for planned_stage, stage_receipt in zip(plan["stages"], receipt["stages"]):
         if stage_receipt["status"] == "succeeded":
             continue
+        if planned_stage["name"] == "publish":
+            package_file_digest = receipt["package_file_digest"]
+            if package_file_digest is None:
+                _fail("Cannot publish before the exact packed package file is audited.")
+            _validate_package(
+                root,
+                plan["parameters"],
+                expected_file_digest=package_file_digest,
+            )
         stage_receipt["status"] = "running"
         stage_receipt["started_at"] = _utc_now()
         stage_receipt.pop("finished_at", None)
         _write_receipt(receipt_path, receipt)
         try:
-            _execute_stage(planned_stage, plan, env)
+            stage_result = _execute_stage(planned_stage, plan, env)
         except KeyboardInterrupt:
             if planned_stage["effect"] == "external_write":
                 stage_receipt["recovery"] = (
@@ -1157,12 +1912,24 @@ def _execute_plan(
             _write_receipt(receipt_path, receipt)
             raise
         except (Exception, SystemExit):
+            if planned_stage["effect"] == "external_write":
+                stage_receipt["recovery"] = (
+                    "redacted_indeterminate_external_write; reconcile remote state; "
+                    "blind resume prohibited"
+                )
+                receipt["status"] = "in_progress"
+                _write_receipt(receipt_path, receipt)
+                raise
             stage_receipt["status"] = "failed"
             stage_receipt["finished_at"] = _utc_now()
             stage_receipt["recovery"] = "redacted_failure; inspect console and use --resume"
             receipt["status"] = "failed"
             _write_receipt(receipt_path, receipt)
             raise
+        if planned_stage["name"] == "package":
+            if not isinstance(stage_result, str) or HASH_RE.fullmatch(stage_result) is None:
+                _fail("Package validation did not return an exact package file digest.")
+            receipt["package_file_digest"] = stage_result
         stage_receipt["status"] = "succeeded"
         stage_receipt["finished_at"] = _utc_now()
         stage_receipt.pop("recovery", None)
@@ -1182,7 +1949,21 @@ def _render_plan_text(plan: dict[str, Any], plan_path: Path | None) -> str:
         f"Input hash: {plan['inputs']['initial']['hash']}",
         f"Project: {project['name']} ({project['old_version']} -> {project['new_version']})",
         f"Dist: {parameters['dist']} (project-relative)",
-        f"Target: {parameters['target_url']}",
+        f"Dist digest: {parameters['dist_digest'] or '[MISSING - EXECUTION BLOCKED]'}",
+        f"Package content digest ({parameters['package_digest_algorithm']}): "
+        f"{parameters['package_digest'] or '[MISSING - EXECUTION BLOCKED]'}",
+        f"Candidate package file digest: "
+        f"{parameters['candidate_package_file_digest'] or '[MISSING - EXECUTION BLOCKED]'}",
+        f"Source SHA: {parameters['source_sha'] or '[MISSING - EXECUTION BLOCKED]'}",
+        f"CLI: {parameters['cli_executable'] or '[MISSING]'} @ {parameters['cli_version'] or '[MISSING]'}",
+        f"CLI profile hash: {parameters['cli_profile_hash'] or '[MISSING - EXECUTION BLOCKED]'}",
+        f"Control plane: {parameters['control_plane_url'] or '[MISSING - EXECUTION BLOCKED]'}",
+        f"Organization ID: {parameters['org_id'] or '[MISSING - EXECUTION BLOCKED]'}",
+        f"Tenant ID: {parameters['tenant_id'] or '[MISSING - EXECUTION BLOCKED]'}",
+        f"Package/app: {parameters['package_name']} / {parameters['app_name']}",
+        f"Path name: {parameters['path_name'] or '[MISSING - EXECUTION BLOCKED]'}",
+        f"Client ID: {parameters['client_id'] or '[MISSING - EXECUTION BLOCKED]'}",
+        f"Tags: {','.join(parameters['tags']) or '[MISSING - EXECUTION BLOCKED]'}",
         f"Folder key: {parameters['folder_key'] or '[MISSING - EXECUTION BLOCKED]'}",
         "Stages:",
     ]
@@ -1195,7 +1976,18 @@ def _render_plan_text(plan: dict[str, Any], plan_path: Path | None) -> str:
         lines.append("Execution requires a persisted plan; regenerate with --plan-output <file>.")
     else:
         lines.append(
-            f"Execute only after approval: {shlex.join([sys.executable, __file__, '--plan', str(plan_path), '--execute'])}"
+            "Execute only after approval: "
+            + shlex.join(
+                [
+                    sys.executable,
+                    __file__,
+                    "--plan",
+                    str(plan_path),
+                    "--execute",
+                    "--approved-plan-hash",
+                    plan["plan_hash"],
+                ]
+            )
         )
     return "\n".join(lines)
 
@@ -1216,7 +2008,7 @@ def _emit_result(plan: dict[str, Any], receipt_path: Path, output_format: str) -
         "receipt": str(receipt_path),
         "old_version": plan["project"]["old_version"],
         "new_version": plan["project"]["new_version"],
-        "target_url": plan["parameters"]["target_url"],
+        "control_plane_url": plan["parameters"]["control_plane_url"],
     }
     if output_format == "json":
         print(json.dumps(result, indent=2, sort_keys=True))
@@ -1232,7 +2024,10 @@ def _parser() -> argparse.ArgumentParser:
         description="Create a hashed plan, then pack, publish, and deploy a UiPath coded app."
     )
     parser.add_argument("--project-root", help="Project root containing pyproject.toml and uipath.json")
-    parser.add_argument("--target-url", help="UiPath HTTPS origin; defaults to https://alpha.uipath.com")
+    parser.add_argument(
+        "--control-plane-url",
+        help=f"Explicit UiPath staging CLI origin; must be {STAGING_CONTROL_PLANE_URL}",
+    )
     parser.add_argument("--tenant-name")
     parser.add_argument("--tenant-id")
     parser.add_argument("--org-id")
@@ -1248,17 +2043,43 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--content-type")
     parser.add_argument("--author")
     parser.add_argument("--description")
-    parser.add_argument("--reuse-client", action="store_true")
+    parser.add_argument("--path-name", help="Exact lowercase app route slug")
+    parser.add_argument("--client-id", help="Dedicated non-confidential OAuth client GUID")
+    parser.add_argument("--tags", help="Comma-separated lowercase deployment tags")
+    parser.add_argument("--source-sha", help="Exact full source commit SHA")
+    parser.add_argument("--dist-digest", help="Expected sha256 digest of the built dist")
+    parser.add_argument(
+        "--package-digest",
+        help=(
+            "Expected deterministic coded-app content digest of the candidate .nupkg; "
+            "computed automatically when the candidate exists"
+        ),
+    )
+    parser.add_argument("--cli-executable", help="Absolute pinned UiPath CLI executable")
+    parser.add_argument("--cli-version", help="Exact pinned UiPath CLI SemVer")
+    parser.add_argument("--cli-profile", help="Named authenticated UiPath CLI profile")
     parser.add_argument("--skip-tests", action="store_true")
     parser.add_argument("--skip-app-build", action="store_true")
     parser.add_argument("--verify-url", help="Optional HTTPS endpoint checked after deploy")
     parser.add_argument("--verify-timeout", type=int, help="Verification timeout in seconds (1-120)")
     parser.add_argument("--format", choices=("text", "json"), default="text")
-    parser.add_argument("--plan-output", help="Atomically persist the generated version 1.0 JSON plan")
-    parser.add_argument("--plan", help="Load a persisted version 1.0 JSON plan")
+    parser.add_argument(
+        "--plan-output",
+        help=f"Atomically persist the generated version {PLAN_SCHEMA_VERSION} JSON plan",
+    )
+    parser.add_argument(
+        "--plan",
+        help=f"Load a persisted version {PLAN_SCHEMA_VERSION} JSON plan",
+    )
     parser.add_argument("--execute", action="store_true", help="Execute a validated --plan; required for all deploy writes")
     parser.add_argument("--resume", action="store_true", help="Resume from the plan's redacted sibling receipt")
+    parser.add_argument(
+        "--approved-plan-hash",
+        help="Exact sha256 plan hash explicitly approved by a human",
+    )
 
+    parser.add_argument("--target-url", help=argparse.SUPPRESS)
+    parser.add_argument("--reuse-client", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--folder", help=argparse.SUPPRESS)
     parser.add_argument("--tenant", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--my-workspace", action="store_true", help=argparse.SUPPRESS)
@@ -1271,7 +2092,7 @@ def _parser() -> argparse.ArgumentParser:
 def _reject_plan_overrides(args: argparse.Namespace) -> None:
     generation_values = {
         "--project-root": args.project_root,
-        "--target-url": args.target_url,
+        "--control-plane-url": args.control_plane_url,
         "--tenant-name": args.tenant_name,
         "--tenant-id": args.tenant_id,
         "--org-id": args.org_id,
@@ -1287,9 +2108,17 @@ def _reject_plan_overrides(args: argparse.Namespace) -> None:
         "--content-type": args.content_type,
         "--author": args.author,
         "--description": args.description,
+        "--path-name": args.path_name,
+        "--client-id": args.client_id,
+        "--tags": args.tags,
+        "--source-sha": args.source_sha,
+        "--dist-digest": args.dist_digest,
+        "--package-digest": args.package_digest,
+        "--cli-executable": args.cli_executable,
+        "--cli-version": args.cli_version,
+        "--cli-profile": args.cli_profile,
         "--verify-url": args.verify_url,
         "--verify-timeout": args.verify_timeout,
-        "--reuse-client": args.reuse_client,
         "--skip-tests": args.skip_tests,
         "--skip-app-build": args.skip_app_build,
         "--plan-output": args.plan_output,
@@ -1308,6 +2137,8 @@ def main(argv: list[str] | None = None) -> int:
     _legacy_failure(args)
     if args.resume and (not args.plan or not args.execute):
         _fail("--resume requires both --plan <file> and --execute.")
+    if args.approved_plan_hash and (not args.plan or not args.execute):
+        _fail("--approved-plan-hash is accepted only with --plan <file> --execute.")
     if args.execute and not args.plan:
         _fail(
             "Direct --execute is prohibited. Migration: generate a reviewed plan with "
@@ -1322,7 +2153,12 @@ def main(argv: list[str] | None = None) -> int:
             _validate_current_inputs(plan, allow_versioned=True)
             _emit_plan(plan, args.format, plan_path)
             return 0
-        _, receipt_path = _execute_plan(plan, plan_path, resume=args.resume)
+        _, receipt_path = _execute_plan(
+            plan,
+            plan_path,
+            resume=args.resume,
+            approved_plan_hash=args.approved_plan_hash,
+        )
         _emit_result(plan, receipt_path, args.format)
         return 0
 

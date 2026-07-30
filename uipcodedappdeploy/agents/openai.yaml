@@ -1,4 +1,4 @@
 interface:
   display_name: "UiPath Coded App Deploy"
   short_description: "Plan and explicitly deploy UiPath coded apps"
-  default_prompt: "Use $uipcodedappdeploy to validate this coded app, create a hashed JSON deployment plan for review, and do not execute it without my explicit approval."
+  default_prompt: "Use $uipcodedappdeploy to validate this coded app, create a v2 hash-bound deployment plan, and do not execute until I approve its exact plan hash."

@@ -4,16 +4,21 @@ import io
 import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "uipcodedappdeploy.py"
+PLAN_SCHEMA = ROOT / "references" / "deployment-plan.v2.schema.json"
+RECEIPT_SCHEMA = ROOT / "references" / "deployment-receipt.v2.schema.json"
 GUID = "11111111-2222-3333-4444-555555555555"
+TENANT_GUID = "66666666-7777-8888-9999-000000000000"
 
 
 def load_module():
@@ -60,6 +65,57 @@ def write_dist(root: Path, relative: str = "dist", main_file: str = "index.html"
     target.write_text("<!doctype html>\n", encoding="utf-8")
 
 
+def write_package(
+    root: Path,
+    *,
+    package_name: str = "fixture-app",
+    version: str = "1.2.4",
+    main_file: str = "index.html",
+    envelope_nonce: str = "candidate",
+    project_id: str = GUID,
+    main_payload: bytes = b"<!doctype html>\n",
+) -> Path:
+    package = root / ".uipath" / f"{package_name}.{version}.nupkg"
+    package.parent.mkdir(parents=True, exist_ok=True)
+    core_path = (
+        "package/services/metadata/core-properties/"
+        f"{envelope_nonce}.psmdcp"
+    )
+    generated = {
+        "projectId": project_id,
+        "main": main_file,
+        "contentType": "WebApp",
+    }
+    web_manifest = {
+        "type": "Coded",
+        "solutionResourceSubType": "Coded",
+        "config": {"isCompiled": True, "bundlePath": "dist"},
+        "projectId": project_id,
+    }
+    with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", "<Types />")
+        archive.writestr(
+            "_rels/.rels",
+            "<Relationships>"
+            '<Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" '
+            f'Target="/{package_name}.nuspec" Id="manifest-{envelope_nonce}" />'
+            '<Relationship Type="http://schemas.openxmlformats.org/package/2006/'
+            'relationships/metadata/core-properties" '
+            f'Target="/{core_path}" Id="core-{envelope_nonce}" />'
+            "</Relationships>",
+        )
+        archive.writestr(core_path, "<coreProperties>fixture-app</coreProperties>")
+        archive.writestr(
+            f"{package_name}.nuspec",
+            f"<package><metadata><id>{package_name}</id>"
+            f"<version>{version}</version></metadata></package>",
+        )
+        archive.writestr(f"content/{main_file}", main_payload)
+        archive.writestr("content/operate.json", json.dumps(generated))
+        archive.writestr("content/webAppManifest.json", json.dumps(web_manifest))
+    return package
+
+
 class UiPathCodedAppDeployTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -78,8 +134,14 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
         )
         self.subprocess_guard.start()
         self.urlopen_guard.start()
+        self.source_guard = mock.patch.object(self.module, "_validate_source")
+        self.cli_guard = mock.patch.object(self.module, "_validate_cli")
+        self.source_guard.start()
+        self.cli_guard.start()
 
     def tearDown(self):
+        self.cli_guard.stop()
+        self.source_guard.stop()
         self.urlopen_guard.stop()
         self.subprocess_guard.stop()
 
@@ -97,10 +159,21 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
         folder: bool = True,
         skip_tests: bool = True,
         skip_build: bool = True,
+        exact_target: bool = True,
         extras: list[str] | None = None,
         filename: str = "deploy-plan.json",
     ):
         plan_path = root / filename
+        raw_dist = "app/dist" if (root / "app" / "package.json").is_file() else "dist"
+        dist_digest = self.module._directory_digest(root, raw_dist)
+        if dist_digest is None:
+            dist_digest = self.module._hash_bytes(b"missing-dist-fixture")
+        package_path = write_package(root)
+        package_digest, _ = self.module._package_evidence(
+            package_path,
+            package_name="fixture-app",
+            main_file="index.html",
+        )
         argv = [
             "--project-root",
             str(root),
@@ -108,7 +181,36 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             str(plan_path),
             "--format",
             "json",
+            "--path-name",
+            "fixture-app",
+            "--client-id",
+            GUID,
+            "--tags",
+            "governance,internal",
+            "--source-sha",
+            "a" * 40,
+            "--dist-digest",
+            dist_digest,
+            "--package-digest",
+            package_digest,
+            "--cli-executable",
+            sys.executable,
+            "--cli-version",
+            "1.198.0",
+            "--cli-profile",
+            "fixture-profile",
         ]
+        if exact_target:
+            argv.extend(
+                [
+                    "--control-plane-url",
+                    "https://staging.uipath.com",
+                    "--org-id",
+                    GUID,
+                    "--tenant-id",
+                    TENANT_GUID,
+                ]
+            )
         if folder:
             argv.extend(["--folder-key", GUID])
         if skip_tests:
@@ -120,7 +222,23 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
         code, stdout, _ = self.run_main(argv)
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(stdout)["kind"], self.module.PLAN_KIND)
-        return plan_path, json.loads(plan_path.read_text(encoding="utf-8"))
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            root / plan["parameters"]["package_path"],
+            package_path,
+        )
+        return plan_path, plan
+
+    def execution_args(self, plan_path: Path, *extras: str) -> list[str]:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        return [
+            "--plan",
+            str(plan_path),
+            "--execute",
+            "--approved-plan-hash",
+            plan["plan_hash"],
+            *extras,
+        ]
 
     def test_dry_run_json_is_no_write_and_never_runs_commands(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -148,7 +266,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(stderr, "")
             plan = json.loads(stdout)
-            self.assertEqual(plan["schema_version"], "1.0")
+            self.assertEqual(plan["schema_version"], "2.0")
             self.assertRegex(plan["plan_hash"], r"^sha256:[0-9a-f]{64}$")
             self.assertRegex(plan["inputs"]["initial"]["hash"], r"^sha256:[0-9a-f]{64}$")
             self.assertEqual(plan["parameters"]["dist"], "dist")
@@ -263,7 +381,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             plan_path, _ = self.create_plan(root)
 
             with mock.patch.object(self.module, "_run") as run:
-                code, _, _ = self.run_main(["--plan", str(plan_path), "--execute"])
+                code, _, _ = self.run_main(self.execution_args(plan_path))
 
             self.assertEqual(code, 0)
             run.assert_called()
@@ -293,19 +411,23 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
                 calls.append((cmd, cwd, (root / "pyproject.toml").read_text()))
 
             with mock.patch.object(self.module, "_run", side_effect=fake_run):
-                self.run_main(["--plan", str(plan_path), "--execute"])
+                self.run_main(self.execution_args(plan_path))
 
             self.assertEqual(
                 [stage["name"] for stage in plan["stages"][:4]],
                 ["version", "lock", "test", "build"],
             )
             self.assertEqual(
-                [call[0][:3] for call in calls],
+                [
+                    call[0][:3]
+                    if call[0][0] in {"uv", "npm"}
+                    else ["uip", *call[0][1:3]]
+                    for call in calls
+                ],
                 [
                     ["uv", "lock"],
                     ["uv", "run", "python"],
                     ["npm", "run", "build"],
-                    ["uip", "--version"],
                     ["uip", "codedapp", "pack"],
                     ["uip", "codedapp", "publish"],
                     ["uip", "codedapp", "deploy"],
@@ -313,7 +435,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             )
             self.assertTrue(all('version = "1.2.4"' in call[2] for call in calls))
             self.assertEqual(calls[2][1], root.resolve() / "app")
-            self.assertIn("app/dist", calls[4][0])
+            self.assertIn("app/dist", calls[3][0])
 
     def test_direct_execute_and_folderless_plan_fail_before_any_write(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -324,8 +446,8 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
 
             plan_path, plan = self.create_plan(root, folder=False)
             self.assertFalse(plan["execution"]["executable"])
-            with self.assertRaisesRegex(SystemExit, "plan has no folder key"):
-                self.module.main(["--plan", str(plan_path), "--execute"])
+            with self.assertRaisesRegex(SystemExit, "folder-key is mandatory"):
+                self.module.main(self.execution_args(plan_path))
             self.assertIn('version = "1.2.3"', (root / "pyproject.toml").read_text())
             self.assertFalse(self.module._receipt_path(plan_path).exists())
 
@@ -337,6 +459,51 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
                 self.module.main(
                     ["--project-root", str(root), "--folder-key", "Shared"]
                 )
+
+    def test_executable_plan_requires_exact_staging_org_and_tenant(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            plan_path, plan = self.create_plan(root, exact_target=False)
+            self.assertFalse(plan["execution"]["executable"])
+            self.assertIsNone(plan["parameters"]["control_plane_url"])
+            self.assertIsNone(plan["parameters"]["org_id"])
+            self.assertIsNone(plan["parameters"]["tenant_id"])
+            blockers = " ".join(plan["execution"]["blockers"])
+            self.assertIn("control-plane-url", blockers)
+            self.assertIn("--org-id", blockers)
+            self.assertIn("--tenant-id", blockers)
+            with self.assertRaisesRegex(SystemExit, "control-plane-url"):
+                self.module.main(self.execution_args(plan_path))
+            self.assertFalse(self.module._receipt_path(plan_path).exists())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            with self.assertRaisesRegex(SystemExit, "explicit staging origin"):
+                self.module.main(
+                    [
+                        "--project-root",
+                        str(root),
+                        "--control-plane-url",
+                        "https://alpha.uipath.com",
+                    ]
+                )
+            for flag in ("--org-id", "--tenant-id"):
+                with self.subTest(flag=flag), self.assertRaisesRegex(
+                    SystemExit, "exact UiPath GUID"
+                ):
+                    self.module.main(
+                        [
+                            "--project-root",
+                            str(root),
+                            "--control-plane-url",
+                            "https://staging.uipath.com",
+                            flag,
+                            "not-a-guid",
+                        ]
+                    )
 
     def test_loading_plan_without_execute_never_runs_or_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -384,13 +551,13 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             write_project(root)
             plan_path, _ = self.create_plan(root)
             with self.assertRaisesRegex(SystemExit, "Missing coded app dist directory"):
-                self.module.main(["--plan", str(plan_path), "--execute"])
+                self.module.main(self.execution_args(plan_path))
             self.assertIn('version = "1.2.3"', (root / "pyproject.toml").read_text())
             self.assertFalse(self.module._receipt_path(plan_path).exists())
 
             (root / "dist").mkdir()
             with self.assertRaisesRegex(SystemExit, "Missing coded app main file"):
-                self.module.main(["--plan", str(plan_path), "--execute"])
+                self.module.main(self.execution_args(plan_path))
             self.assertIn('version = "1.2.3"', (root / "pyproject.toml").read_text())
 
     def test_main_file_symlink_cannot_escape_dist(self):
@@ -401,12 +568,9 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             outside_main = Path(outside) / "index.html"
             outside_main.write_text("outside\n")
             (root / "dist" / "index.html").symlink_to(outside_main)
-            plan_path, _ = self.create_plan(root)
-
-            with self.assertRaisesRegex(SystemExit, "resolves outside the dist directory"):
-                self.module.main(["--plan", str(plan_path), "--execute"])
+            with self.assertRaisesRegex(SystemExit, "dist may not contain symlinks"):
+                self.create_plan(root)
             self.assertIn('version = "1.2.3"', (root / "pyproject.toml").read_text())
-            self.assertFalse(self.module._receipt_path(plan_path).exists())
 
     def test_plan_hash_detects_tampering(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -455,7 +619,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
                 self.module, "_run", side_effect=fail_test
             ):
                 with self.assertRaisesRegex(RuntimeError, "fixture failure"):
-                    self.module.main(["--plan", str(plan_path), "--execute"])
+                    self.module.main(self.execution_args(plan_path))
 
             receipt_path = self.module._receipt_path(plan_path)
             receipt_text = receipt_path.read_text(encoding="utf-8")
@@ -476,14 +640,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
                 side_effect=lambda cmd, cwd, env: resumed_calls.append(cmd),
             ):
                 code, stdout, _ = self.run_main(
-                    [
-                        "--plan",
-                        str(plan_path),
-                        "--execute",
-                        "--resume",
-                        "--format",
-                        "json",
-                    ]
+                    self.execution_args(plan_path, "--resume", "--format", "json")
                 )
             self.assertEqual(code, 0)
             self.assertEqual(json.loads(stdout)["kind"], self.module.RESULT_KIND)
@@ -508,9 +665,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             self.module._write_receipt(receipt_path, receipt)
 
             with mock.patch.object(self.module, "_run"):
-                self.run_main(
-                    ["--plan", str(plan_path), "--execute", "--resume"]
-                )
+                self.run_main(self.execution_args(plan_path, "--resume"))
             completed = json.loads(receipt_path.read_text())
             self.assertEqual(completed["status"], "succeeded")
             self.assertEqual(
@@ -537,13 +692,14 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
                     break
                 stage["status"] = "succeeded"
                 stage["finished_at"] = self.module._utc_now()
+            receipt["package_file_digest"] = plan["parameters"][
+                "candidate_package_file_digest"
+            ]
             receipt_path = self.module._receipt_path(plan_path)
             self.module._write_receipt(receipt_path, receipt)
 
             with self.assertRaisesRegex(SystemExit, "indeterminate outcome"):
-                self.module.main(
-                    ["--plan", str(plan_path), "--execute", "--resume"]
-                )
+                self.module.main(self.execution_args(plan_path, "--resume"))
 
     def test_external_write_interrupt_is_recorded_as_indeterminate(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -553,12 +709,12 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             plan_path, _ = self.create_plan(root)
 
             def interrupt_publish(cmd, cwd, env):
-                if cmd[:3] == ["uip", "codedapp", "publish"]:
+                if cmd[1:3] == ["codedapp", "publish"]:
                     raise KeyboardInterrupt()
 
             with mock.patch.object(self.module, "_run", side_effect=interrupt_publish):
                 with self.assertRaises(KeyboardInterrupt):
-                    self.module.main(["--plan", str(plan_path), "--execute"])
+                    self.module.main(self.execution_args(plan_path))
 
             receipt_path = self.module._receipt_path(plan_path)
             receipt = json.loads(receipt_path.read_text())
@@ -572,9 +728,71 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
                 "redacted_indeterminate_external_write; verify target manually",
             )
             with self.assertRaisesRegex(SystemExit, "indeterminate outcome"):
-                self.module.main(
-                    ["--plan", str(plan_path), "--execute", "--resume"]
-                )
+                self.module.main(self.execution_args(plan_path, "--resume"))
+
+    def test_external_write_nonzero_exit_is_indeterminate_and_never_blindly_retried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            plan_path, _ = self.create_plan(root)
+            calls = []
+
+            def fail_publish(cmd, cwd, env):
+                calls.append(cmd[1:3])
+                if cmd[1:3] == ["codedapp", "publish"]:
+                    raise subprocess.CalledProcessError(1, cmd)
+
+            with mock.patch.object(self.module, "_run", side_effect=fail_publish):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    self.module.main(self.execution_args(plan_path))
+
+            receipt_path = self.module._receipt_path(plan_path)
+            receipt = json.loads(receipt_path.read_text())
+            publish = next(
+                stage for stage in receipt["stages"] if stage["name"] == "publish"
+            )
+            self.assertEqual(receipt["status"], "in_progress")
+            self.assertEqual(publish["status"], "running")
+            self.assertIn("blind resume prohibited", publish["recovery"])
+            self.assertNotIn(["codedapp", "deploy"], calls)
+
+            with mock.patch.object(
+                self.module,
+                "_run",
+                side_effect=AssertionError("indeterminate external write must not retry"),
+            ):
+                with self.assertRaisesRegex(SystemExit, "blind retry is prohibited"):
+                    self.module.main(self.execution_args(plan_path, "--resume"))
+
+    def test_resume_blocks_legacy_failed_external_write_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            plan_path, plan = self.create_plan(root)
+            self.module._write_version_atomic(
+                root / "pyproject.toml",
+                plan["project"]["old_version"],
+                plan["project"]["new_version"],
+            )
+            receipt = self.module._new_receipt(plan)
+            package_file = plan["parameters"]["candidate_package_file_digest"]
+            for stage in receipt["stages"]:
+                if stage["name"] == "publish":
+                    stage["status"] = "failed"
+                    stage["started_at"] = self.module._utc_now()
+                    stage["finished_at"] = self.module._utc_now()
+                    break
+                stage["status"] = "succeeded"
+                stage["finished_at"] = self.module._utc_now()
+            receipt["package_file_digest"] = package_file
+            receipt["status"] = "failed"
+            receipt_path = self.module._receipt_path(plan_path)
+            self.module._write_receipt(receipt_path, receipt)
+
+            with self.assertRaisesRegex(SystemExit, "blind retry is prohibited"):
+                self.module.main(self.execution_args(plan_path, "--resume"))
 
     def test_receipt_hash_detects_tampering(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -588,9 +806,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             receipt["status"] = "failed"
             receipt_path.write_text(json.dumps(receipt))
             with self.assertRaisesRegex(SystemExit, "Receipt hash mismatch"):
-                self.module.main(
-                    ["--plan", str(plan_path), "--execute", "--resume"]
-                )
+                self.module.main(self.execution_args(plan_path, "--resume"))
 
     def test_receipt_status_must_match_stage_statuses(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -603,9 +819,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             receipt["status"] = "succeeded"
             self.module._write_receipt(receipt_path, receipt)
             with self.assertRaisesRegex(SystemExit, "marked succeeded.*incomplete stage"):
-                self.module.main(
-                    ["--plan", str(plan_path), "--execute", "--resume"]
-                )
+                self.module.main(self.execution_args(plan_path, "--resume"))
 
     def test_verify_url_runs_after_deploy_without_retaining_response_data(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -628,19 +842,23 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             with mock.patch.object(self.module, "_run", side_effect=fake_run), mock.patch.object(
                 self.module, "_verify_url", side_effect=fake_verify
             ):
-                self.run_main(["--plan", str(plan_path), "--execute"])
+                self.run_main(self.execution_args(plan_path))
 
             self.assertEqual(plan["stages"][-1]["name"], "verify")
-            self.assertEqual(events[-2], ["uip", "codedapp", "deploy"])
+            self.assertEqual(events[-2][1:], ["codedapp", "deploy"])
             self.assertEqual(events[-1], ["verify", verify_url, 9])
             receipt_text = self.module._receipt_path(plan_path).read_text()
             self.assertNotIn(verify_url, receipt_text)
 
     def test_url_and_timeout_validation_fail_closed(self):
         cases = [
-            (["--target-url", "http://alpha.uipath.com"], "HTTPS URL"),
-            (["--target-url", "https://alpha.uipath.com/path"], "without a path"),
-            (["--target-url", "https://alpha.uipath.com:bad"], "invalid port"),
+            (["--control-plane-url", "http://alpha.uipath.com"], "HTTPS URL"),
+            (["--control-plane-url", "https://alpha.uipath.com/path"], "without a path"),
+            (["--control-plane-url", "https://alpha.uipath.com:bad"], "invalid port"),
+            (
+                ["--control-plane-url", "https://alpha.uipath.com"],
+                "explicit staging origin",
+            ),
             (["--verify-url", "http://example.com/app"], "HTTPS URL"),
             (["--verify-url", "https://example.com/app?token=x"], "query string"),
             (
@@ -656,17 +874,20 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, expected):
                     self.module.main(["--project-root", str(root), *extras])
 
-    def test_reuse_client_requires_manifest_client_id(self):
+    def test_reuse_client_is_rejected_and_pack_has_no_authentication_flags(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_project(root)
-            with self.assertRaisesRegex(SystemExit, "reuse-client requires.*clientId"):
+            with self.assertRaisesRegex(SystemExit, "unsupported by codedapp pack"):
                 self.module.main(["--project-root", str(root), "--reuse-client"])
 
-            write_project(root, uipath={"projectId": "fixture", "clientId": "client-1"})
-            _, plan = self.create_plan(root, extras=["--reuse-client"])
+            _, plan = self.create_plan(root)
             pack = next(stage for stage in plan["stages"] if stage["name"] == "pack")
-            self.assertIn("--reuse-client", pack["command"])
+            self.assertNotIn("--reuse-client", pack["command"])
+            self.assertNotIn("--base-url", pack["command"])
+            self.assertNotIn("--profile", pack["command"])
+            self.assertNotIn("--org-id", pack["command"])
+            self.assertNotIn("--tenant-id", pack["command"])
 
     def test_unsafe_legacy_flags_fail_closed_with_migration_guidance(self):
         cases = [
@@ -763,11 +984,303 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             root = Path(tmp)
             write_project(root)
             plan_path, plan = self.create_plan(root)
-            plan["schema_version"] = "2.0"
+            plan["schema_version"] = "9.9"
             plan["plan_hash"] = self.module._document_hash(plan, "plan_hash")
             plan_path.write_text(json.dumps(plan))
             with self.assertRaisesRegex(SystemExit, "Unsupported deployment plan"):
                 self.module.main(["--plan", str(plan_path)])
+
+    def test_release_provenance_and_supported_cli_commands_are_hash_bound(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            plan_path, plan = self.create_plan(root)
+
+            self.assertEqual(plan["schema_version"], "2.0")
+            self.assertRegex(
+                plan["deployment_binding_hash"], r"^sha256:[0-9a-f]{64}$"
+            )
+            parameters = plan["parameters"]
+            self.assertEqual(parameters["control_plane_url"], "https://staging.uipath.com")
+            self.assertEqual(parameters["org_id"], GUID)
+            self.assertEqual(parameters["tenant_id"], TENANT_GUID)
+            self.assertEqual(parameters["path_name"], "fixture-app")
+            self.assertEqual(parameters["client_id"], GUID)
+            self.assertEqual(parameters["tags"], ["governance", "internal"])
+            self.assertEqual(parameters["source_sha"], "a" * 40)
+            self.assertEqual(parameters["cli_version"], "1.198.0")
+            self.assertRegex(parameters["cli_profile_hash"], r"^sha256:[0-9a-f]{64}$")
+            self.assertRegex(parameters["dist_digest"], r"^sha256:[0-9a-f]{64}$")
+            self.assertRegex(parameters["package_digest"], r"^sha256:[0-9a-f]{64}$")
+            self.assertEqual(
+                parameters["package_digest_algorithm"],
+                self.module.PACKAGE_DIGEST_ALGORITHM,
+            )
+            self.assertRegex(
+                parameters["candidate_package_file_digest"],
+                r"^sha256:[0-9a-f]{64}$",
+            )
+
+            pack = next(stage for stage in plan["stages"] if stage["name"] == "pack")
+            publish = next(
+                stage for stage in plan["stages"] if stage["name"] == "publish"
+            )
+            deploy = next(stage for stage in plan["stages"] if stage["name"] == "deploy")
+            for unsupported in (
+                "--base-url",
+                "--org-id",
+                "--tenant-id",
+                "--profile",
+                "--reuse-client",
+            ):
+                self.assertNotIn(unsupported, pack["command"])
+            self.assertIn("--repository-commit", pack["command"])
+            self.assertIn("--base-url", publish["command"])
+            self.assertIn("--profile", publish["command"])
+            self.assertIn("--path-name", deploy["command"])
+            self.assertIn("--client-id", deploy["command"])
+            self.assertIn("--tags", deploy["command"])
+
+            persisted = json.loads(plan_path.read_text())
+            persisted["parameters"]["tags"] = ["governance"]
+            persisted["plan_hash"] = self.module._document_hash(
+                persisted, "plan_hash"
+            )
+            plan_path.write_text(json.dumps(persisted))
+            with self.assertRaisesRegex(SystemExit, "deployment_binding_hash"):
+                self.module.main(["--plan", str(plan_path)])
+
+    def test_execution_requires_the_exact_explicit_plan_hash_approval(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            plan_path, plan = self.create_plan(root)
+
+            with self.assertRaisesRegex(SystemExit, "approved-plan-hash"):
+                self.module.main(["--plan", str(plan_path), "--execute"])
+            with self.assertRaisesRegex(SystemExit, "approved-plan-hash"):
+                self.module.main(
+                    [
+                        "--plan",
+                        str(plan_path),
+                        "--execute",
+                        "--approved-plan-hash",
+                        "sha256:" + "0" * 64,
+                    ]
+                )
+            self.assertIn('version = "1.2.3"', (root / "pyproject.toml").read_text())
+            self.assertFalse(self.module._receipt_path(plan_path).exists())
+            self.assertRegex(plan["plan_hash"], r"^sha256:[0-9a-f]{64}$")
+
+    def test_package_content_digest_is_stable_while_exact_file_digest_is_audited(self):
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            first_package = write_package(
+                Path(first),
+                envelope_nonce="first",
+                project_id=GUID,
+            )
+            second_package = write_package(
+                Path(second),
+                envelope_nonce="second",
+                project_id=TENANT_GUID,
+            )
+            first_content, first_file = self.module._package_evidence(
+                first_package,
+                package_name="fixture-app",
+                main_file="index.html",
+            )
+            second_content, second_file = self.module._package_evidence(
+                second_package,
+                package_name="fixture-app",
+                main_file="index.html",
+            )
+            self.assertEqual(first_content, second_content)
+            self.assertNotEqual(first_file, second_file)
+
+            write_package(
+                Path(second),
+                envelope_nonce="third",
+                project_id=TENANT_GUID,
+                main_payload=b"changed payload\n",
+            )
+            changed_content, _ = self.module._package_evidence(
+                second_package,
+                package_name="fixture-app",
+                main_file="index.html",
+            )
+            self.assertNotEqual(first_content, changed_content)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            plan_path, plan = self.create_plan(root)
+            candidate_file = plan["parameters"]["candidate_package_file_digest"]
+
+            def simulate_repack(cmd, cwd, env):
+                if cmd[1:3] == ["codedapp", "pack"]:
+                    write_package(
+                        root,
+                        envelope_nonce="execution",
+                        project_id=TENANT_GUID,
+                    )
+
+            with mock.patch.object(self.module, "_run", side_effect=simulate_repack):
+                self.module.main(self.execution_args(plan_path))
+            receipt = json.loads(self.module._receipt_path(plan_path).read_text())
+            _, execution_file = self.module._package_evidence(
+                root / plan["parameters"]["package_path"],
+                package_name="fixture-app",
+                main_file="index.html",
+            )
+            self.assertNotEqual(execution_file, candidate_file)
+            self.assertEqual(receipt["package_file_digest"], execution_file)
+            self.assertEqual(
+                receipt["package_digest_algorithm"],
+                self.module.PACKAGE_DIGEST_ALGORITHM,
+            )
+
+    def test_exact_package_file_drift_after_validation_blocks_publish(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            plan_path, _ = self.create_plan(root)
+            original_execute_stage = self.module._execute_stage
+            remote_calls = []
+
+            def mutate_after_package(stage, plan, env):
+                result = original_execute_stage(stage, plan, env)
+                if stage["name"] == "package":
+                    write_package(
+                        root,
+                        envelope_nonce="post-validation-drift",
+                        project_id=TENANT_GUID,
+                    )
+                return result
+
+            with mock.patch.object(
+                self.module,
+                "_execute_stage",
+                side_effect=mutate_after_package,
+            ), mock.patch.object(
+                self.module,
+                "_run",
+                side_effect=lambda cmd, cwd, env: remote_calls.append(cmd),
+            ):
+                with self.assertRaisesRegex(SystemExit, "changed after package validation"):
+                    self.module.main(self.execution_args(plan_path))
+            self.assertFalse(
+                any(
+                    command[1:3] in (
+                        ["codedapp", "publish"],
+                        ["codedapp", "deploy"],
+                    )
+                    for command in remote_calls
+                )
+            )
+
+    def test_dist_and_package_digest_drift_fail_before_remote_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            plan_path, _ = self.create_plan(root)
+            (root / "dist" / "index.html").write_text("changed\n")
+            with self.assertRaisesRegex(SystemExit, "dist digest changed"):
+                self.module.main(self.execution_args(plan_path))
+            self.assertFalse(self.module._receipt_path(plan_path).exists())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            plan_path, plan = self.create_plan(root)
+            write_package(root, main_payload=b"tampered\n")
+            remote_calls = []
+            with mock.patch.object(
+                self.module,
+                "_run",
+                side_effect=lambda cmd, cwd, env: remote_calls.append(cmd),
+            ):
+                with self.assertRaisesRegex(SystemExit, "package content digest"):
+                    self.module.main(self.execution_args(plan_path))
+            self.assertFalse(
+                any(command[1:3] == ["codedapp", "pack"] for command in remote_calls)
+            )
+            self.assertFalse(
+                any(
+                    command[1:3] in (
+                        ["codedapp", "publish"],
+                        ["codedapp", "deploy"],
+                    )
+                    for command in remote_calls
+                )
+            )
+
+    def test_receipt_repeats_the_approved_release_provenance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            plan_path, plan = self.create_plan(root)
+            receipt = self.module._new_receipt(plan, plan["plan_hash"])
+
+            self.assertEqual(receipt["schema_version"], "2.0")
+            self.assertEqual(receipt["approved_plan_hash"], plan["plan_hash"])
+            self.assertEqual(
+                receipt["deployment_binding_hash"],
+                plan["deployment_binding_hash"],
+            )
+            for field in (
+                "cli_profile_hash",
+                "cli_executable_sha256",
+                "source_sha",
+                "dist_digest",
+                "package_digest",
+                "package_digest_algorithm",
+                "candidate_package_file_digest",
+            ):
+                self.assertEqual(receipt[field], plan["parameters"][field])
+
+    def test_published_v2_contract_schemas_cover_generated_documents(self):
+        plan_schema = json.loads(PLAN_SCHEMA.read_text(encoding="utf-8"))
+        receipt_schema = json.loads(RECEIPT_SCHEMA.read_text(encoding="utf-8"))
+        self.assertEqual(plan_schema["properties"]["schema_version"]["const"], "2.0")
+        self.assertEqual(receipt_schema["properties"]["schema_version"]["const"], "2.0")
+        self.assertFalse(plan_schema["additionalProperties"])
+        self.assertFalse(receipt_schema["additionalProperties"])
+        self.assertEqual(
+            plan_schema["properties"]["parameters"]["properties"][
+                "package_digest_algorithm"
+            ]["const"],
+            self.module.PACKAGE_DIGEST_ALGORITHM,
+        )
+        self.assertEqual(
+            receipt_schema["properties"]["package_digest_algorithm"]["const"],
+            self.module.PACKAGE_DIGEST_ALGORITHM,
+        )
+        self.assertEqual(
+            plan_schema["properties"]["parameters"]["properties"][
+                "control_plane_url"
+            ]["oneOf"][1]["const"],
+            self.module.STAGING_CONTROL_PLANE_URL,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            _, plan = self.create_plan(root)
+            receipt = self.module._new_receipt(plan, plan["plan_hash"])
+            self.assertEqual(set(plan), set(plan_schema["required"]))
+            self.assertEqual(set(receipt), set(receipt_schema["required"]))
+            self.assertEqual(
+                set(plan["parameters"]),
+                set(plan_schema["properties"]["parameters"]["required"]),
+            )
 
 
 if __name__ == "__main__":

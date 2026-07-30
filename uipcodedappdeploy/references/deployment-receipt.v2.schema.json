@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kb-uipath.github.io/skills/uipcodedappdeploy/deployment-receipt.v2.schema.json",
+  "title": "UiPath Coded App Deployment Receipt v2.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "plan_hash",
+    "approved_plan_hash",
+    "input_hash",
+    "deployment_binding_hash",
+    "cli_profile_hash",
+    "cli_executable_sha256",
+    "source_sha",
+    "dist_digest",
+    "package_digest",
+    "package_digest_algorithm",
+    "candidate_package_file_digest",
+    "package_file_digest",
+    "status",
+    "started_at",
+    "updated_at",
+    "redaction",
+    "stages",
+    "receipt_hash"
+  ],
+  "properties": {
+    "kind": {
+      "const": "uipcodedappdeploy.receipt"
+    },
+    "schema_version": {
+      "const": "2.0"
+    },
+    "plan_hash": {
+      "$ref": "#/$defs/hash"
+    },
+    "approved_plan_hash": {
+      "$ref": "#/$defs/hash"
+    },
+    "input_hash": {
+      "$ref": "#/$defs/hash"
+    },
+    "deployment_binding_hash": {
+      "$ref": "#/$defs/hash"
+    },
+    "cli_profile_hash": {
+      "$ref": "#/$defs/hash"
+    },
+    "cli_executable_sha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "source_sha": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "dist_digest": {
+      "$ref": "#/$defs/hash"
+    },
+    "package_digest": {
+      "$ref": "#/$defs/hash"
+    },
+    "package_digest_algorithm": {
+      "const": "uipath-coded-app-content-v1"
+    },
+    "candidate_package_file_digest": {
+      "$ref": "#/$defs/hash"
+    },
+    "package_file_digest": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/hash"
+        }
+      ]
+    },
+    "status": {
+      "enum": [
+        "in_progress",
+        "failed",
+        "succeeded"
+      ]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commands",
+        "environment",
+        "subprocess_output",
+        "errors"
+      ],
+      "properties": {
+        "commands": {
+          "const": "omitted"
+        },
+        "environment": {
+          "const": "omitted"
+        },
+        "subprocess_output": {
+          "const": "omitted"
+        },
+        "errors": {
+          "const": "generic_message_only"
+        }
+      }
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "effect",
+          "status"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "effect": {
+            "enum": [
+              "local_read",
+              "project_write",
+              "external_read",
+              "external_write"
+            ]
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "running",
+              "failed",
+              "succeeded"
+            ]
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "recovery": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "receipt_hash": {
+      "$ref": "#/$defs/hash"
+    }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}
