@@ -1494,5 +1494,208 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             )
 
 
+class SourceValidationIntegrationTests(unittest.TestCase):
+    """Exercise the real Git source guard without replacing _validate_source."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.module = load_module()
+
+    def run_main(self, argv):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = self.module.main(argv)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def git(self, root: Path, *arguments: str) -> str:
+        completed = subprocess.run(
+            ["git", "-C", str(root), *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return completed.stdout.strip()
+
+    def prepare_repository(
+        self,
+        workspace: Path,
+        *,
+        with_build: bool = False,
+    ) -> tuple[Path, Path, dict]:
+        root = workspace / "project"
+        root.mkdir()
+        write_project(root)
+        (root / ".gitignore").write_text(
+            ".uipath/\ndist/\napp/dist/\n",
+            encoding="utf-8",
+        )
+        if with_build:
+            (root / "app").mkdir()
+            (root / "app" / "package.json").write_text(
+                '{"scripts":{"build":"vite build"}}\n',
+                encoding="utf-8",
+            )
+            (root / "app" / "generated.ts").write_text(
+                "export const generated = 'initial';\n",
+                encoding="utf-8",
+            )
+            write_dist(root, "app/dist")
+            dist = "app/dist"
+        else:
+            write_dist(root)
+            dist = "dist"
+
+        self.git(root, "init", "--initial-branch=main")
+        self.git(root, "config", "user.email", "fixture@example.invalid")
+        self.git(root, "config", "user.name", "Fixture User")
+        self.git(root, "add", ".")
+        self.git(root, "commit", "-m", "fixture source")
+        source_sha = self.git(root, "rev-parse", "HEAD")
+
+        package_path = write_package(root)
+        package_digest, _ = self.module._package_evidence(
+            package_path,
+            package_name="fixture-app",
+            main_file="index.html",
+        )
+        dist_digest = self.module._directory_digest(root, dist)
+        self.assertIsNotNone(dist_digest)
+        plan_path = workspace / "deploy-plan.json"
+        argv = [
+            "--project-root",
+            str(root),
+            "--plan-output",
+            str(plan_path),
+            "--format",
+            "json",
+            "--environment",
+            "staging",
+            "--control-plane-url",
+            self.module.STAGING_CONTROL_PLANE_URL,
+            "--org-id",
+            GUID,
+            "--tenant-id",
+            TENANT_GUID,
+            "--folder-key",
+            GUID,
+            "--set-version",
+            "1.2.4",
+            "--path-name",
+            "fixture-app",
+            "--client-id",
+            GUID,
+            "--tags",
+            "governance,internal",
+            "--source-sha",
+            source_sha,
+            "--dist-digest",
+            dist_digest,
+            "--package-digest",
+            package_digest,
+            "--cli-executable",
+            sys.executable,
+            "--cli-version",
+            "1.198.0",
+            "--cli-profile",
+            "fixture-profile",
+            "--skip-tests",
+        ]
+        if not with_build:
+            argv.append("--skip-app-build")
+        code, stdout, _ = self.run_main(argv)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout)["kind"], self.module.PLAN_KIND)
+        return root, plan_path, json.loads(plan_path.read_text(encoding="utf-8"))
+
+    def execute(self, plan_path: Path, *, run_side_effect=None):
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        args = [
+            "--plan",
+            str(plan_path),
+            "--execute",
+            "--approved-plan-hash",
+            plan["plan_hash"],
+            "--format",
+            "json",
+        ]
+        with mock.patch.object(
+            self.module,
+            "_run",
+            side_effect=run_side_effect,
+        ), mock.patch.object(self.module, "_validate_cli"):
+            return self.run_main(args)
+
+    def test_exact_planned_version_mutation_passes_real_source_guard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, plan_path, plan = self.prepare_repository(Path(tmp))
+
+            code, stdout, _ = self.execute(plan_path)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(stdout)["status"], "succeeded")
+            self.assertIn(
+                f'version = "{plan["project"]["new_version"]}"',
+                (root / "pyproject.toml").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                self.git(root, "status", "--porcelain=v1"),
+                "M pyproject.toml",
+            )
+            receipt = self.module._load_receipt(
+                self.module._receipt_path(plan_path),
+                plan,
+            )
+            self.assertEqual(receipt["plan_hash"], plan["plan_hash"])
+            self.assertEqual(
+                receipt["input_hash"],
+                plan["inputs"]["initial"]["hash"],
+            )
+            self.assertEqual(
+                receipt["approved_plan_hash"],
+                plan["plan_hash"],
+            )
+
+    def test_tracked_build_drift_fails_after_the_versioned_source_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, plan_path, _ = self.prepare_repository(
+                Path(tmp),
+                with_build=True,
+            )
+
+            def mutate_tracked_build_output(cmd, cwd, env):
+                if cmd[:3] == ["npm", "run", "build"]:
+                    (root / "app" / "generated.ts").write_text(
+                        "export const generated = 'drifted';\n",
+                        encoding="utf-8",
+                    )
+
+            with self.assertRaisesRegex(SystemExit, "tracked or untracked build drift"):
+                self.execute(plan_path, run_side_effect=mutate_tracked_build_output)
+
+            receipt = json.loads(
+                self.module._receipt_path(plan_path).read_text(encoding="utf-8")
+            )
+            self.assertEqual(receipt["status"], "failed")
+            source_stage = next(
+                stage for stage in receipt["stages"] if stage["name"] == "source"
+            )
+            self.assertEqual(source_stage["status"], "failed")
+
+    def test_untracked_source_with_newline_fails_before_any_project_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, plan_path, plan = self.prepare_repository(Path(tmp))
+            (root / "untracked\nsource.ts").write_text("drift\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(SystemExit, "tracked or untracked drift"):
+                self.execute(plan_path)
+
+            self.assertIn(
+                f'version = "{plan["project"]["old_version"]}"',
+                (root / "pyproject.toml").read_text(encoding="utf-8"),
+            )
+            self.assertFalse(self.module._receipt_path(plan_path).exists())
+
+
 if __name__ == "__main__":
     unittest.main()

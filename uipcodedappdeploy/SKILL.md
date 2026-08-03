@@ -43,6 +43,9 @@ and deployment are always a separate, human-approved execution.
 
 1. Use Python 3.11 or later.
 2. Confirm the repository, branch, clean tracked state, and exact source commit.
+   Execution also rejects every non-ignored untracked path, so keep plan,
+   receipt, candidate-package, build, and evidence outputs either in reviewed
+   ignored locations or outside the project root.
 3. Confirm valid `pyproject.toml` and `uipath.json` manifests.
 4. Run the repository's complete test/build gates before accepting
    `--skip-tests --skip-app-build`.
@@ -121,14 +124,16 @@ python3.11 uipcodedappdeploy/scripts/uipcodedappdeploy.py \
   --format json
 ```
 
-Execution first revalidates the exact candidate package, then revalidates clean
-source, exact commit, dist digest, CLI executable digest/version, authenticated
-profile org/tenant, and plan inputs. It updates
-the project version, runs any planned local gates, packs, verifies the
-deterministic coded-app content digest, records the exact produced package file
-digest, rechecks those exact bytes immediately before publish, then publishes,
-deploys, and optionally verifies HTTPS. The redacted v2.1 receipt repeats the
-approved plan and release provenance hashes.
+Execution first revalidates the exact candidate package, initial input snapshot,
+exact commit, and zero tracked or untracked source drift. It updates only the
+planned `[project].version`, runs any planned local gates, validates the dist,
+then checks the versioned input snapshot and permits only that exact unstaged
+`pyproject.toml` mutation. Any other build-generated, tracked, staged, or
+untracked drift stops execution. It then validates the CLI executable
+digest/version, authenticated profile org/tenant, and package; records the exact
+produced package file digest; rechecks those exact bytes immediately before
+publish; publishes; deploys; and optionally verifies HTTPS. The redacted v2.1
+receipt repeats the approved plan and release provenance hashes.
 
 ## Resume And Indeterminate Writes
 

@@ -1753,16 +1753,89 @@ def _run_capture(cmd: list[str], cwd: Path) -> str:
     return completed.stdout
 
 
-def _validate_source(root: Path, parameters: dict[str, Any]) -> None:
-    observed = _run_capture(["git", "-C", str(root), "rev-parse", "HEAD"], root).strip()
-    if observed != parameters["source_sha"]:
-        _fail("Git source SHA does not match the approved deployment plan.")
-    dirty = _run_capture(
-        ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+def _run_capture_bytes(cmd: list[str], cwd: Path) -> bytes:
+    _log("+ " + shlex.join(cmd))
+    try:
+        completed = subprocess.run(
+            cmd,
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        _fail(f"Release preflight command failed: {type(exc).__name__}")
+    return completed.stdout
+
+
+def _porcelain_v1_z_records(payload: bytes) -> list[bytes]:
+    """Return raw porcelain records without lossy filename decoding.
+
+    ``git status --porcelain=v1 -z`` terminates every record with NUL and does
+    not quote paths. Keeping the records as bytes makes filenames containing
+    whitespace, newlines, or non-UTF-8 bytes unambiguous. Rename/copy entries
+    contain an additional NUL-delimited path; those necessarily differ from
+    the single allowlisted version record and therefore fail closed.
+    """
+
+    if not payload:
+        return []
+    if not payload.endswith(b"\0"):
+        _fail("Git returned malformed NUL-delimited source status.")
+    return payload[:-1].split(b"\0")
+
+
+def _validate_source(
+    root: Path,
+    plan: dict[str, Any],
+    *,
+    expected_input_state: str,
+) -> None:
+    if expected_input_state not in {"initial", "versioned"}:
+        _fail("Internal source validation state is invalid.")
+    parameters = plan["parameters"]
+    observed = _run_capture(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
         root,
     ).strip()
-    if dirty:
-        _fail("Tracked source is dirty; commit and regenerate the deployment plan.")
+    if observed != parameters["source_sha"]:
+        _fail("Git source SHA does not match the approved deployment plan.")
+
+    observed_input_state = _validate_current_inputs(
+        plan,
+        allow_versioned=expected_input_state == "versioned",
+    )
+    if observed_input_state != expected_input_state:
+        _fail(
+            "Project manifests do not match the approved "
+            f"{expected_input_state} source snapshot."
+        )
+
+    status = _run_capture_bytes(
+        [
+            "git",
+            "-C",
+            str(root),
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        ],
+        root,
+    )
+    records = _porcelain_v1_z_records(status)
+    expected_records = (
+        [] if expected_input_state == "initial" else [b" M pyproject.toml"]
+    )
+    if records != expected_records:
+        if expected_input_state == "initial":
+            _fail(
+                "Source contains tracked or untracked drift; commit or remove it and "
+                "regenerate the deployment plan."
+            )
+        _fail(
+            "Source differs from the exact planned pyproject.toml version mutation; "
+            "tracked or untracked build drift is prohibited."
+        )
 
 
 def _find_mapping_value(value: Any, names: set[str]) -> Any:
@@ -1922,7 +1995,7 @@ def _execute_stage(
         _validate_dist(root, plan["parameters"])
         return None
     if stage["action"] == "validate_source":
-        _validate_source(root, plan["parameters"])
+        _validate_source(root, plan, expected_input_state="versioned")
         return None
     if stage["action"] == "validate_cli":
         _validate_cli(root, plan["parameters"])
@@ -1962,10 +2035,11 @@ def _execute_plan(
             expected_file_digest=plan["parameters"]["candidate_package_file_digest"],
         )
     receipt_path = _receipt_path(plan_path)
+    input_state = _validate_current_inputs(plan, allow_versioned=resume)
+    _validate_source(root, plan, expected_input_state=input_state)
     if resume:
         receipt = _prepare_resume(plan, _load_receipt(receipt_path, plan), receipt_path)
     else:
-        _validate_current_inputs(plan, allow_versioned=False)
         if receipt_path.exists():
             _fail(
                 f"Receipt already exists: {receipt_path}. Use --resume after reviewing it, "
