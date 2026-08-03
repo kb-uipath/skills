@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -399,7 +400,17 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_project(root)
-            (root / "uv.lock").write_text("fixture\n")
+            (root / "uv.lock").write_text(
+                "version = 1\n"
+                "revision = 3\n"
+                'requires-python = ">=3.12"\n'
+                "\n"
+                "[[package]]\n"
+                'name = "fixture-app"\n'
+                'version = "1.2.3"\n'
+                'source = { virtual = "." }\n',
+                encoding="utf-8",
+            )
             (root / "app").mkdir()
             (root / "app" / "package.json").write_text('{"scripts":{"build":"vite build"}}\n')
             write_dist(root, "app/dist")
@@ -1479,6 +1490,28 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             len(plan_schema["properties"]["parameters"]["allOf"]),
             3,
         )
+        self.assertEqual(
+            {
+                tuple(choice["const"])
+                for choice in plan_schema["properties"]["inputs"]["properties"][
+                    "scope"
+                ]["oneOf"]
+            },
+            {
+                ("pyproject.toml", "uipath.json"),
+                ("pyproject.toml", "uipath.json", "uv.lock"),
+            },
+        )
+        self.assertEqual(
+            plan_schema["$defs"]["inputSnapshot"]["properties"]["files"][
+                "maxItems"
+            ],
+            3,
+        )
+        self.assertIn(
+            "uv.lock",
+            plan_schema["$defs"]["fileHash"]["properties"]["path"]["enum"],
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1522,6 +1555,8 @@ class SourceValidationIntegrationTests(unittest.TestCase):
         workspace: Path,
         *,
         with_build: bool = False,
+        with_lock: bool = False,
+        with_submodule: bool = False,
     ) -> tuple[Path, Path, dict]:
         root = workspace / "project"
         root.mkdir()
@@ -1530,6 +1565,17 @@ class SourceValidationIntegrationTests(unittest.TestCase):
             ".uipath/\ndist/\napp/dist/\n",
             encoding="utf-8",
         )
+        (root / "tracked.txt").write_text("approved\n", encoding="utf-8")
+        if with_lock:
+            uv = shutil.which("uv")
+            if uv is None:
+                self.skipTest("uv is unavailable")
+            subprocess.run(
+                [uv, "lock", "--offline"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
         if with_build:
             (root / "app").mkdir()
             (root / "app" / "package.json").write_text(
@@ -1551,6 +1597,37 @@ class SourceValidationIntegrationTests(unittest.TestCase):
         self.git(root, "config", "user.name", "Fixture User")
         self.git(root, "add", ".")
         self.git(root, "commit", "-m", "fixture source")
+        if with_submodule:
+            submodule_origin = workspace / "submodule-origin"
+            submodule_origin.mkdir()
+            self.git(submodule_origin, "init", "--initial-branch=main")
+            self.git(submodule_origin, "config", "user.email", "fixture@example.invalid")
+            self.git(submodule_origin, "config", "user.name", "Fixture User")
+            (submodule_origin / "source.txt").write_text(
+                "approved submodule\n",
+                encoding="utf-8",
+            )
+            self.git(submodule_origin, "add", "source.txt")
+            self.git(submodule_origin, "commit", "-m", "fixture submodule")
+            self.git(
+                root,
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                str(submodule_origin),
+                "modules/fixture",
+            )
+            self.git(
+                root,
+                "config",
+                "-f",
+                ".gitmodules",
+                "submodule.modules/fixture.ignore",
+                "all",
+            )
+            self.git(root, "add", ".gitmodules", "modules/fixture")
+            self.git(root, "commit", "-m", "add ignored submodule")
         source_sha = self.git(root, "rev-parse", "HEAD")
 
         package_path = write_package(root)
@@ -1670,7 +1747,7 @@ class SourceValidationIntegrationTests(unittest.TestCase):
                         encoding="utf-8",
                     )
 
-            with self.assertRaisesRegex(SystemExit, "tracked or untracked build drift"):
+            with self.assertRaisesRegex(SystemExit, "HEAD-tracked worktree file"):
                 self.execute(plan_path, run_side_effect=mutate_tracked_build_output)
 
             receipt = json.loads(
@@ -1687,7 +1764,173 @@ class SourceValidationIntegrationTests(unittest.TestCase):
             root, plan_path, plan = self.prepare_repository(Path(tmp))
             (root / "untracked\nsource.ts").write_text("drift\n", encoding="utf-8")
 
-            with self.assertRaisesRegex(SystemExit, "tracked or untracked drift"):
+            with self.assertRaisesRegex(SystemExit, "untracked drift"):
+                self.execute(plan_path)
+
+            self.assertIn(
+                f'version = "{plan["project"]["old_version"]}"',
+                (root / "pyproject.toml").read_text(encoding="utf-8"),
+            )
+            self.assertFalse(self.module._receipt_path(plan_path).exists())
+
+    def test_assume_unchanged_cannot_hide_a_modified_tracked_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, plan_path, plan = self.prepare_repository(Path(tmp))
+            self.git(root, "update-index", "--assume-unchanged", "tracked.txt")
+            (root / "tracked.txt").write_text("hidden drift\n", encoding="utf-8")
+            self.assertEqual(self.git(root, "status", "--porcelain=v1"), "")
+
+            with self.assertRaisesRegex(SystemExit, "assume-unchanged"):
+                self.execute(plan_path)
+
+            self.assertIn(
+                f'version = "{plan["project"]["old_version"]}"',
+                (root / "pyproject.toml").read_text(encoding="utf-8"),
+            )
+            self.assertFalse(self.module._receipt_path(plan_path).exists())
+
+    def test_skip_worktree_cannot_hide_a_modified_tracked_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, plan_path, plan = self.prepare_repository(Path(tmp))
+            self.git(root, "update-index", "--skip-worktree", "tracked.txt")
+            (root / "tracked.txt").write_text("hidden drift\n", encoding="utf-8")
+            self.assertEqual(self.git(root, "status", "--porcelain=v1"), "")
+
+            with self.assertRaisesRegex(SystemExit, "skip-worktree"):
+                self.execute(plan_path)
+
+            self.assertIn(
+                f'version = "{plan["project"]["old_version"]}"',
+                (root / "pyproject.toml").read_text(encoding="utf-8"),
+            )
+            self.assertFalse(self.module._receipt_path(plan_path).exists())
+
+    def test_submodule_ignore_all_cannot_hide_tracked_content_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, plan_path, plan = self.prepare_repository(
+                Path(tmp),
+                with_submodule=True,
+            )
+            (root / "modules" / "fixture" / "source.txt").write_text(
+                "hidden submodule drift\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(self.git(root, "status", "--porcelain=v1"), "")
+
+            with self.assertRaisesRegex(SystemExit, "HEAD-tracked worktree file"):
+                self.execute(plan_path)
+
+            self.assertIn(
+                f'version = "{plan["project"]["old_version"]}"',
+                (root / "pyproject.toml").read_text(encoding="utf-8"),
+            )
+            self.assertFalse(self.module._receipt_path(plan_path).exists())
+
+    def test_real_uv_lock_version_transition_is_plan_bound_and_allowed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, plan_path, plan = self.prepare_repository(
+                Path(tmp),
+                with_lock=True,
+            )
+
+            def run_real_uv_only(cmd, cwd, env):
+                if cmd[:2] == ["uv", "lock"]:
+                    subprocess.run(cmd, cwd=cwd, env=env, check=True, capture_output=True)
+
+            code, stdout, _ = self.execute(
+                plan_path,
+                run_side_effect=run_real_uv_only,
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(stdout)["status"], "succeeded")
+            self.assertEqual(
+                plan["inputs"]["scope"],
+                ["pyproject.toml", "uipath.json", "uv.lock"],
+            )
+            uv_lock = (root / "uv.lock").read_text(encoding="utf-8")
+            self.assertIn('version = "1.2.4"', uv_lock)
+            self.assertNotIn('version = "1.2.3"', uv_lock)
+            receipt = self.module._load_receipt(
+                self.module._receipt_path(plan_path),
+                plan,
+            )
+            self.assertEqual(receipt["plan_hash"], plan["plan_hash"])
+            self.assertEqual(
+                receipt["input_hash"],
+                plan["inputs"]["initial"]["hash"],
+            )
+
+    def test_resume_accepts_only_the_plan_bound_post_version_pre_lock_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, plan_path, plan = self.prepare_repository(
+                Path(tmp),
+                with_lock=True,
+            )
+
+            def fail_before_uv_mutation(cmd, cwd, env):
+                if cmd[:2] == ["uv", "lock"]:
+                    raise RuntimeError("synthetic lock failure")
+
+            with self.assertRaisesRegex(RuntimeError, "synthetic lock failure"):
+                self.execute(plan_path, run_side_effect=fail_before_uv_mutation)
+            self.assertIn(
+                f'version = "{plan["project"]["new_version"]}"',
+                (root / "pyproject.toml").read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                f'version = "{plan["project"]["old_version"]}"',
+                (root / "uv.lock").read_text(encoding="utf-8"),
+            )
+
+            def run_real_uv_only(cmd, cwd, env):
+                if cmd[:2] == ["uv", "lock"]:
+                    subprocess.run(cmd, cwd=cwd, env=env, check=True, capture_output=True)
+
+            plan_document = json.loads(plan_path.read_text(encoding="utf-8"))
+            args = [
+                "--plan",
+                str(plan_path),
+                "--execute",
+                "--approved-plan-hash",
+                plan_document["plan_hash"],
+                "--resume",
+                "--format",
+                "json",
+            ]
+            with mock.patch.object(
+                self.module,
+                "_run",
+                side_effect=run_real_uv_only,
+            ), mock.patch.object(self.module, "_validate_cli"):
+                code, stdout, _ = self.run_main(args)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(stdout)["status"], "succeeded")
+            self.assertIn(
+                f'version = "{plan["project"]["new_version"]}"',
+                (root / "uv.lock").read_text(encoding="utf-8"),
+            )
+
+    def test_rehashed_arbitrary_uv_lock_transition_fails_before_version_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, plan_path, plan = self.prepare_repository(
+                Path(tmp),
+                with_lock=True,
+            )
+            uv_record = next(
+                record
+                for record in plan["inputs"]["versioned"]["files"]
+                if record["path"] == "uv.lock"
+            )
+            uv_record["sha256"] = self.module._hash_bytes(b"arbitrary lock bytes")
+            plan["inputs"]["versioned"]["hash"] = self.module._hash_json(
+                {"files": plan["inputs"]["versioned"]["files"]}
+            )
+            plan["plan_hash"] = self.module._document_hash(plan, "plan_hash")
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+            with self.assertRaisesRegex(SystemExit, "versioned uv.lock hash"):
                 self.execute(plan_path)
 
             self.assertIn(

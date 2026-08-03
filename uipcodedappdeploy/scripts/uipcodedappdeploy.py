@@ -65,6 +65,9 @@ SEMVER_RE = re.compile(
     r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
 PROJECT_HEADER_RE = re.compile(r"^\s*\[\s*project\s*\]\s*(?:#.*)?(?:\r?\n)?$")
+UV_PACKAGE_HEADER_RE = re.compile(
+    r"^\s*\[\[\s*package\s*\]\]\s*(?:#.*)?(?:\r?\n)?$"
+)
 TABLE_HEADER_RE = re.compile(r"^\s*\[\[?.+?\]\]?\s*(?:#.*)?(?:\r?\n)?$")
 VERSION_ASSIGNMENT_RE = re.compile(
     r"^(?P<prefix>\s*(?:version|\"version\"|'version')\s*=\s*)"
@@ -379,6 +382,106 @@ def _write_version_atomic(path: Path, old_version: str, new_version: str) -> Non
     mode = path.stat().st_mode & 0o777
     _atomic_write_bytes(path, updated.encode("utf-8"), mode)
     _log(f"Set {path.name} [project].version to {new_version}")
+
+
+def _is_local_uv_project_package(package: Any, project_name: str, version: str) -> bool:
+    if not isinstance(package, dict):
+        return False
+    source = package.get("source")
+    return (
+        isinstance(package.get("name"), str)
+        and re.sub(r"[-_.]+", "-", package["name"]).lower()
+        == re.sub(r"[-_.]+", "-", project_name).lower()
+        and package.get("version") == version
+        and isinstance(source, dict)
+        and any(source.get(field) == "." for field in ("editable", "virtual"))
+    )
+
+
+def _render_uv_lock_version_update(
+    text: str,
+    project_name: str,
+    old_version: str,
+    new_version: str,
+) -> str:
+    try:
+        document = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        _fail(f"Invalid TOML in uv.lock: {exc}")
+    packages = document.get("package")
+    if not isinstance(packages, list):
+        _fail("uv.lock must contain [[package]] records before it can be release-bound.")
+    matching_indexes = [
+        index
+        for index, package in enumerate(packages)
+        if _is_local_uv_project_package(package, project_name, old_version)
+    ]
+    if len(matching_indexes) != 1:
+        _fail(
+            "uv.lock must contain exactly one local project package at the current "
+            "[project].version before deployment planning."
+        )
+
+    lines = text.splitlines(keepends=True)
+    starts = [index for index, line in enumerate(lines) if UV_PACKAGE_HEADER_RE.match(line)]
+    matching_blocks: list[tuple[int, int]] = []
+    for position, start in enumerate(starts):
+        end = starts[position + 1] if position + 1 < len(starts) else len(lines)
+        try:
+            block = tomllib.loads("".join(lines[start:end]))
+        except tomllib.TOMLDecodeError as exc:
+            _fail(f"Could not isolate a canonical uv.lock package record: {exc}")
+        block_packages = block.get("package")
+        if (
+            isinstance(block_packages, list)
+            and len(block_packages) == 1
+            and _is_local_uv_project_package(
+                block_packages[0],
+                project_name,
+                old_version,
+            )
+        ):
+            matching_blocks.append((start, end))
+    if len(matching_blocks) != 1:
+        _fail(
+            "uv.lock must contain one textually isolated local project package record."
+        )
+
+    start, end = matching_blocks[0]
+    assignment_end = end
+    for index in range(start + 1, end):
+        if TABLE_HEADER_RE.match(lines[index]):
+            assignment_end = index
+            break
+    assignments = [
+        index
+        for index in range(start + 1, assignment_end)
+        if VERSION_ASSIGNMENT_RE.match(lines[index])
+    ]
+    if len(assignments) != 1:
+        _fail(
+            "The local uv.lock project package must contain one single-line version "
+            "assignment."
+        )
+    index = assignments[0]
+    match = VERSION_ASSIGNMENT_RE.match(lines[index])
+    assert match is not None
+    lines[index] = (
+        match.group("prefix")
+        + json.dumps(new_version)
+        + match.group("suffix")
+        + match.group("newline")
+    )
+    updated = "".join(lines)
+    try:
+        updated_document = tomllib.loads(updated)
+    except tomllib.TOMLDecodeError as exc:
+        _fail(f"Refusing to plan an invalid uv.lock update: {exc}")
+    expected = copy.deepcopy(document)
+    expected["package"][matching_indexes[0]]["version"] = new_version
+    if updated_document != expected:
+        _fail("Refusing uv.lock update because it changed data beyond the project version.")
+    return updated
 
 
 def _safe_text(value: Any, label: str, *, allow_empty: bool = False) -> str:
@@ -947,10 +1050,14 @@ def _build_stages(project: dict[str, Any], parameters: dict[str, Any]) -> list[d
     return stages
 
 
-def _snapshot_records(root: Path, overrides: dict[str, bytes] | None = None) -> list[dict[str, str]]:
+def _snapshot_records(
+    root: Path,
+    scope: list[str],
+    overrides: dict[str, bytes] | None = None,
+) -> list[dict[str, str]]:
     overrides = overrides or {}
     records = []
-    for relative in ("pyproject.toml", "uipath.json"):
+    for relative in scope:
         path = root / relative
         if relative in overrides:
             payload = overrides[relative]
@@ -967,8 +1074,8 @@ def _snapshot(records: list[dict[str, str]]) -> dict[str, Any]:
     return {"files": records, "hash": _hash_json({"files": records})}
 
 
-def _current_input_hash(root: Path) -> str:
-    return _snapshot(_snapshot_records(root))["hash"]
+def _current_input_hash(root: Path, scope: list[str]) -> str:
+    return _snapshot(_snapshot_records(root, scope))["hash"]
 
 
 def _legacy_failure(args: argparse.Namespace) -> None:
@@ -1138,11 +1245,28 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         _fail("--verify-timeout must be between 1 and 120 seconds.")
 
     updated_pyproject = _render_version_update(pyproject_text, old_version, new_version)
-    initial = _snapshot(_snapshot_records(root))
+    run_lock = (root / "uv.lock").is_file()
+    input_scope = ["pyproject.toml", "uipath.json"]
+    versioned_overrides = {"pyproject.toml": updated_pyproject.encode("utf-8")}
+    if run_lock:
+        input_scope.append("uv.lock")
+        try:
+            uv_lock_text = (root / "uv.lock").read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            _fail(f"Could not read UTF-8 TOML from {root / 'uv.lock'}: {exc}")
+        updated_uv_lock = _render_uv_lock_version_update(
+            uv_lock_text,
+            metadata["name"],
+            old_version,
+            new_version,
+        )
+        versioned_overrides["uv.lock"] = updated_uv_lock.encode("utf-8")
+    initial = _snapshot(_snapshot_records(root, input_scope))
     versioned = _snapshot(
         _snapshot_records(
             root,
-            overrides={"pyproject.toml": updated_pyproject.encode("utf-8")},
+            input_scope,
+            overrides=versioned_overrides,
         )
     )
     project = {
@@ -1197,7 +1321,7 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "cli_version": cli_version,
         "cli_profile": cli_profile,
         "cli_profile_hash": cli_profile_hash,
-        "run_lock": (root / "uv.lock").is_file(),
+        "run_lock": run_lock,
         "run_tests": not args.skip_tests,
         "run_app_build": (
             not args.skip_app_build and (root / "app" / "package.json").is_file()
@@ -1229,7 +1353,7 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "created_at": _utc_now(),
         "project": project,
         "inputs": {
-            "scope": ["pyproject.toml", "uipath.json"],
+            "scope": input_scope,
             "initial": initial,
             "versioned": versioned,
         },
@@ -1248,15 +1372,15 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
     return plan
 
 
-def _validate_snapshot(snapshot: Any, label: str) -> None:
+def _validate_snapshot(snapshot: Any, label: str, scope: list[str]) -> None:
     if not isinstance(snapshot, dict) or set(snapshot) != {"files", "hash"}:
         _fail(f"{label} must contain exactly files and hash.")
     files = snapshot["files"]
-    if not isinstance(files, list) or [item.get("path") for item in files if isinstance(item, dict)] != [
-        "pyproject.toml",
-        "uipath.json",
-    ]:
-        _fail(f"{label}.files must list pyproject.toml and uipath.json in canonical order.")
+    if (
+        not isinstance(files, list)
+        or [item.get("path") for item in files if isinstance(item, dict)] != scope
+    ):
+        _fail(f"{label}.files must match the canonical plan input scope.")
     for item in files:
         if set(item) != {"path", "sha256"} or not isinstance(item["sha256"], str):
             _fail(f"{label}.files contains an invalid file record.")
@@ -1434,17 +1558,34 @@ def _validate_plan_document(plan: Any) -> dict[str, Any]:
     _safe_text(project["name"], "Plan project.name")
     _validate_progression(project["old_version"], project["new_version"])
 
+    _validate_parameters(root, plan["parameters"])
+
     inputs = plan["inputs"]
     if not isinstance(inputs, dict) or set(inputs) != {"scope", "initial", "versioned"}:
         _fail(f"Plan inputs do not match schema version {PLAN_SCHEMA_VERSION}.")
-    if inputs["scope"] != ["pyproject.toml", "uipath.json"]:
-        _fail("Plan input hash scope must be pyproject.toml and uipath.json.")
-    _validate_snapshot(inputs["initial"], "Plan inputs.initial")
-    _validate_snapshot(inputs["versioned"], "Plan inputs.versioned")
-    if inputs["initial"]["files"][1] != inputs["versioned"]["files"][1]:
-        _fail("Plan versioning must not alter the uipath.json input hash.")
-
-    _validate_parameters(root, plan["parameters"])
+    expected_scope = ["pyproject.toml", "uipath.json"]
+    if plan["parameters"]["run_lock"]:
+        expected_scope.append("uv.lock")
+    if inputs["scope"] != expected_scope:
+        _fail("Plan input hash scope does not match its planned source stages.")
+    _validate_snapshot(inputs["initial"], "Plan inputs.initial", expected_scope)
+    _validate_snapshot(inputs["versioned"], "Plan inputs.versioned", expected_scope)
+    initial_files = {
+        record["path"]: record["sha256"] for record in inputs["initial"]["files"]
+    }
+    versioned_files = {
+        record["path"]: record["sha256"] for record in inputs["versioned"]["files"]
+    }
+    expected_mutations = {"pyproject.toml"}
+    if plan["parameters"]["run_lock"]:
+        expected_mutations.add("uv.lock")
+    changed = {
+        path
+        for path in expected_scope
+        if initial_files[path] != versioned_files[path]
+    }
+    if changed != expected_mutations:
+        _fail("Plan versioned input hashes do not match the allowlisted source stages.")
     if plan["parameters"]["package_path"] != _package_path(
         plan["parameters"]["package_name"], project["new_version"]
     ):
@@ -1509,7 +1650,7 @@ def _validate_current_inputs(plan: dict[str, Any], *, allow_versioned: bool) -> 
     root = Path(plan["project"]["root"])
     pyproject, _ = _load_pyproject(root / "pyproject.toml")
     _load_uipath_json(root / "uipath.json")
-    current_hash = _current_input_hash(root)
+    current_hash = _current_input_hash(root, plan["inputs"]["scope"])
     initial_hash = plan["inputs"]["initial"]["hash"]
     versioned_hash = plan["inputs"]["versioned"]["hash"]
     current_version = pyproject["project"]["version"]
@@ -1521,10 +1662,61 @@ def _validate_current_inputs(plan: dict[str, Any], *, allow_versioned: bool) -> 
         and current_version == plan["project"]["new_version"]
     ):
         return "versioned"
+    if allow_versioned and plan["parameters"]["run_lock"]:
+        initial_files = {
+            record["path"]: record for record in plan["inputs"]["initial"]["files"]
+        }
+        versioned_files = {
+            record["path"]: record for record in plan["inputs"]["versioned"]["files"]
+        }
+        after_version = _snapshot(
+            [
+                copy.deepcopy(
+                    versioned_files[path]
+                    if path == "pyproject.toml"
+                    else initial_files[path]
+                )
+                for path in plan["inputs"]["scope"]
+            ]
+        )
+        if (
+            current_hash == after_version["hash"]
+            and current_version == plan["project"]["new_version"]
+        ):
+            return "version_written"
     _fail(
-        "Deployment input hash mismatch. pyproject.toml or uipath.json changed after "
-        "planning; regenerate the plan instead of executing stale inputs."
+        "Deployment input hash mismatch. A plan-bound manifest or lockfile changed "
+        "after planning; regenerate the plan instead of executing stale inputs."
     )
+
+
+def _validate_planned_input_transition(plan: dict[str, Any]) -> None:
+    root = Path(plan["project"]["root"])
+    versioned = {
+        record["path"]: record["sha256"]
+        for record in plan["inputs"]["versioned"]["files"]
+    }
+    _, pyproject_text = _load_pyproject(root / "pyproject.toml")
+    expected_pyproject = _render_version_update(
+        pyproject_text,
+        plan["project"]["old_version"],
+        plan["project"]["new_version"],
+    ).encode("utf-8")
+    if _hash_bytes(expected_pyproject) != versioned["pyproject.toml"]:
+        _fail("Plan versioned pyproject.toml hash is not the exact version transition.")
+    if plan["parameters"]["run_lock"]:
+        try:
+            uv_lock_text = (root / "uv.lock").read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            _fail(f"Could not read UTF-8 TOML from {root / 'uv.lock'}: {exc}")
+        expected_uv_lock = _render_uv_lock_version_update(
+            uv_lock_text,
+            plan["project"]["name"],
+            plan["project"]["old_version"],
+            plan["project"]["new_version"],
+        ).encode("utf-8")
+        if _hash_bytes(expected_uv_lock) != versioned["uv.lock"]:
+            _fail("Plan versioned uv.lock hash is not the exact project-version transition.")
 
 
 def _receipt_path(plan_path: Path) -> Path:
@@ -1686,14 +1878,31 @@ def _prepare_resume(
 ) -> dict[str, Any]:
     version_receipt = receipt["stages"][0]
     input_state = _validate_current_inputs(plan, allow_versioned=True)
-    if version_receipt["status"] == "succeeded" and input_state != "versioned":
-        _fail("Receipt says versioning succeeded, but current inputs do not match the versioned hash.")
-    if version_receipt["status"] != "succeeded" and input_state == "versioned":
+    completed_version_states = {"version_written", "versioned"}
+    if (
+        version_receipt["status"] == "succeeded"
+        and input_state not in completed_version_states
+    ):
+        _fail("Receipt says versioning succeeded, but source remains at the initial state.")
+    if (
+        version_receipt["status"] != "succeeded"
+        and input_state in completed_version_states
+    ):
         if version_receipt["status"] not in ("running", "failed"):
             _fail("Versioned inputs cannot be reconciled with a pending version receipt.")
         version_receipt["status"] = "succeeded"
         version_receipt["finished_at"] = _utc_now()
         version_receipt["recovery"] = "atomic_version_write_reconciled"
+    if plan["parameters"]["run_lock"]:
+        lock_receipt = next(stage for stage in receipt["stages"] if stage["name"] == "lock")
+        if lock_receipt["status"] == "succeeded" and input_state != "versioned":
+            _fail("Receipt says locking succeeded, but uv.lock is not at its planned hash.")
+        if lock_receipt["status"] != "succeeded" and input_state == "versioned":
+            if lock_receipt["status"] not in ("running", "failed"):
+                _fail("Versioned uv.lock cannot be reconciled with a pending lock receipt.")
+            lock_receipt["status"] = "succeeded"
+            lock_receipt["finished_at"] = _utc_now()
+            lock_receipt["recovery"] = "lockfile_write_reconciled"
     for stage in receipt["stages"]:
         if (
             stage["status"] in ("running", "failed")
@@ -1784,31 +1993,192 @@ def _porcelain_v1_z_records(payload: bytes) -> list[bytes]:
     return payload[:-1].split(b"\0")
 
 
-def _validate_source(
+def _git_object_id(value: bytes, label: str) -> bytes:
+    if re.fullmatch(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})", value) is None:
+        _fail(f"Git returned an invalid object ID for {label}.")
+    return value
+
+
+def _git_head_entries(root: Path) -> dict[bytes, tuple[bytes, bytes, bytes]]:
+    payload = _run_capture_bytes(
+        ["git", "-C", str(root), "ls-tree", "-rz", "--full-tree", "HEAD"],
+        root,
+    )
+    records = _porcelain_v1_z_records(payload)
+    entries: dict[bytes, tuple[bytes, bytes, bytes]] = {}
+    for record in records:
+        try:
+            metadata, path = record.split(b"\t", 1)
+            mode, object_type, object_id = metadata.split(b" ")
+        except ValueError:
+            _fail("Git returned a malformed HEAD tree record.")
+        if not path or path in entries:
+            _fail("Git returned an empty or duplicate HEAD tree path.")
+        if (mode, object_type) not in {
+            (b"100644", b"blob"),
+            (b"100755", b"blob"),
+            (b"120000", b"blob"),
+            (b"160000", b"commit"),
+        }:
+            _fail("Git HEAD contains an unsupported tracked path type or mode.")
+        entries[path] = (mode, object_type, _git_object_id(object_id, "HEAD tree"))
+    return entries
+
+
+def _validate_git_index(
     root: Path,
-    plan: dict[str, Any],
-    *,
-    expected_input_state: str,
+    head_entries: dict[bytes, tuple[bytes, bytes, bytes]],
 ) -> None:
-    if expected_input_state not in {"initial", "versioned"}:
-        _fail("Internal source validation state is invalid.")
-    parameters = plan["parameters"]
-    observed = _run_capture(
+    stage_payload = _run_capture_bytes(
+        ["git", "-C", str(root), "ls-files", "--stage", "-z"],
+        root,
+    )
+    stage_records = _porcelain_v1_z_records(stage_payload)
+    index_entries: dict[bytes, tuple[bytes, bytes, bytes]] = {}
+    for record in stage_records:
+        try:
+            metadata, path = record.split(b"\t", 1)
+            mode, object_id, stage = metadata.split(b" ")
+        except ValueError:
+            _fail("Git returned a malformed index stage record.")
+        if not path or path in index_entries:
+            _fail("Git index contains duplicate or unmerged paths.")
+        index_entries[path] = (
+            mode,
+            b"blob" if mode != b"160000" else b"commit",
+            _git_object_id(object_id, "index"),
+        )
+        if stage != b"0":
+            _fail("Git index contains an unmerged source path.")
+    if index_entries != head_entries:
+        _fail("Git index differs from the exact approved HEAD tree.")
+
+    flag_payload = _run_capture_bytes(
+        ["git", "-C", str(root), "ls-files", "-v", "-z"],
+        root,
+    )
+    flag_records = _porcelain_v1_z_records(flag_payload)
+    flagged_paths: set[bytes] = set()
+    for record in flag_records:
+        if len(record) < 3 or record[1:2] != b" ":
+            _fail("Git returned a malformed index flag record.")
+        marker, path = record[:1], record[2:]
+        if not path or path in flagged_paths:
+            _fail("Git index flag output contains an empty or duplicate path.")
+        flagged_paths.add(path)
+        if marker != b"H":
+            _fail(
+                "Git index contains assume-unchanged, skip-worktree, sparse, or "
+                "other hidden path state."
+            )
+    if flagged_paths != set(head_entries):
+        _fail("Git index flag coverage differs from the exact approved HEAD tree.")
+
+
+def _git_hash_worktree_file(root: Path, relative: bytes) -> bytes:
+    relative_text = os.fsdecode(relative)
+    env = os.environ.copy()
+    env["GIT_ATTR_SOURCE"] = "HEAD"
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "hash-object",
+                f"--path={relative_text}",
+                "--",
+                relative_text,
+            ],
+            cwd=root,
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        _fail(f"Could not hash a tracked worktree file: {type(exc).__name__}")
+    return _git_object_id(completed.stdout.strip(), "worktree file")
+
+
+def _git_hash_symlink(root: Path, path: Path) -> bytes:
+    try:
+        payload = os.fsencode(os.readlink(path))
+        completed = subprocess.run(
+            ["git", "-C", str(root), "hash-object", "--stdin"],
+            cwd=root,
+            input=payload,
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        _fail(f"Could not hash a tracked worktree symlink: {type(exc).__name__}")
+    return _git_object_id(completed.stdout.strip(), "worktree symlink")
+
+
+def _verify_tracked_worktree(
+    root: Path,
+    expected_head: str,
+    allowed_hashes: dict[str, str],
+) -> set[bytes]:
+    top_level = Path(
+        _run_capture(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            root,
+        ).strip()
+    ).resolve()
+    if top_level != root.resolve():
+        _fail("Project root must be the exact Git worktree root.")
+    observed_head = _run_capture(
         ["git", "-C", str(root), "rev-parse", "HEAD"],
         root,
     ).strip()
-    if observed != parameters["source_sha"]:
+    if observed_head != expected_head:
         _fail("Git source SHA does not match the approved deployment plan.")
 
-    observed_input_state = _validate_current_inputs(
-        plan,
-        allow_versioned=expected_input_state == "versioned",
-    )
-    if observed_input_state != expected_input_state:
-        _fail(
-            "Project manifests do not match the approved "
-            f"{expected_input_state} source snapshot."
-        )
+    head_entries = _git_head_entries(root)
+    _validate_git_index(root, head_entries)
+    tracked_allowed = {os.fsencode(path) for path in allowed_hashes} & set(head_entries)
+    for relative, (mode, _object_type, object_id) in head_entries.items():
+        relative_path = Path(os.fsdecode(relative))
+        ancestor = root
+        for part in relative_path.parts[:-1]:
+            ancestor /= part
+            try:
+                ancestor_stat = ancestor.lstat()
+            except OSError:
+                _fail("A HEAD-tracked worktree path has a missing ancestor.")
+            if not stat.S_ISDIR(ancestor_stat.st_mode):
+                _fail("A HEAD-tracked worktree path has a non-directory ancestor.")
+        path = root / relative_path
+        try:
+            path_stat = path.lstat()
+        except OSError:
+            _fail("A HEAD-tracked worktree path is missing or unreadable.")
+        if mode in {b"100644", b"100755"}:
+            if not stat.S_ISREG(path_stat.st_mode):
+                _fail("A HEAD-tracked regular file changed type in the worktree.")
+            expected_executable = mode == b"100755"
+            if bool(path_stat.st_mode & stat.S_IXUSR) != expected_executable:
+                _fail("A HEAD-tracked regular file changed executable mode.")
+            if relative in tracked_allowed:
+                observed_sha256 = _hash_file(path, "plan-bound source mutation")
+                if observed_sha256 != allowed_hashes[os.fsdecode(relative)]:
+                    _fail("A plan-bound source mutation does not match its approved hash.")
+            elif _git_hash_worktree_file(root, relative) != object_id:
+                _fail("A HEAD-tracked worktree file differs from the approved source.")
+        elif mode == b"120000":
+            if not stat.S_ISLNK(path_stat.st_mode):
+                _fail("A HEAD-tracked symlink changed type in the worktree.")
+            if relative in tracked_allowed:
+                _fail("Planned source mutations cannot target symlinks.")
+            if _git_hash_symlink(root, path) != object_id:
+                _fail("A HEAD-tracked worktree symlink differs from the approved source.")
+        else:
+            if not stat.S_ISDIR(path_stat.st_mode):
+                _fail("A HEAD-tracked submodule changed type in the worktree.")
+            if relative in tracked_allowed:
+                _fail("Planned source mutations cannot target submodules.")
+            _verify_tracked_worktree(path, object_id.decode("ascii"), {})
 
     status = _run_capture_bytes(
         [
@@ -1819,23 +2189,58 @@ def _validate_source(
             "--porcelain=v1",
             "-z",
             "--untracked-files=all",
+            "--ignore-submodules=none",
         ],
         root,
     )
     records = _porcelain_v1_z_records(status)
-    expected_records = (
-        [] if expected_input_state == "initial" else [b" M pyproject.toml"]
-    )
-    if records != expected_records:
-        if expected_input_state == "initial":
-            _fail(
-                "Source contains tracked or untracked drift; commit or remove it and "
-                "regenerate the deployment plan."
-            )
+    expected_records = sorted(b" M " + path for path in tracked_allowed)
+    if sorted(records) != expected_records:
         _fail(
-            "Source differs from the exact planned pyproject.toml version mutation; "
-            "tracked or untracked build drift is prohibited."
+            "Source contains source-stage-external tracked, submodule, or untracked drift."
         )
+    return tracked_allowed
+
+
+def _validate_source(
+    root: Path,
+    plan: dict[str, Any],
+    *,
+    expected_input_state: str,
+) -> None:
+    if expected_input_state not in {"initial", "version_written", "versioned"}:
+        _fail("Internal source validation state is invalid.")
+    observed_input_state = _validate_current_inputs(
+        plan,
+        allow_versioned=expected_input_state != "initial",
+    )
+    if observed_input_state != expected_input_state:
+        _fail(
+            "Project manifests do not match the approved "
+            f"{expected_input_state} source snapshot."
+        )
+    if expected_input_state == "initial":
+        _validate_planned_input_transition(plan)
+        allowed_hashes: dict[str, str] = {}
+    else:
+        initial = {
+            record["path"]: record["sha256"]
+            for record in plan["inputs"]["initial"]["files"]
+        }
+        allowed_hashes = {
+            record["path"]: record["sha256"]
+            for record in plan["inputs"]["versioned"]["files"]
+            if record["sha256"] != initial[record["path"]]
+            and (
+                expected_input_state == "versioned"
+                or record["path"] == "pyproject.toml"
+            )
+        }
+    _verify_tracked_worktree(
+        root,
+        plan["parameters"]["source_sha"],
+        allowed_hashes,
+    )
 
 
 def _find_mapping_value(value: Any, names: set[str]) -> Any:

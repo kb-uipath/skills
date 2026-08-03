@@ -16,6 +16,56 @@
     "execution",
     "plan_hash"
   ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "parameters": {
+            "properties": {
+              "run_lock": {
+                "const": true
+              }
+            },
+            "required": [
+              "run_lock"
+            ]
+          }
+        },
+        "required": [
+          "parameters"
+        ]
+      },
+      "then": {
+        "properties": {
+          "inputs": {
+            "properties": {
+              "scope": {
+                "const": [
+                  "pyproject.toml",
+                  "uipath.json",
+                  "uv.lock"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "inputs": {
+            "properties": {
+              "scope": {
+                "const": [
+                  "pyproject.toml",
+                  "uipath.json"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "properties": {
     "kind": {
       "const": "uipcodedappdeploy.plan"
@@ -71,9 +121,20 @@
       ],
       "properties": {
         "scope": {
-          "const": [
-            "pyproject.toml",
-            "uipath.json"
+          "oneOf": [
+            {
+              "const": [
+                "pyproject.toml",
+                "uipath.json"
+              ]
+            },
+            {
+              "const": [
+                "pyproject.toml",
+                "uipath.json",
+                "uv.lock"
+              ]
+            }
           ]
         },
         "initial": {
@@ -483,15 +544,11 @@
       "properties": {
         "files": {
           "type": "array",
-          "prefixItems": [
-            {
-              "$ref": "#/$defs/fileHash"
-            },
-            {
-              "$ref": "#/$defs/fileHash"
-            }
-          ],
-          "items": false
+          "items": {
+            "$ref": "#/$defs/fileHash"
+          },
+          "minItems": 2,
+          "maxItems": 3
         },
         "hash": {
           "$ref": "#/$defs/hash"
@@ -509,7 +566,8 @@
         "path": {
           "enum": [
             "pyproject.toml",
-            "uipath.json"
+            "uipath.json",
+            "uv.lock"
           ]
         },
         "sha256": {

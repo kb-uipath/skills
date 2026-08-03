@@ -47,6 +47,9 @@ and deployment are always a separate, human-approved execution.
    receipt, candidate-package, build, and evidence outputs either in reviewed
    ignored locations or outside the project root.
 3. Confirm valid `pyproject.toml` and `uipath.json` manifests.
+   When a `uv.lock` exists, it must contain exactly one local project package
+   whose version matches `[project].version`; the plan binds the deterministic
+   project-version-only lockfile transition.
 4. Run the repository's complete test/build gates before accepting
    `--skip-tests --skip-app-build`.
 5. Build the dist and compute its deterministic digest.
@@ -125,15 +128,20 @@ python3.11 uipcodedappdeploy/scripts/uipcodedappdeploy.py \
 ```
 
 Execution first revalidates the exact candidate package, initial input snapshot,
-exact commit, and zero tracked or untracked source drift. It updates only the
-planned `[project].version`, runs any planned local gates, validates the dist,
-then checks the versioned input snapshot and permits only that exact unstaged
-`pyproject.toml` mutation. Any other build-generated, tracked, staged, or
-untracked drift stops execution. It then validates the CLI executable
-digest/version, authenticated profile org/tenant, and package; records the exact
-produced package file digest; rechecks those exact bytes immediately before
-publish; publishes; deploys; and optionally verifies HTTPS. The redacted v2.1
-receipt repeats the approved plan and release provenance hashes.
+exact commit, and zero tracked or untracked source drift. It rejects
+assume-unchanged, skip-worktree, sparse, or other hidden index state and verifies
+the type, executable mode, and content of every HEAD-tracked path recursively,
+including submodules with ignore disabled. It updates only the planned
+`[project].version`, runs any planned local gates, validates the dist, then
+checks the versioned input snapshot. The only permitted unstaged mutations are
+the exact plan-bound `pyproject.toml` version update and, when the lock stage is
+present, its exact project-version-only `uv.lock` update. Any other
+build-generated, tracked, staged, submodule, or untracked drift stops execution.
+It then validates the CLI executable digest/version, authenticated profile
+org/tenant, and package; records the exact produced package file digest;
+rechecks those exact bytes immediately before publish; publishes; deploys; and
+optionally verifies HTTPS. The redacted v2.1 receipt repeats the approved plan
+and release provenance hashes.
 
 ## Resume And Indeterminate Writes
 
