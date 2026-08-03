@@ -6,24 +6,32 @@ deploying a UiPath Coded App with a pinned native `uip` CLI.
 | Field | Value |
 | --- | --- |
 | Skill name | `uipcodedappdeploy` |
-| Plan contract | `uipcodedappdeploy.plan` v2.0 |
-| Receipt contract | `uipcodedappdeploy.receipt` v2.0 |
+| Plan contract | `uipcodedappdeploy.plan` v2.1 |
+| Receipt contract | `uipcodedappdeploy.receipt` v2.1 |
 | Result contract | `uipcodedappdeploy.result` v1.0 |
 | Certification status | Offline hardened; live target certification is per release |
-| Last verified | 2026-07-30 |
+| Last verified | 2026-08-03 |
 
-## Why v2.0 Exists
+## Why v2.1 Exists
 
 The v1 helper could emit authentication flags that `codedapp pack` does not
 support, relied on whichever `uip` happened to be on `PATH`, and did not bind
 the route, public client, tags, source commit, dist, or package into the
 approval artifact. That was not a defensible release control.
 
-Plan v2.0 removes authentication from pack and binds:
+Plan v2.0 removed authentication from pack and bound the release artifacts.
+Plan v2.1 additionally makes the nonproduction environment explicit and binds
+it to an allowlisted control plane and verification-host suffix. Alpha support
+therefore does not relax the staging guard or make production addressable.
+
+Plan v2.1 binds:
 
 - the absolute CLI executable, executable digest, and exact CLI SemVer;
-- a named profile through a safe hash of profile name, control-plane origin,
-  organization ID, and tenant ID;
+- a named profile through a safe hash of profile name, environment,
+  control-plane origin, organization ID, and tenant ID;
+- `staging` only to `https://staging.uipath.com` and
+  `*.staging.uipath.host`, or `alpha` only to `https://alpha.uipath.com` and
+  `*.alpha.uipath.host`;
 - exact organization, tenant, folder GUID, route, public OAuth client GUID, and
   sorted deployment tags;
 - source commit SHA, deterministic dist digest, deterministic coded-app package
@@ -49,7 +57,8 @@ only an explicitly named plan file.
 An executable plan requires:
 
 - canonical project root and a greater SemVer;
-- explicit `https://staging.uipath.com` CLI control-plane origin;
+- explicit `staging` or `alpha` environment and its exact CLI control-plane
+  origin;
 - exact organization and tenant GUIDs plus the exact folder GUID;
 - package name, display title, lowercase route slug, public client GUID, and
   non-empty sorted tags;
@@ -58,7 +67,8 @@ An executable plan requires:
 - deterministic candidate `.nupkg` coded-app content digest and exact candidate
   file digest;
 - absolute CLI executable, executable digest, exact version, and named profile;
-- optional authenticated route verification URL.
+- optional route verification URL on the selected environment's exact UiPath
+  host suffix.
 
 The SDK/API origin used by the browser is not a helper input and must remain a
 separate runtime configuration value.
@@ -66,9 +76,9 @@ separate runtime configuration value.
 ## Prompt
 
 ```text
-Use $uipcodedappdeploy to build an exact source/dist/package/CLI-bound v2
-deployment plan. Display the persisted plan and hash, and do not execute until
-I approve that exact hash.
+Use $uipcodedappdeploy to build an exact source/dist/package/CLI/environment-
+bound v2.1 deployment plan. Display the persisted plan and hash, and do not
+execute until I approve that exact hash.
 ```
 
 ## Runnable Example
@@ -89,9 +99,10 @@ normalized field, command, blocker, input hash, and release binding. A loaded
 plan is rebuilt from its structured fields and rejected if its stage sequence
 has been edited.
 
-Receipts are also mode `0600`. They contain no commands, environment variables,
+Receipts are also mode `0600`. They contain no commands, process environment variables,
 subprocess output, response bodies, access tokens, or detailed errors. They
-repeat the exact approved plan hash, deployment-binding hash, CLI/profile
+repeat the selected deployment environment, exact approved plan hash,
+deployment-binding hash, CLI/profile
 hashes, source SHA, dist digest, package content digest and algorithm, candidate
 file digest, and the exact package file digest verified immediately before
 publish.
@@ -134,10 +145,11 @@ There is no automatic rollback, deletion, or package cleanup.
 
 ## Safety
 
-The plan is an authorization boundary, not a convenience log. Missing exact
-staging organization/tenant bindings block execution, pack receives no
-authentication flags, package content or exact-file drift stops before
-publication, and indeterminate external writes require remote reconciliation.
+The plan is an authorization boundary, not a convenience log. Missing,
+implicit, mismatched, or production environments block execution. Exact
+organization/tenant bindings remain mandatory, pack receives no authentication
+flags, package content or exact-file drift stops before publication, and
+indeterminate external writes require remote reconciliation.
 
 ## Data Classification And Retention
 
@@ -164,13 +176,14 @@ publication, and indeterminate external writes require remote reconciliation.
   mandatory.
 - Anonymous HTTPS verification does not prove authenticated app startup or
   functional acceptance.
-- One staging run is not production certification.
+- One staging or alpha run is not production certification.
 
 ## Certification Status
 
-The helper is offline-hardened against its v2 contracts and UiPath CLI 1.198.0
-command surface. Each live staging or production target still requires its own
+The helper is offline-hardened against its v2.1 contracts and UiPath CLI 1.198.0
+command surface. Each live staging or alpha target still requires its own
 authenticated RBAC, route, package, and functional acceptance evidence.
+Production targets are rejected by this helper.
 
 ## Validation
 

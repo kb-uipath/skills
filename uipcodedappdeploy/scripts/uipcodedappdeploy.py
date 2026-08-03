@@ -28,12 +28,23 @@ from urllib.parse import urlsplit
 
 
 PLAN_KIND = "uipcodedappdeploy.plan"
-PLAN_SCHEMA_VERSION = "2.0"
+PLAN_SCHEMA_VERSION = "2.1"
 RECEIPT_KIND = "uipcodedappdeploy.receipt"
-RECEIPT_SCHEMA_VERSION = "2.0"
+RECEIPT_SCHEMA_VERSION = "2.1"
 RESULT_KIND = "uipcodedappdeploy.result"
 RESULT_SCHEMA_VERSION = "1.0"
 STAGING_CONTROL_PLANE_URL = "https://staging.uipath.com"
+ALPHA_CONTROL_PLANE_URL = "https://alpha.uipath.com"
+TARGET_ENVIRONMENTS = {
+    "staging": {
+        "control_plane_url": STAGING_CONTROL_PLANE_URL,
+        "verification_host_suffix": ".staging.uipath.host",
+    },
+    "alpha": {
+        "control_plane_url": ALPHA_CONTROL_PLANE_URL,
+        "verification_host_suffix": ".alpha.uipath.host",
+    },
+}
 PACKAGE_DIGEST_ALGORITHM = "uipath-coded-app-content-v1"
 HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 SOURCE_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -76,6 +87,7 @@ PARAMETER_KEYS = {
     "description",
     "dist",
     "dist_digest",
+    "environment",
     "folder_key",
     "main_file",
     "org_id",
@@ -419,6 +431,56 @@ def _validate_url(value: str, label: str, *, base_only: bool) -> str:
     return value.rstrip("/") if base_only else value
 
 
+def _validate_target_binding(
+    environment: str | None,
+    control_plane_url: str | None,
+    verify_url: str | None,
+    *,
+    label_prefix: str,
+) -> None:
+    if environment is None:
+        if control_plane_url is not None:
+            _fail(
+                f"{label_prefix} control plane requires an explicit environment; "
+                "pass --environment staging or --environment alpha."
+            )
+        if verify_url is not None:
+            _fail(
+                f"{label_prefix} verification URL requires an explicit environment."
+            )
+        return
+    environment = _safe_text(environment, f"{label_prefix} environment")
+    target = TARGET_ENVIRONMENTS.get(environment)
+    if target is None:
+        _fail(
+            f"{label_prefix} environment must be explicitly staging or alpha; "
+            "production and implicit targets are rejected."
+        )
+    expected_control_plane = target["control_plane_url"]
+    if control_plane_url is None:
+        _fail(
+            f"{label_prefix} environment {environment!r} requires the exact control plane "
+            f"{expected_control_plane}."
+        )
+    if control_plane_url != expected_control_plane:
+        _fail(
+            f"{label_prefix} environment {environment!r} requires the exact control plane "
+            f"{expected_control_plane}; received {control_plane_url}."
+        )
+    if verify_url is None:
+        return
+    parsed = urlsplit(verify_url)
+    expected_suffix = target["verification_host_suffix"]
+    hostname = (parsed.hostname or "").lower()
+    if parsed.port is not None:
+        _fail(f"{label_prefix} verification URL must not specify a port.")
+    if hostname == expected_suffix[1:] or not hostname.endswith(expected_suffix):
+        _fail(
+            f"{label_prefix} environment {environment!r} requires a verification host "
+            f"matching *{expected_suffix}."
+        )
+
+
 def _default_dist(root: Path) -> str:
     if (root / "app" / "package.json").is_file() or (root / "app" / "dist").exists():
         return "app/dist"
@@ -708,9 +770,16 @@ def _remote_auth_flags(
 
 def _execution_blockers(parameters: dict[str, Any]) -> list[str]:
     blockers = []
-    if parameters["control_plane_url"] != STAGING_CONTROL_PLANE_URL:
+    environment = parameters["environment"]
+    target = TARGET_ENVIRONMENTS.get(environment)
+    if target is None:
         blockers.append(
-            f"Explicit --control-plane-url {STAGING_CONTROL_PLANE_URL} is mandatory."
+            "Explicit --environment staging or --environment alpha is mandatory."
+        )
+    expected_control_plane = target["control_plane_url"] if target else None
+    if target is None or parameters["control_plane_url"] != expected_control_plane:
+        blockers.append(
+            "The exact --control-plane-url for the selected environment is mandatory."
         )
     if not parameters["folder_key"]:
         blockers.append("A valid --folder-key is mandatory before execution.")
@@ -968,6 +1037,11 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
     raw_dist = args.app_dist or _default_dist(root)
     dist = _project_relative_path(root, raw_dist, "--app-dist")
     main_file = _safe_relative_literal(args.main_file or "index.html", "--main-file")
+    environment = (
+        _safe_text(args.environment, "--environment")
+        if args.environment is not None
+        else None
+    )
     control_plane_url = None
     if args.control_plane_url is not None:
         control_plane_url = _validate_url(
@@ -975,17 +1049,18 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
             "--control-plane-url",
             base_only=True,
         )
-        if control_plane_url != STAGING_CONTROL_PLANE_URL:
-            _fail(
-                f"--control-plane-url must be the explicit staging origin "
-                f"{STAGING_CONTROL_PLANE_URL}; alpha and implicit/default targets are rejected."
-            )
     if args.verify_timeout is not None and not args.verify_url:
         _fail("--verify-timeout requires --verify-url.")
     verify_url = (
         _validate_url(args.verify_url, "--verify-url", base_only=False)
         if args.verify_url
         else None
+    )
+    _validate_target_binding(
+        environment,
+        control_plane_url,
+        verify_url,
+        label_prefix="Deployment",
     )
     folder_key = args.folder_key
     if folder_key and GUID_RE.fullmatch(folder_key) is None:
@@ -1082,6 +1157,7 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         _hash_json(
             {
                 "name": cli_profile,
+                "environment": environment,
                 "control_plane_url": control_plane_url,
                 "org_id": args.org_id,
                 "tenant_id": args.tenant_id,
@@ -1091,6 +1167,7 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         else None
     )
     parameters = {
+        "environment": environment,
         "control_plane_url": control_plane_url,
         "tenant_name": args.tenant_name,
         "tenant_id": args.tenant_id,
@@ -1129,6 +1206,7 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "verify_timeout": verify_timeout,
     }
     deployment_binding = {
+        "environment": environment,
         "cli_profile_hash": cli_profile_hash,
         "cli_executable_sha256": cli_executable_sha256,
         "control_plane_url": control_plane_url,
@@ -1142,6 +1220,7 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "package_digest": package_digest,
         "package_digest_algorithm": PACKAGE_DIGEST_ALGORITHM,
         "candidate_package_file_digest": candidate_package_file_digest,
+        "verify_url": verify_url,
     }
     blockers = _execution_blockers(parameters)
     plan = {
@@ -1190,6 +1269,9 @@ def _validate_snapshot(snapshot: Any, label: str) -> None:
 def _validate_parameters(root: Path, parameters: Any) -> None:
     if not isinstance(parameters, dict) or set(parameters) != PARAMETER_KEYS:
         _fail(f"Plan parameters do not match schema version {PLAN_SCHEMA_VERSION}.")
+    environment = parameters["environment"]
+    if environment is not None:
+        _safe_text(environment, "Plan environment")
     control_plane_url = parameters["control_plane_url"]
     if control_plane_url is not None:
         if (
@@ -1201,10 +1283,14 @@ def _validate_parameters(root: Path, parameters: Any) -> None:
             != control_plane_url
         ):
             _fail("Plan control_plane_url is not normalized.")
-        if control_plane_url != STAGING_CONTROL_PLANE_URL:
-            _fail("Plan control_plane_url is not the supported staging origin.")
     if parameters["verify_url"] is not None:
         _validate_url(parameters["verify_url"], "Plan verify_url", base_only=False)
+    _validate_target_binding(
+        environment,
+        control_plane_url,
+        parameters["verify_url"],
+        label_prefix="Plan",
+    )
     for field in ("tenant_name", "tenant_id", "org_id", "org_name"):
         if parameters[field] is not None:
             _safe_text(parameters[field], f"Plan {field}")
@@ -1282,6 +1368,7 @@ def _validate_parameters(root: Path, parameters: Any) -> None:
         _hash_json(
             {
                 "name": parameters["cli_profile"],
+                "environment": parameters["environment"],
                 "control_plane_url": parameters["control_plane_url"],
                 "org_id": parameters["org_id"],
                 "tenant_id": parameters["tenant_id"],
@@ -1363,6 +1450,7 @@ def _validate_plan_document(plan: Any) -> dict[str, Any]:
     ):
         _fail("Plan package_path does not match the package name and version.")
     deployment_binding = {
+        "environment": plan["parameters"]["environment"],
         "cli_profile_hash": plan["parameters"]["cli_profile_hash"],
         "cli_executable_sha256": plan["parameters"]["cli_executable_sha256"],
         "control_plane_url": plan["parameters"]["control_plane_url"],
@@ -1378,6 +1466,7 @@ def _validate_plan_document(plan: Any) -> dict[str, Any]:
         "candidate_package_file_digest": plan["parameters"][
             "candidate_package_file_digest"
         ],
+        "verify_url": plan["parameters"]["verify_url"],
     }
     if (
         not isinstance(plan["deployment_binding_hash"], str)
@@ -1449,6 +1538,7 @@ def _new_receipt(
     receipt = {
         "kind": RECEIPT_KIND,
         "schema_version": RECEIPT_SCHEMA_VERSION,
+        "environment": plan["parameters"]["environment"],
         "plan_hash": plan["plan_hash"],
         "approved_plan_hash": approved_plan_hash,
         "input_hash": plan["inputs"]["initial"]["hash"],
@@ -1486,6 +1576,7 @@ def _validate_receipt(receipt: Any, plan: dict[str, Any]) -> dict[str, Any]:
     expected_keys = {
         "kind",
         "schema_version",
+        "environment",
         "plan_hash",
         "approved_plan_hash",
         "input_hash",
@@ -1511,6 +1602,8 @@ def _validate_receipt(receipt: Any, plan: dict[str, Any]) -> dict[str, Any]:
         )
     if receipt["kind"] != RECEIPT_KIND or receipt["schema_version"] != RECEIPT_SCHEMA_VERSION:
         _fail("Unsupported receipt schema. Start from a newly generated plan.")
+    if receipt["environment"] != plan["parameters"]["environment"]:
+        _fail("Receipt environment does not match the deployment plan.")
     if receipt["receipt_hash"] != _document_hash(receipt, "receipt_hash"):
         _fail("Receipt hash mismatch; the receipt was edited or corrupted.")
     if receipt["plan_hash"] != plan["plan_hash"]:
@@ -1803,8 +1896,11 @@ def _verify_url(url: str, timeout: int) -> None:
         _fail(f"Verification request failed for {url}: {type(exc).__name__}")
     if status < 200 or status >= 400:
         _fail(f"Verification returned HTTP {status} for {url}")
-    if urlsplit(final_url).scheme != "https":
-        _fail("Verification redirected to a non-HTTPS URL.")
+    if final_url != url:
+        _fail(
+            "Verification redirected away from the exact approved URL; "
+            "redirected responses cannot certify the deployment route."
+        )
 
 
 def _execute_stage(
@@ -1957,6 +2053,7 @@ def _render_plan_text(plan: dict[str, Any], plan_path: Path | None) -> str:
         f"Source SHA: {parameters['source_sha'] or '[MISSING - EXECUTION BLOCKED]'}",
         f"CLI: {parameters['cli_executable'] or '[MISSING]'} @ {parameters['cli_version'] or '[MISSING]'}",
         f"CLI profile hash: {parameters['cli_profile_hash'] or '[MISSING - EXECUTION BLOCKED]'}",
+        f"Environment: {parameters['environment'] or '[MISSING - EXECUTION BLOCKED]'}",
         f"Control plane: {parameters['control_plane_url'] or '[MISSING - EXECUTION BLOCKED]'}",
         f"Organization ID: {parameters['org_id'] or '[MISSING - EXECUTION BLOCKED]'}",
         f"Tenant ID: {parameters['tenant_id'] or '[MISSING - EXECUTION BLOCKED]'}",
@@ -2025,8 +2122,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--project-root", help="Project root containing pyproject.toml and uipath.json")
     parser.add_argument(
+        "--environment",
+        help="Explicit deployment environment; supported values are staging and alpha",
+    )
+    parser.add_argument(
         "--control-plane-url",
-        help=f"Explicit UiPath staging CLI origin; must be {STAGING_CONTROL_PLANE_URL}",
+        help=(
+            "Exact UiPath CLI origin for --environment: "
+            f"{STAGING_CONTROL_PLANE_URL} or {ALPHA_CONTROL_PLANE_URL}"
+        ),
     )
     parser.add_argument("--tenant-name")
     parser.add_argument("--tenant-id")
@@ -2092,6 +2196,7 @@ def _parser() -> argparse.ArgumentParser:
 def _reject_plan_overrides(args: argparse.Namespace) -> None:
     generation_values = {
         "--project-root": args.project_root,
+        "--environment": args.environment,
         "--control-plane-url": args.control_plane_url,
         "--tenant-name": args.tenant_name,
         "--tenant-id": args.tenant_id,

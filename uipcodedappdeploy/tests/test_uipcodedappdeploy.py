@@ -156,6 +156,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
         self,
         root: Path,
         *,
+        environment: str = "staging",
         folder: bool = True,
         skip_tests: bool = True,
         skip_build: bool = True,
@@ -203,8 +204,10 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
         if exact_target:
             argv.extend(
                 [
+                    "--environment",
+                    environment,
                     "--control-plane-url",
-                    "https://staging.uipath.com",
+                    self.module.TARGET_ENVIRONMENTS[environment]["control_plane_url"],
                     "--org-id",
                     GUID,
                     "--tenant-id",
@@ -266,7 +269,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(stderr, "")
             plan = json.loads(stdout)
-            self.assertEqual(plan["schema_version"], "2.0")
+            self.assertEqual(plan["schema_version"], "2.1")
             self.assertRegex(plan["plan_hash"], r"^sha256:[0-9a-f]{64}$")
             self.assertRegex(plan["inputs"]["initial"]["hash"], r"^sha256:[0-9a-f]{64}$")
             self.assertEqual(plan["parameters"]["dist"], "dist")
@@ -460,17 +463,19 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
                     ["--project-root", str(root), "--folder-key", "Shared"]
                 )
 
-    def test_executable_plan_requires_exact_staging_org_and_tenant(self):
+    def test_executable_plan_requires_explicit_environment_org_and_tenant(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_project(root)
             write_dist(root)
             plan_path, plan = self.create_plan(root, exact_target=False)
             self.assertFalse(plan["execution"]["executable"])
+            self.assertIsNone(plan["parameters"]["environment"])
             self.assertIsNone(plan["parameters"]["control_plane_url"])
             self.assertIsNone(plan["parameters"]["org_id"])
             self.assertIsNone(plan["parameters"]["tenant_id"])
             blockers = " ".join(plan["execution"]["blockers"])
+            self.assertIn("environment", blockers)
             self.assertIn("control-plane-url", blockers)
             self.assertIn("--org-id", blockers)
             self.assertIn("--tenant-id", blockers)
@@ -481,7 +486,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_project(root)
-            with self.assertRaisesRegex(SystemExit, "explicit staging origin"):
+            with self.assertRaisesRegex(SystemExit, "requires an explicit environment"):
                 self.module.main(
                     [
                         "--project-root",
@@ -498,12 +503,157 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
                         [
                             "--project-root",
                             str(root),
+                            "--environment",
+                            "staging",
                             "--control-plane-url",
                             "https://staging.uipath.com",
                             flag,
                             "not-a-guid",
                         ]
                     )
+
+    def test_alpha_plan_binds_exact_control_plane_and_verification_host(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            verify_url = "https://agenticgtm.alpha.uipath.host/aura-vdp-v0"
+            _, plan = self.create_plan(
+                root,
+                environment="alpha",
+                extras=["--verify-url", verify_url],
+            )
+
+            parameters = plan["parameters"]
+            self.assertTrue(plan["execution"]["executable"])
+            self.assertEqual(parameters["environment"], "alpha")
+            self.assertEqual(
+                parameters["control_plane_url"],
+                self.module.ALPHA_CONTROL_PLANE_URL,
+            )
+            self.assertEqual(parameters["verify_url"], verify_url)
+            for stage_name in ("publish", "deploy"):
+                command = next(
+                    stage["command"]
+                    for stage in plan["stages"]
+                    if stage["name"] == stage_name
+                )
+                base_index = command.index("--base-url")
+                self.assertEqual(
+                    command[base_index + 1], self.module.ALPHA_CONTROL_PLANE_URL
+                )
+            receipt = self.module._new_receipt(plan)
+            self.assertEqual(receipt["environment"], "alpha")
+
+    def test_environment_target_mismatches_and_production_fail_closed(self):
+        cases = [
+            (
+                [
+                    "--environment",
+                    "alpha",
+                    "--control-plane-url",
+                    "https://staging.uipath.com",
+                ],
+                "environment 'alpha' requires the exact control plane",
+            ),
+            (
+                [
+                    "--environment",
+                    "staging",
+                    "--control-plane-url",
+                    "https://alpha.uipath.com",
+                ],
+                "environment 'staging' requires the exact control plane",
+            ),
+            (["--environment", "production"], "staging or alpha"),
+            (["--environment", "alpha"], "requires the exact control plane"),
+            (
+                ["--control-plane-url", "https://alpha.uipath.com"],
+                "requires an explicit environment",
+            ),
+        ]
+        for extras, expected in cases:
+            with self.subTest(extras=extras), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                write_project(root)
+                with self.assertRaisesRegex(SystemExit, expected):
+                    self.module.main(["--project-root", str(root), *extras])
+
+    def test_verification_host_must_match_selected_environment(self):
+        rejected = [
+            "https://agenticgtm.staging.uipath.host/aura-vdp-v0",
+            "https://alpha.uipath.host/aura-vdp-v0",
+            "https://agenticgtm.alpha.uipath.host:443/aura-vdp-v0",
+            "https://agenticgtm.alpha.uipath.host.example.com/aura-vdp-v0",
+        ]
+        for verify_url in rejected:
+            with self.subTest(verify_url=verify_url), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                write_project(root)
+                with self.assertRaisesRegex(SystemExit, "verification URL|verification host"):
+                    self.module.main(
+                        [
+                            "--project-root",
+                            str(root),
+                            "--environment",
+                            "alpha",
+                            "--control-plane-url",
+                            "https://alpha.uipath.com",
+                            "--verify-url",
+                            verify_url,
+                        ]
+                    )
+
+    def test_reloaded_plan_rejects_repaired_hash_with_environment_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            plan_path, plan = self.create_plan(root, environment="alpha")
+            plan["parameters"]["environment"] = "staging"
+            plan["plan_hash"] = self.module._document_hash(plan, "plan_hash")
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+            with self.assertRaisesRegex(SystemExit, "requires the exact control plane"):
+                self.module.main(["--plan", str(plan_path)])
+
+    def test_environment_is_bound_into_profile_and_deployment_hashes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            plan_path, plan = self.create_plan(root, environment="alpha")
+            parameters = plan["parameters"]
+            self.assertEqual(
+                parameters["cli_profile_hash"],
+                self.module._hash_json(
+                    {
+                        "name": parameters["cli_profile"],
+                        "environment": "alpha",
+                        "control_plane_url": self.module.ALPHA_CONTROL_PLANE_URL,
+                        "org_id": parameters["org_id"],
+                        "tenant_id": parameters["tenant_id"],
+                    }
+                ),
+            )
+
+            parameters["environment"] = "staging"
+            parameters["control_plane_url"] = self.module.STAGING_CONTROL_PLANE_URL
+            parameters["cli_profile_hash"] = self.module._hash_json(
+                {
+                    "name": parameters["cli_profile"],
+                    "environment": "staging",
+                    "control_plane_url": self.module.STAGING_CONTROL_PLANE_URL,
+                    "org_id": parameters["org_id"],
+                    "tenant_id": parameters["tenant_id"],
+                }
+            )
+            plan["stages"] = self.module._build_stages(plan["project"], parameters)
+            plan["plan_hash"] = self.module._document_hash(plan, "plan_hash")
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+            with self.assertRaisesRegex(SystemExit, "deployment_binding_hash"):
+                self.module.main(["--plan", str(plan_path)])
 
     def test_loading_plan_without_execute_never_runs_or_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -826,7 +976,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             root = Path(tmp)
             write_project(root)
             write_dist(root)
-            verify_url = "https://example.uipath.host/fixture"
+            verify_url = "https://fixture.staging.uipath.host/fixture"
             plan_path, plan = self.create_plan(
                 root,
                 extras=["--verify-url", verify_url, "--verify-timeout", "9"],
@@ -850,6 +1000,33 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             receipt_text = self.module._receipt_path(plan_path).read_text()
             self.assertNotIn(verify_url, receipt_text)
 
+    def test_verify_url_rejects_redirect_away_from_exact_approved_route(self):
+        approved_url = "https://agenticgtm.alpha.uipath.host/aura-vdp-v0"
+
+        class RedirectedResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _traceback):
+                return False
+
+            def getcode(self):
+                return 200
+
+            def geturl(self):
+                return "https://attacker.example/looks-healthy"
+
+        with mock.patch.object(
+            self.module.urllib.request,
+            "urlopen",
+            return_value=RedirectedResponse(),
+        ):
+            with self.assertRaisesRegex(
+                SystemExit,
+                "redirected away from the exact approved URL",
+            ):
+                self.module._verify_url(approved_url, 10)
+
     def test_url_and_timeout_validation_fail_closed(self):
         cases = [
             (["--control-plane-url", "http://alpha.uipath.com"], "HTTPS URL"),
@@ -857,12 +1034,21 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             (["--control-plane-url", "https://alpha.uipath.com:bad"], "invalid port"),
             (
                 ["--control-plane-url", "https://alpha.uipath.com"],
-                "explicit staging origin",
+                "requires an explicit environment",
             ),
             (["--verify-url", "http://example.com/app"], "HTTPS URL"),
             (["--verify-url", "https://example.com/app?token=x"], "query string"),
             (
-                ["--verify-url", "https://example.com/app", "--verify-timeout", "0"],
+                [
+                    "--environment",
+                    "staging",
+                    "--control-plane-url",
+                    "https://staging.uipath.com",
+                    "--verify-url",
+                    "https://fixture.staging.uipath.host/app",
+                    "--verify-timeout",
+                    "0",
+                ],
                 "between 1 and 120",
             ),
             (["--verify-timeout", "10"], "requires --verify-url"),
@@ -997,11 +1183,12 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             write_dist(root)
             plan_path, plan = self.create_plan(root)
 
-            self.assertEqual(plan["schema_version"], "2.0")
+            self.assertEqual(plan["schema_version"], "2.1")
             self.assertRegex(
                 plan["deployment_binding_hash"], r"^sha256:[0-9a-f]{64}$"
             )
             parameters = plan["parameters"]
+            self.assertEqual(parameters["environment"], "staging")
             self.assertEqual(parameters["control_plane_url"], "https://staging.uipath.com")
             self.assertEqual(parameters["org_id"], GUID)
             self.assertEqual(parameters["tenant_id"], TENANT_GUID)
@@ -1228,7 +1415,8 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             plan_path, plan = self.create_plan(root)
             receipt = self.module._new_receipt(plan, plan["plan_hash"])
 
-            self.assertEqual(receipt["schema_version"], "2.0")
+            self.assertEqual(receipt["schema_version"], "2.1")
+            self.assertEqual(receipt["environment"], "staging")
             self.assertEqual(receipt["approved_plan_hash"], plan["plan_hash"])
             self.assertEqual(
                 receipt["deployment_binding_hash"],
@@ -1245,11 +1433,11 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             ):
                 self.assertEqual(receipt[field], plan["parameters"][field])
 
-    def test_published_v2_contract_schemas_cover_generated_documents(self):
+    def test_published_v2_1_contract_schemas_cover_generated_documents(self):
         plan_schema = json.loads(PLAN_SCHEMA.read_text(encoding="utf-8"))
         receipt_schema = json.loads(RECEIPT_SCHEMA.read_text(encoding="utf-8"))
-        self.assertEqual(plan_schema["properties"]["schema_version"]["const"], "2.0")
-        self.assertEqual(receipt_schema["properties"]["schema_version"]["const"], "2.0")
+        self.assertEqual(plan_schema["properties"]["schema_version"]["const"], "2.1")
+        self.assertEqual(receipt_schema["properties"]["schema_version"]["const"], "2.1")
         self.assertFalse(plan_schema["additionalProperties"])
         self.assertFalse(receipt_schema["additionalProperties"])
         self.assertEqual(
@@ -1262,11 +1450,34 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             receipt_schema["properties"]["package_digest_algorithm"]["const"],
             self.module.PACKAGE_DIGEST_ALGORITHM,
         )
-        self.assertEqual(
-            plan_schema["properties"]["parameters"]["properties"][
+        control_planes = {
+            choice["const"]
+            for choice in plan_schema["properties"]["parameters"]["properties"][
                 "control_plane_url"
-            ]["oneOf"][1]["const"],
-            self.module.STAGING_CONTROL_PLANE_URL,
+            ]["oneOf"]
+            if "const" in choice
+        }
+        self.assertEqual(
+            control_planes,
+            {
+                self.module.STAGING_CONTROL_PLANE_URL,
+                self.module.ALPHA_CONTROL_PLANE_URL,
+            },
+        )
+        environment_schema = plan_schema["properties"]["parameters"]["properties"][
+            "environment"
+        ]
+        self.assertEqual(
+            environment_schema["oneOf"][1]["enum"],
+            ["staging", "alpha"],
+        )
+        self.assertEqual(
+            receipt_schema["properties"]["environment"]["enum"],
+            ["staging", "alpha"],
+        )
+        self.assertEqual(
+            len(plan_schema["properties"]["parameters"]["allOf"]),
+            3,
         )
 
         with tempfile.TemporaryDirectory() as tmp:

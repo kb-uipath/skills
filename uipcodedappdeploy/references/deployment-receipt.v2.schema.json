@@ -1,12 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://kb-uipath.github.io/skills/uipcodedappdeploy/deployment-receipt.v2.schema.json",
-  "title": "UiPath Coded App Deployment Receipt v2.0",
+  "title": "UiPath Coded App Deployment Receipt v2.1",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "kind",
     "schema_version",
+    "environment",
     "plan_hash",
     "approved_plan_hash",
     "input_hash",
@@ -31,7 +32,13 @@
       "const": "uipcodedappdeploy.receipt"
     },
     "schema_version": {
-      "const": "2.0"
+      "const": "2.1"
+    },
+    "environment": {
+      "enum": [
+        "staging",
+        "alpha"
+      ]
     },
     "plan_hash": {
       "$ref": "#/$defs/hash"
