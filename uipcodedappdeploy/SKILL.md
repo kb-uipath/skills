@@ -11,7 +11,7 @@ and deployment are always a separate, human-approved execution.
 
 ## Hard Boundaries
 
-- Never deploy directly from planning arguments. Persist and display the v2.1
+- Never deploy directly from planning arguments. Persist and display the v2.2
   plan, obtain approval of its exact `plan_hash`, then pass that hash through
   `--approved-plan-hash`.
 - Never invent or reuse a target, tenant, organization, folder, OAuth client,
@@ -43,7 +43,13 @@ and deployment are always a separate, human-approved execution.
 
 1. Use Python 3.11 or later.
 2. Confirm the repository, branch, clean tracked state, and exact source commit.
+   Execution also rejects every non-ignored untracked path, so keep plan,
+   receipt, candidate-package, build, and evidence outputs either in reviewed
+   ignored locations or outside the project root.
 3. Confirm valid `pyproject.toml` and `uipath.json` manifests.
+   When a `uv.lock` exists, it must contain exactly one local project package
+   whose version matches `[project].version`; the plan binds the deterministic
+   project-version-only lockfile transition.
 4. Run the repository's complete test/build gates before accepting
    `--skip-tests --skip-app-build`.
 5. Build the dist and compute its deterministic digest.
@@ -94,8 +100,10 @@ For alpha, change both target arguments together to `--environment alpha` and
 
 Review all of the following:
 
-- Plan schema `2.1`, explicit environment, plan hash, deployment-binding hash,
+- Plan schema `2.2`, explicit environment, plan hash, deployment-binding hash,
   and input hashes.
+- Three plan-bound `raw-tracked-worktree-v1` digests for the exact initial,
+  version-written, and versioned tracked worktree states.
 - Exact source SHA, dist digest, deterministic package content digest and
   algorithm, exact candidate package file digest, CLI executable
   digest/version, and safe CLI-profile binding hash.
@@ -121,14 +129,24 @@ python3.11 uipcodedappdeploy/scripts/uipcodedappdeploy.py \
   --format json
 ```
 
-Execution first revalidates the exact candidate package, then revalidates clean
-source, exact commit, dist digest, CLI executable digest/version, authenticated
-profile org/tenant, and plan inputs. It updates
-the project version, runs any planned local gates, packs, verifies the
-deterministic coded-app content digest, records the exact produced package file
-digest, rechecks those exact bytes immediately before publish, then publishes,
-deploys, and optionally verifies HTTPS. The redacted v2.1 receipt repeats the
-approved plan and release provenance hashes.
+Execution first revalidates the exact candidate package, initial input snapshot,
+exact commit, plan-bound raw worktree bytes, and zero tracked or untracked source
+drift. It rejects
+assume-unchanged, skip-worktree, sparse, or other hidden index state and verifies
+the type, executable mode, raw regular-file bytes, symlink target, and content of
+every HEAD-tracked path recursively, including submodules with ignore disabled.
+Raw checks do not apply Git clean filters, while the separate Git-object check
+continues to support legitimate clean/smudge and LFS worktrees. It updates only the planned
+`[project].version`, runs any planned local gates, validates the dist, then
+checks the versioned input snapshot. The only permitted unstaged mutations are
+the exact plan-bound `pyproject.toml` version update and, when the lock stage is
+present, its exact project-version-only `uv.lock` update. Any other
+build-generated, tracked, staged, submodule, or untracked drift stops execution.
+It then validates the CLI executable digest/version, authenticated profile
+org/tenant, and package; records the exact produced package file digest;
+rechecks those exact bytes immediately before publish; publishes; deploys; and
+optionally verifies HTTPS. The redacted v2.2 receipt repeats the approved plan
+and release provenance hashes.
 
 ## Resume And Indeterminate Writes
 
@@ -157,6 +175,10 @@ python3.11 uipcodedappdeploy/scripts/uipcodedappdeploy.py \
 
 Both are integrity contracts, not signatures. Exact-hash approval is required,
 but the helper does not claim non-repudiation.
+
+Contract `2.2` is intentionally incompatible with `2.1`. Existing `2.1` plans
+and receipts are rejected and must be regenerated; the helper performs no silent
+migration because `2.1` did not bind raw execution bytes.
 
 ## Validation
 

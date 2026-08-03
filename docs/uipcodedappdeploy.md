@@ -6,13 +6,13 @@ deploying a UiPath Coded App with a pinned native `uip` CLI.
 | Field | Value |
 | --- | --- |
 | Skill name | `uipcodedappdeploy` |
-| Plan contract | `uipcodedappdeploy.plan` v2.1 |
-| Receipt contract | `uipcodedappdeploy.receipt` v2.1 |
+| Plan contract | `uipcodedappdeploy.plan` v2.2 |
+| Receipt contract | `uipcodedappdeploy.receipt` v2.2 |
 | Result contract | `uipcodedappdeploy.result` v1.0 |
 | Certification status | Offline hardened; live target certification is per release |
 | Last verified | 2026-08-03 |
 
-## Why v2.1 Exists
+## Why v2.2 Exists
 
 The v1 helper could emit authentication flags that `codedapp pack` does not
 support, relied on whichever `uip` happened to be on `PATH`, and did not bind
@@ -24,7 +24,15 @@ Plan v2.1 additionally makes the nonproduction environment explicit and binds
 it to an allowlisted control plane and verification-host suffix. Alpha support
 therefore does not relax the staging guard or make production addressable.
 
-Plan v2.1 binds:
+Plan v2.2 closes a clean-filter bypass in v2.1. Git status and Git object hashes
+can both report clean when a clean filter maps different raw worktree bytes to
+the same object. v2.2 separately binds the raw tracked worktree at the initial,
+version-written, and versioned stages, including executable modes, symlink
+targets, and recursively checked-out submodules. This still supports legitimate
+clean/smudge filters and LFS because the raw approved worktree bytes—not the Git
+object representation—are the comparison baseline.
+
+Plan v2.2 binds:
 
 - the absolute CLI executable, executable digest, and exact CLI SemVer;
 - a named profile through a safe hash of profile name, environment,
@@ -37,6 +45,7 @@ Plan v2.1 binds:
 - source commit SHA, deterministic dist digest, deterministic coded-app package
   content digest, and exact candidate package file digest;
 - the input manifests before and after the planned version update;
+- deterministic `raw-tracked-worktree-v1` digests for all three source stages;
 - an allowlisted stage sequence and an exact human-approved plan hash.
 
 ## Runtime And Dependencies
@@ -49,8 +58,9 @@ Plan v2.1 binds:
 - A named authenticated CLI profile for the reviewed target.
 - `uv` and npm only when their stages are enabled.
 
-Planning does not authenticate, run commands, or contact UiPath. It may write
-only an explicitly named plan file.
+Planning does not authenticate, run project/release commands, or contact UiPath.
+It runs only read-only Git inspection needed to bind the raw tracked worktree,
+and may write only an explicitly named plan file.
 
 ## Inputs
 
@@ -77,7 +87,7 @@ separate runtime configuration value.
 
 ```text
 Use $uipcodedappdeploy to build an exact source/dist/package/CLI/environment-
-bound v2.1 deployment plan. Display the persisted plan and hash, and do not
+bound v2.2 deployment plan. Display the persisted plan and hash, and do not
 execute until I approve that exact hash.
 ```
 
@@ -107,6 +117,10 @@ hashes, source SHA, dist digest, package content digest and algorithm, candidate
 file digest, and the exact package file digest verified immediately before
 publish.
 
+The `2.2` plan and receipt contracts are intentionally incompatible with `2.1`.
+All `2.1` plans and receipts must be regenerated. There is no silent migration,
+because adding a digest after approval cannot prove what raw bytes were reviewed.
+
 Hashes detect changes; they are not signatures or proof of approver identity.
 
 ## Execution Order
@@ -119,8 +133,8 @@ Hashes detect changes; they are not signatures or proof of approver identity.
    stage is disabled.
 4. Atomically update `[project].version`.
 5. Run planned lock, test, and build stages.
-6. Verify dist, clean tracked source, exact source SHA, CLI executable digest
-   and version, and CLI profile org/tenant.
+6. Verify dist, clean tracked source, exact source SHA, the exact plan-bound raw
+   execution bytes, CLI executable digest and version, and CLI profile org/tenant.
 7. Run `codedapp pack` with no authentication flags.
 8. Compare the produced package's deterministic coded-app content digest with
    the approved candidate, record its exact raw file digest, and stop before
@@ -180,7 +194,7 @@ indeterminate external writes require remote reconciliation.
 
 ## Certification Status
 
-The helper is offline-hardened against its v2.1 contracts and UiPath CLI 1.198.0
+The helper is offline-hardened against its v2.2 contracts and UiPath CLI 1.198.0
 command surface. Each live staging or alpha target still requires its own
 authenticated RBAC, route, package, and functional acceptance evidence.
 Production targets are rejected by this helper.
