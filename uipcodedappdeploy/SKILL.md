@@ -11,7 +11,7 @@ and deployment are always a separate, human-approved execution.
 
 ## Hard Boundaries
 
-- Never deploy directly from planning arguments. Persist and display the v2.0
+- Never deploy directly from planning arguments. Persist and display the v2.1
   plan, obtain approval of its exact `plan_hash`, then pass that hash through
   `--approved-plan-hash`.
 - Never invent or reuse a target, tenant, organization, folder, OAuth client,
@@ -23,9 +23,14 @@ and deployment are always a separate, human-approved execution.
   profile. Do not rely on `PATH` for a release.
 - The CLI control-plane origin belongs in `--control-plane-url`. Do not confuse
   it with a browser SDK/API origin.
-- Executable plans are staging-only: require the explicit
-  `https://staging.uipath.com` control plane and exact organization and tenant
-  GUIDs. Missing, defaulted, or alpha targets are blocked.
+- Executable plans require an explicit `--environment` and its exact control
+  plane: `staging` maps only to `https://staging.uipath.com`, while `alpha`
+  maps only to `https://alpha.uipath.com`. Never infer one from the other.
+  Missing, mismatched, implicit, and production targets are blocked.
+- When route verification is requested, staging accepts only
+  `*.staging.uipath.host` and alpha accepts only `*.alpha.uipath.host`. Bare
+  suffixes, cross-environment hosts, credentials, ports, and query strings are
+  rejected.
 - `codedapp pack` is local and receives no authentication flags. The helper
   rejects legacy `--reuse-client`; the dedicated client is bound only through
   `codedapp deploy --client-id`.
@@ -57,6 +62,7 @@ Run from the skills repository root:
 python3.11 uipcodedappdeploy/scripts/uipcodedappdeploy.py \
   --project-root /absolute/path/to/project \
   --set-version 0.1.0 \
+  --environment staging \
   --control-plane-url https://staging.uipath.com \
   --org-id 11111111-2222-3333-4444-555555555555 \
   --org-name '<organization>' \
@@ -83,14 +89,19 @@ The helper hashes the current dist and a candidate at the planned
 `.uipath/<name>.<version>.nupkg` path automatically. Use `--dist-digest` or
 `--package-digest` when independently computed values must be cross-checked.
 
+For alpha, change both target arguments together to `--environment alpha` and
+`--control-plane-url https://alpha.uipath.com`; do not change only one.
+
 Review all of the following:
 
-- Plan schema `2.0`, plan hash, deployment-binding hash, and input hashes.
+- Plan schema `2.1`, explicit environment, plan hash, deployment-binding hash,
+  and input hashes.
 - Exact source SHA, dist digest, deterministic package content digest and
   algorithm, exact candidate package file digest, CLI executable
   digest/version, and safe CLI-profile binding hash.
 - CLI control plane, organization, tenant, folder GUID, package/app names,
-  route, public client GUID, tags, and optional route verification URL.
+  route, public client GUID, tags, and optional environment-matched route
+  verification URL.
 - The pack command contains no `--base-url`, `--profile`, org, tenant, token, or
   reuse-client flag.
 - Publish and deploy commands use only the reviewed target/profile fields.
@@ -116,7 +127,7 @@ profile org/tenant, and plan inputs. It updates
 the project version, runs any planned local gates, packs, verifies the
 deterministic coded-app content digest, records the exact produced package file
 digest, rechecks those exact bytes immediately before publish, then publishes,
-deploys, and optionally verifies HTTPS. The redacted v2.0 receipt repeats the
+deploys, and optionally verifies HTTPS. The redacted v2.1 receipt repeats the
 approved plan and release provenance hashes.
 
 ## Resume And Indeterminate Writes
