@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
 import hashlib
 import io
@@ -28,9 +29,9 @@ from urllib.parse import urlsplit
 
 
 PLAN_KIND = "uipcodedappdeploy.plan"
-PLAN_SCHEMA_VERSION = "2.1"
+PLAN_SCHEMA_VERSION = "2.2"
 RECEIPT_KIND = "uipcodedappdeploy.receipt"
-RECEIPT_SCHEMA_VERSION = "2.1"
+RECEIPT_SCHEMA_VERSION = "2.2"
 RESULT_KIND = "uipcodedappdeploy.result"
 RESULT_SCHEMA_VERSION = "1.0"
 STAGING_CONTROL_PLANE_URL = "https://staging.uipath.com"
@@ -46,6 +47,7 @@ TARGET_ENVIRONMENTS = {
     },
 }
 PACKAGE_DIGEST_ALGORITHM = "uipath-coded-app-content-v1"
+RAW_WORKTREE_DIGEST_ALGORITHM = "raw-tracked-worktree-v1"
 HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 SOURCE_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 PATH_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -871,7 +873,9 @@ def _remote_auth_flags(
     return flags
 
 
-def _execution_blockers(parameters: dict[str, Any]) -> list[str]:
+def _execution_blockers(
+    parameters: dict[str, Any], raw_worktree: dict[str, Any] | None = None
+) -> list[str]:
     blockers = []
     environment = parameters["environment"]
     target = TARGET_ENVIRONMENTS.get(environment)
@@ -906,6 +910,16 @@ def _execution_blockers(parameters: dict[str, Any]) -> list[str]:
     for label, value in required_release_bindings:
         if not value:
             blockers.append(f"{label} is mandatory before execution.")
+    if (
+        not isinstance(raw_worktree, dict)
+        or any(
+            not isinstance(raw_worktree.get(state), str)
+            for state in ("initial", "version_written", "versioned")
+        )
+    ):
+        blockers.append(
+            "A plan-bound raw tracked-worktree snapshot is mandatory before execution."
+        )
     return blockers
 
 
@@ -1269,6 +1283,11 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
             overrides=versioned_overrides,
         )
     )
+    raw_worktree = _planned_raw_worktree_snapshots(
+        root,
+        source_sha,
+        versioned_overrides,
+    )
     project = {
         "root": str(root),
         "manifest": "pyproject.toml",
@@ -1346,7 +1365,7 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "candidate_package_file_digest": candidate_package_file_digest,
         "verify_url": verify_url,
     }
-    blockers = _execution_blockers(parameters)
+    blockers = _execution_blockers(parameters, raw_worktree)
     plan = {
         "kind": PLAN_KIND,
         "schema_version": PLAN_SCHEMA_VERSION,
@@ -1356,6 +1375,7 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
             "scope": input_scope,
             "initial": initial,
             "versioned": versioned,
+            "raw_worktree": raw_worktree,
         },
         "parameters": parameters,
         "deployment_binding_hash": _hash_json(deployment_binding),
@@ -1388,6 +1408,21 @@ def _validate_snapshot(snapshot: Any, label: str, scope: list[str]) -> None:
             _fail(f"{label}.files contains an invalid SHA-256 hash.")
     if snapshot["hash"] != _hash_json({"files": files}):
         _fail(f"{label}.hash does not match its file records.")
+
+
+def _validate_raw_worktree_snapshot(snapshot: Any) -> None:
+    expected_keys = {"algorithm", "initial", "version_written", "versioned"}
+    if not isinstance(snapshot, dict) or set(snapshot) != expected_keys:
+        _fail(
+            f"Plan raw worktree inputs do not match schema version {PLAN_SCHEMA_VERSION}."
+        )
+    if snapshot["algorithm"] != RAW_WORKTREE_DIGEST_ALGORITHM:
+        _fail("Plan raw worktree digest algorithm is unsupported.")
+    values = [snapshot[state] for state in ("initial", "version_written", "versioned")]
+    if all(value is None for value in values):
+        return
+    if any(not isinstance(value, str) or HASH_RE.fullmatch(value) is None for value in values):
+        _fail("Plan raw worktree state digests must be all SHA-256 values or all null.")
 
 
 def _validate_parameters(root: Path, parameters: Any) -> None:
@@ -1561,7 +1596,12 @@ def _validate_plan_document(plan: Any) -> dict[str, Any]:
     _validate_parameters(root, plan["parameters"])
 
     inputs = plan["inputs"]
-    if not isinstance(inputs, dict) or set(inputs) != {"scope", "initial", "versioned"}:
+    if not isinstance(inputs, dict) or set(inputs) != {
+        "scope",
+        "initial",
+        "versioned",
+        "raw_worktree",
+    }:
         _fail(f"Plan inputs do not match schema version {PLAN_SCHEMA_VERSION}.")
     expected_scope = ["pyproject.toml", "uipath.json"]
     if plan["parameters"]["run_lock"]:
@@ -1570,6 +1610,7 @@ def _validate_plan_document(plan: Any) -> dict[str, Any]:
         _fail("Plan input hash scope does not match its planned source stages.")
     _validate_snapshot(inputs["initial"], "Plan inputs.initial", expected_scope)
     _validate_snapshot(inputs["versioned"], "Plan inputs.versioned", expected_scope)
+    _validate_raw_worktree_snapshot(inputs["raw_worktree"])
     initial_files = {
         record["path"]: record["sha256"] for record in inputs["initial"]["files"]
     }
@@ -1617,7 +1658,7 @@ def _validate_plan_document(plan: Any) -> dict[str, Any]:
     expected_stages = _build_stages(project, plan["parameters"])
     if plan["stages"] != expected_stages:
         _fail("Plan stages do not match the allowlisted command sequence. Regenerate the plan.")
-    blockers = _execution_blockers(plan["parameters"])
+    blockers = _execution_blockers(plan["parameters"], inputs["raw_worktree"])
     expected_execution = {
         "requires_execute": True,
         "requires_plan": True,
@@ -1717,6 +1758,23 @@ def _validate_planned_input_transition(plan: dict[str, Any]) -> None:
         ).encode("utf-8")
         if _hash_bytes(expected_uv_lock) != versioned["uv.lock"]:
             _fail("Plan versioned uv.lock hash is not the exact project-version transition.")
+    planned_raw = _planned_raw_worktree_snapshots(
+        root,
+        plan["parameters"]["source_sha"],
+        {
+            record["path"]: (
+                expected_pyproject
+                if record["path"] == "pyproject.toml"
+                else expected_uv_lock
+            )
+            for record in plan["inputs"]["versioned"]["files"]
+            if record["path"] in {"pyproject.toml", "uv.lock"}
+        },
+    )
+    if planned_raw != plan["inputs"]["raw_worktree"]:
+        _fail(
+            "Plan raw worktree digests are not the exact initial and version transitions."
+        )
 
 
 def _receipt_path(plan_path: Path) -> Path:
@@ -1734,6 +1792,8 @@ def _new_receipt(
         "plan_hash": plan["plan_hash"],
         "approved_plan_hash": approved_plan_hash,
         "input_hash": plan["inputs"]["initial"]["hash"],
+        "raw_worktree_digest_algorithm": plan["inputs"]["raw_worktree"]["algorithm"],
+        "raw_worktree_initial_digest": plan["inputs"]["raw_worktree"]["initial"],
         "deployment_binding_hash": plan["deployment_binding_hash"],
         "cli_profile_hash": plan["parameters"]["cli_profile_hash"],
         "cli_executable_sha256": plan["parameters"]["cli_executable_sha256"],
@@ -1772,6 +1832,8 @@ def _validate_receipt(receipt: Any, plan: dict[str, Any]) -> dict[str, Any]:
         "plan_hash",
         "approved_plan_hash",
         "input_hash",
+        "raw_worktree_digest_algorithm",
+        "raw_worktree_initial_digest",
         "deployment_binding_hash",
         "cli_profile_hash",
         "cli_executable_sha256",
@@ -1805,6 +1867,8 @@ def _validate_receipt(receipt: Any, plan: dict[str, Any]) -> dict[str, Any]:
     if receipt["input_hash"] != plan["inputs"]["initial"]["hash"]:
         _fail("Receipt input hash does not match the deployment plan.")
     expected_provenance = {
+        "raw_worktree_digest_algorithm": plan["inputs"]["raw_worktree"]["algorithm"],
+        "raw_worktree_initial_digest": plan["inputs"]["raw_worktree"]["initial"],
         "deployment_binding_hash": plan["deployment_binding_hash"],
         "cli_profile_hash": plan["parameters"]["cli_profile_hash"],
         "cli_executable_sha256": plan["parameters"]["cli_executable_sha256"],
@@ -2115,6 +2179,158 @@ def _git_hash_symlink(root: Path, path: Path) -> bytes:
     return _git_object_id(completed.stdout.strip(), "worktree symlink")
 
 
+def _raw_tracked_worktree_digest(
+    root: Path,
+    expected_head: str,
+    overrides: dict[str, bytes] | None = None,
+    *,
+    require_worktree_root: bool = True,
+) -> str:
+    """Hash raw tracked bytes without applying Git clean/smudge filters.
+
+    Git's status and ``hash-object --path`` views are intentionally retained as
+    separate integrity checks, but neither is a raw-byte assertion when a clean
+    filter is configured. This digest binds the bytes actually present in the
+    reviewed worktree, Git executable modes, symlink targets, and recursively
+    checked-out submodule content. Paths are represented as base64-encoded Git
+    path bytes so unusual filenames remain deterministic and lossless.
+    """
+
+    overrides = overrides or {}
+    if require_worktree_root:
+        top_level = Path(
+            _run_capture(
+                ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                root,
+            ).strip()
+        ).resolve()
+        if top_level != root.resolve():
+            _fail("Project root must be the exact Git worktree root.")
+    observed_head = _run_capture(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        root,
+    ).strip()
+    if observed_head != expected_head:
+        _fail("Git source SHA does not match the approved deployment plan.")
+
+    head_entries = _git_head_entries(root)
+    _validate_git_index(root, head_entries)
+    encoded_overrides = {os.fsencode(path): payload for path, payload in overrides.items()}
+    if len(encoded_overrides) != len(overrides):
+        _fail("Raw worktree overrides contain duplicate filesystem paths.")
+    if not set(encoded_overrides).issubset(head_entries):
+        _fail("Raw worktree overrides contain an untracked path.")
+
+    records: list[dict[str, Any]] = []
+    for relative, (mode, _object_type, object_id) in sorted(head_entries.items()):
+        relative_path = Path(os.fsdecode(relative))
+        ancestor = root
+        for part in relative_path.parts[:-1]:
+            ancestor /= part
+            try:
+                ancestor_stat = ancestor.lstat()
+            except OSError:
+                _fail("A HEAD-tracked worktree path has a missing ancestor.")
+            if not stat.S_ISDIR(ancestor_stat.st_mode):
+                _fail("A HEAD-tracked worktree path has a non-directory ancestor.")
+        path = root / relative_path
+        try:
+            path_stat = path.lstat()
+        except OSError:
+            _fail("A HEAD-tracked worktree path is missing or unreadable.")
+        record: dict[str, Any] = {
+            "path_b64": base64.b64encode(relative).decode("ascii"),
+            "mode": mode.decode("ascii"),
+        }
+        if mode in {b"100644", b"100755"}:
+            if not stat.S_ISREG(path_stat.st_mode):
+                _fail("A HEAD-tracked regular file changed type in the worktree.")
+            expected_executable = mode == b"100755"
+            if bool(path_stat.st_mode & stat.S_IXUSR) != expected_executable:
+                _fail("A HEAD-tracked regular file changed executable mode.")
+            try:
+                payload = (
+                    encoded_overrides[relative]
+                    if relative in encoded_overrides
+                    else path.read_bytes()
+                )
+            except OSError:
+                _fail("A HEAD-tracked regular file is unreadable.")
+            record.update(
+                {
+                    "kind": "regular",
+                    "size": len(payload),
+                    "sha256": _hash_bytes(payload),
+                }
+            )
+        elif mode == b"120000":
+            if not stat.S_ISLNK(path_stat.st_mode):
+                _fail("A HEAD-tracked symlink changed type in the worktree.")
+            if relative in encoded_overrides:
+                _fail("Raw worktree overrides cannot target symlinks.")
+            try:
+                target = os.fsencode(os.readlink(path))
+            except OSError:
+                _fail("A HEAD-tracked worktree symlink is unreadable.")
+            record.update(
+                {
+                    "kind": "symlink",
+                    "size": len(target),
+                    "sha256": _hash_bytes(target),
+                }
+            )
+        else:
+            if not stat.S_ISDIR(path_stat.st_mode):
+                _fail("A HEAD-tracked submodule changed type in the worktree.")
+            if relative in encoded_overrides:
+                _fail("Raw worktree overrides cannot target submodules.")
+            record.update(
+                {
+                    "kind": "submodule",
+                    "commit": object_id.decode("ascii"),
+                    "raw_digest": _raw_tracked_worktree_digest(
+                        path,
+                        object_id.decode("ascii"),
+                        require_worktree_root=True,
+                    ),
+                }
+            )
+        records.append(record)
+    return _hash_json(
+        {
+            "algorithm": RAW_WORKTREE_DIGEST_ALGORITHM,
+            "entries": records,
+        }
+    )
+
+
+def _planned_raw_worktree_snapshots(
+    root: Path,
+    expected_head: str | None,
+    versioned_overrides: dict[str, bytes],
+) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {
+        "algorithm": RAW_WORKTREE_DIGEST_ALGORITHM,
+        "initial": None,
+        "version_written": None,
+        "versioned": None,
+    }
+    if expected_head is None:
+        return snapshot
+    snapshot["initial"] = _raw_tracked_worktree_digest(root, expected_head)
+    snapshot["version_written"] = _raw_tracked_worktree_digest(
+        root,
+        expected_head,
+        {"pyproject.toml": versioned_overrides["pyproject.toml"]},
+    )
+    snapshot["versioned"] = _raw_tracked_worktree_digest(
+        root,
+        expected_head,
+        versioned_overrides,
+    )
+    return snapshot
+
+
 def _verify_tracked_worktree(
     root: Path,
     expected_head: str,
@@ -2241,6 +2457,15 @@ def _validate_source(
         plan["parameters"]["source_sha"],
         allowed_hashes,
     )
+    expected_raw_digest = plan["inputs"]["raw_worktree"][expected_input_state]
+    observed_raw_digest = _raw_tracked_worktree_digest(
+        root,
+        plan["parameters"]["source_sha"],
+    )
+    if observed_raw_digest != expected_raw_digest:
+        _fail(
+            "Raw tracked-worktree bytes differ from the approved source-stage digest."
+        )
 
 
 def _find_mapping_value(value: Any, names: set[str]) -> Any:

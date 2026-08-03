@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -137,10 +138,22 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
         self.urlopen_guard.start()
         self.source_guard = mock.patch.object(self.module, "_validate_source")
         self.cli_guard = mock.patch.object(self.module, "_validate_cli")
+        self.raw_worktree_guard = mock.patch.object(
+            self.module,
+            "_planned_raw_worktree_snapshots",
+            return_value={
+                "algorithm": self.module.RAW_WORKTREE_DIGEST_ALGORITHM,
+                "initial": self.module._hash_bytes(b"fixture raw initial"),
+                "version_written": self.module._hash_bytes(b"fixture raw version written"),
+                "versioned": self.module._hash_bytes(b"fixture raw versioned"),
+            },
+        )
         self.source_guard.start()
         self.cli_guard.start()
+        self.raw_worktree_guard.start()
 
     def tearDown(self):
+        self.raw_worktree_guard.stop()
         self.cli_guard.stop()
         self.source_guard.stop()
         self.urlopen_guard.stop()
@@ -270,7 +283,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(stderr, "")
             plan = json.loads(stdout)
-            self.assertEqual(plan["schema_version"], "2.1")
+            self.assertEqual(plan["schema_version"], "2.2")
             self.assertRegex(plan["plan_hash"], r"^sha256:[0-9a-f]{64}$")
             self.assertRegex(plan["inputs"]["initial"]["hash"], r"^sha256:[0-9a-f]{64}$")
             self.assertEqual(plan["parameters"]["dist"], "dist")
@@ -1194,7 +1207,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             write_dist(root)
             plan_path, plan = self.create_plan(root)
 
-            self.assertEqual(plan["schema_version"], "2.1")
+            self.assertEqual(plan["schema_version"], "2.2")
             self.assertRegex(
                 plan["deployment_binding_hash"], r"^sha256:[0-9a-f]{64}$"
             )
@@ -1426,7 +1439,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             plan_path, plan = self.create_plan(root)
             receipt = self.module._new_receipt(plan, plan["plan_hash"])
 
-            self.assertEqual(receipt["schema_version"], "2.1")
+            self.assertEqual(receipt["schema_version"], "2.2")
             self.assertEqual(receipt["environment"], "staging")
             self.assertEqual(receipt["approved_plan_hash"], plan["plan_hash"])
             self.assertEqual(
@@ -1443,12 +1456,20 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
                 "candidate_package_file_digest",
             ):
                 self.assertEqual(receipt[field], plan["parameters"][field])
+            self.assertEqual(
+                receipt["raw_worktree_digest_algorithm"],
+                self.module.RAW_WORKTREE_DIGEST_ALGORITHM,
+            )
+            self.assertEqual(
+                receipt["raw_worktree_initial_digest"],
+                plan["inputs"]["raw_worktree"]["initial"],
+            )
 
-    def test_published_v2_1_contract_schemas_cover_generated_documents(self):
+    def test_published_v2_2_contract_schemas_cover_generated_documents(self):
         plan_schema = json.loads(PLAN_SCHEMA.read_text(encoding="utf-8"))
         receipt_schema = json.loads(RECEIPT_SCHEMA.read_text(encoding="utf-8"))
-        self.assertEqual(plan_schema["properties"]["schema_version"]["const"], "2.1")
-        self.assertEqual(receipt_schema["properties"]["schema_version"]["const"], "2.1")
+        self.assertEqual(plan_schema["properties"]["schema_version"]["const"], "2.2")
+        self.assertEqual(receipt_schema["properties"]["schema_version"]["const"], "2.2")
         self.assertFalse(plan_schema["additionalProperties"])
         self.assertFalse(receipt_schema["additionalProperties"])
         self.assertEqual(
@@ -1512,6 +1533,16 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             "uv.lock",
             plan_schema["$defs"]["fileHash"]["properties"]["path"]["enum"],
         )
+        self.assertEqual(
+            plan_schema["$defs"]["rawWorktreeSnapshot"]["properties"]["algorithm"][
+                "const"
+            ],
+            self.module.RAW_WORKTREE_DIGEST_ALGORITHM,
+        )
+        self.assertEqual(
+            receipt_schema["properties"]["raw_worktree_digest_algorithm"]["const"],
+            self.module.RAW_WORKTREE_DIGEST_ALGORITHM,
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1525,6 +1556,19 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
                 set(plan["parameters"]),
                 set(plan_schema["properties"]["parameters"]["required"]),
             )
+
+    def test_v2_1_plan_is_rejected_without_silent_migration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            plan_path, plan = self.create_plan(root)
+            plan["schema_version"] = "2.1"
+            plan["plan_hash"] = self.module._document_hash(plan, "plan_hash")
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+            with self.assertRaisesRegex(SystemExit, "expected .*version 2.2.*Regenerate"):
+                self.module._load_plan(plan_path)
 
 
 class SourceValidationIntegrationTests(unittest.TestCase):
@@ -1557,6 +1601,7 @@ class SourceValidationIntegrationTests(unittest.TestCase):
         with_build: bool = False,
         with_lock: bool = False,
         with_submodule: bool = False,
+        with_mask_filter: bool = False,
     ) -> tuple[Path, Path, dict]:
         root = workspace / "project"
         root.mkdir()
@@ -1597,6 +1642,27 @@ class SourceValidationIntegrationTests(unittest.TestCase):
         self.git(root, "config", "user.name", "Fixture User")
         self.git(root, "add", ".")
         self.git(root, "commit", "-m", "fixture source")
+        if with_mask_filter:
+            filter_script = workspace / "mask-filter.py"
+            filter_script.write_text(
+                "import sys\nsys.stdin.buffer.read()\nsys.stdout.buffer.write(b'MASKED\\n')\n",
+                encoding="utf-8",
+            )
+            self.git(
+                root,
+                "config",
+                "filter.mask.clean",
+                f"{shlex.quote(sys.executable)} {shlex.quote(str(filter_script))}",
+            )
+            self.git(root, "config", "filter.mask.smudge", "cat")
+            self.git(root, "config", "filter.mask.required", "true")
+            (root / ".gitattributes").write_text(
+                "tracked.txt filter=mask\n",
+                encoding="utf-8",
+            )
+            self.git(root, "add", ".gitattributes", "tracked.txt")
+            self.git(root, "commit", "-m", "add deterministic clean filter")
+            self.assertEqual(self.git(root, "status", "--porcelain=v1"), "")
         if with_submodule:
             submodule_origin = workspace / "submodule-origin"
             submodule_origin.mkdir()
@@ -1817,7 +1883,10 @@ class SourceValidationIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(self.git(root, "status", "--porcelain=v1"), "")
 
-            with self.assertRaisesRegex(SystemExit, "HEAD-tracked worktree file"):
+            with self.assertRaisesRegex(
+                SystemExit,
+                "HEAD-tracked worktree file|raw worktree digests|Raw tracked",
+            ):
                 self.execute(plan_path)
 
             self.assertIn(
@@ -1825,6 +1894,65 @@ class SourceValidationIntegrationTests(unittest.TestCase):
                 (root / "pyproject.toml").read_text(encoding="utf-8"),
             )
             self.assertFalse(self.module._receipt_path(plan_path).exists())
+
+    def test_clean_filter_cannot_hide_staged_status_empty_raw_byte_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, plan_path, plan = self.prepare_repository(
+                Path(tmp),
+                with_mask_filter=True,
+            )
+            approved_raw_digest = plan["inputs"]["raw_worktree"]["initial"]
+            (root / "tracked.txt").write_text(
+                "raw bytes changed after approval\n",
+                encoding="utf-8",
+            )
+            self.git(root, "add", "tracked.txt")
+            self.assertEqual(self.git(root, "status", "--porcelain=v1"), "")
+            self.assertEqual(
+                self.git(root, "diff", "--cached", "--name-only"),
+                "",
+            )
+            self.assertNotEqual(
+                self.module._raw_tracked_worktree_digest(
+                    root,
+                    plan["parameters"]["source_sha"],
+                ),
+                approved_raw_digest,
+            )
+
+            with self.assertRaisesRegex(SystemExit, "raw worktree digests|Raw tracked"):
+                self.execute(plan_path)
+
+            self.assertIn(
+                f'version = "{plan["project"]["old_version"]}"',
+                (root / "pyproject.toml").read_text(encoding="utf-8"),
+            )
+            self.assertFalse(self.module._receipt_path(plan_path).exists())
+
+    def test_unchanged_filtered_worktree_executes_against_approved_raw_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, plan_path, plan = self.prepare_repository(
+                Path(tmp),
+                with_mask_filter=True,
+            )
+            self.assertEqual(
+                (root / "tracked.txt").read_text(encoding="utf-8"),
+                "approved\n",
+            )
+            self.assertEqual(self.git(root, "status", "--porcelain=v1"), "")
+
+            code, stdout, _ = self.execute(plan_path)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(stdout)["status"], "succeeded")
+            receipt = self.module._load_receipt(
+                self.module._receipt_path(plan_path),
+                plan,
+            )
+            self.assertEqual(
+                receipt["raw_worktree_initial_digest"],
+                plan["inputs"]["raw_worktree"]["initial"],
+            )
 
     def test_real_uv_lock_version_transition_is_plan_bound_and_allowed(self):
         with tempfile.TemporaryDirectory() as tmp:
