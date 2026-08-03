@@ -1610,7 +1610,8 @@ class SourceValidationIntegrationTests(unittest.TestCase):
             ".uipath/\ndist/\napp/dist/\n",
             encoding="utf-8",
         )
-        (root / "tracked.txt").write_text("approved\n", encoding="utf-8")
+        if not with_mask_filter:
+            (root / "tracked.txt").write_text("approved\n", encoding="utf-8")
         if with_lock:
             uv = shutil.which("uv")
             if uv is None:
@@ -1660,8 +1661,11 @@ class SourceValidationIntegrationTests(unittest.TestCase):
                 "tracked.txt filter=mask\n",
                 encoding="utf-8",
             )
-            self.git(root, "add", ".gitattributes", "tracked.txt")
-            self.git(root, "commit", "-m", "add deterministic clean filter")
+            self.git(root, "add", ".gitattributes")
+            self.git(root, "commit", "-m", "configure deterministic clean filter")
+            (root / "tracked.txt").write_text("approved\n", encoding="utf-8")
+            self.git(root, "add", "tracked.txt")
+            self.git(root, "commit", "-m", "add filtered fixture file")
             self.assertEqual(self.git(root, "status", "--porcelain=v1"), "")
         if with_submodule:
             submodule_origin = workspace / "submodule-origin"
@@ -1900,6 +1904,10 @@ class SourceValidationIntegrationTests(unittest.TestCase):
             root, plan_path, plan = self.prepare_repository(
                 Path(tmp),
                 with_mask_filter=True,
+            )
+            self.assertEqual(
+                self.git(root, "show", "HEAD:tracked.txt"),
+                self.git(root, "show", ":tracked.txt"),
             )
             approved_raw_digest = plan["inputs"]["raw_worktree"]["initial"]
             (root / "tracked.txt").write_text(
