@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   ContextEnricherError,
   ATTESTATION_KIND,
+  MAXIMUM_COVERAGE_MODE,
   PREVIEW_KIND,
   SCRIPT_DIRECTORY,
   assertSafeDerivedTargets,
@@ -18,6 +19,7 @@ import {
   loadDashboard,
   loadEvidenceLedger,
   loadSalesforceRevalidationReceipt,
+  normalizeCoverageMode,
   slugify,
   writeJsonAtomic,
 } from "./day2-context-lib.mjs";
@@ -27,10 +29,12 @@ const HELP = `Evidence-Backed Direct-JSON Day 2 Enricher
 Usage:
   node enrich-day2-context.mjs preview --input <dashboard.json> --salesforce-report <mapping-report.json> --evidence <ledger.json> [options]
   node enrich-day2-context.mjs clarify --preview <preview.json> --answers <answers.json> [options]
-  node enrich-day2-context.mjs build --preview <preview.json> --evidence <refreshed-ledger.json> --salesforce-revalidation <receipt.json> [options]
+  node enrich-day2-context.mjs build --preview <preview.json> --evidence <same-preview-bound-ledger.json> --salesforce-revalidation <receipt.json> [options]
   node enrich-day2-context.mjs self-test
 
 Preview options:
+  --coverage-mode <mode>   strict (default) or maximum evidence-backed draft coverage.
+                           Repeat maximum on every re-preview in that session.
   --attestations <file>    Prior confidential clarification bundle.
   --preview-output <file>  Explicit confidential preview path.
   --output-dir <directory> Default preview directory. Default: output/day2.
@@ -45,14 +49,15 @@ Build options:
   --salesforce-revalidation <file>
                            Fresh read-only Salesforce receipt created after this preview.
   --attestations <file>    Exact bundle bound to the preview.
-  --approve-proposal <id>  Approve one exact contextual proposal ID. Repeat per proposal.
+  --approve-proposal <id>  Strict previews only: approve one exact contextual proposal ID.
   --output <file>          Importable schema 1.4 dashboard JSON path.
   --report <file>          Confidential evidence report Markdown path.
   --overwrite              Replace only prior derived Day 2 output/report files at exact targets.
 
 The helper never contacts connected systems. The skill agent performs scoped read-only
 collection and source revalidation, then supplies the normalized evidence ledger.
-There is no bulk, wildcard, path-only, or prefix approval option.`;
+There is no bulk, wildcard, path-only, or prefix approval option. A maximum-coverage
+preview includes its deterministic safe selection and rejects approval flags.`;
 
 const PREVIEW_HELP = `Preview contextual Day 2 proposals
 
@@ -62,6 +67,7 @@ Required:
   --evidence <ledger.json>    Normalized day2-evidence-ledger version 2.
 
 Optional:
+  --coverage-mode <mode>     strict (default) or maximum.
   --attestations <file>
   --preview-output <file>
   --output-dir <directory>
@@ -71,23 +77,25 @@ const BUILD_HELP = `Build contextual Day 2 JSON
 
 Required:
   --preview <preview.json>
-  --evidence <refreshed-ledger.json>
+  --evidence <same-preview-bound-ledger.json>
   --salesforce-revalidation <receipt.json>
 
 Optional:
   --attestations <file>          Exact bundle bound to the preview, when present.
-  --approve-proposal <full-id>  Repeat for each individually approved proposal.
+  --approve-proposal <full-id>   Strict previews only; repeat for each approved proposal.
   --output <dashboard.json>
   --report <report.md>
   --overwrite
 
 Before build, re-run the recorded connector discovery and re-fetch every depended-on
-source. Update only verifiedAt values when content and scope are unchanged.`;
+source. Update only verifiedAt values in the exact same ledger path when content and
+scope are unchanged, then build within 60 minutes. Omit all approval flags for a
+maximum-coverage preview.`;
 
 const CLARIFY_HELP = `Record one clarification round
 
 Required:
-  --preview <preview.json>  Current policy-v2 preview.
+  --preview <preview.json>  Current policy-v3 preview.
   --answers <answers.json>  One to three exact Q- IDs with answered, unknown, or skipped status.
 
 Optional:
@@ -103,7 +111,7 @@ function parseCommandLine(argv) {
   const repeatable = new Set(["--approve-proposal"]);
   const booleanFlags = new Set(["--overwrite", "--help"]);
   const allowedByCommand = {
-    preview: new Set(["--input", "--salesforce-report", "--evidence", "--attestations", "--preview-output", "--output-dir", "--overwrite", "--help"]),
+    preview: new Set(["--input", "--salesforce-report", "--evidence", "--attestations", "--coverage-mode", "--preview-output", "--output-dir", "--overwrite", "--help"]),
     clarify: new Set(["--preview", "--answers", "--attestations", "--output", "--help"]),
     build: new Set(["--preview", "--evidence", "--salesforce-revalidation", "--attestations", "--approve-proposal", "--output", "--report", "--overwrite", "--help"]),
     "self-test": new Set(["--help"]),
@@ -163,6 +171,7 @@ async function runPreview(parsed) {
     ? path.resolve(parsed.options.get("--attestations"))
     : "";
   const attestations = attestationsPath ? await loadAttestationBundle(attestationsPath) : null;
+  const coverageMode = normalizeCoverageMode(parsed.options.get("--coverage-mode") ?? "strict");
   const [dashboard, ledger] = await Promise.all([
     loadDashboard(inputPath),
     loadEvidenceLedger(evidencePath, { attestations }),
@@ -170,7 +179,10 @@ async function runPreview(parsed) {
   const outputDirectory = path.resolve(parsed.options.get("--output-dir") ?? "output/day2");
   const previewPath = path.resolve(
     parsed.options.get("--preview-output") ??
-      path.join(outputDirectory, `${slugify(ledger.account.canonicalName)}-day2-context-preview.json`),
+      path.join(
+        outputDirectory,
+        `${slugify(ledger.account.canonicalName)}-day2-${coverageMode === MAXIMUM_COVERAGE_MODE ? "maximum-coverage-" : ""}context-preview.json`,
+      ),
   );
   await assertSafeDerivedTargets([previewPath], [inputPath, salesforceReportPath, evidencePath, attestationsPath]);
   const preview = await createPreviewDocument({
@@ -181,6 +193,7 @@ async function runPreview(parsed) {
     evidencePath,
     attestations,
     attestationsPath,
+    coverageMode,
   });
   await writeJsonAtomic(previewPath, preview, {
     overwrite: parsed.flags.has("--overwrite"),
@@ -188,6 +201,8 @@ async function runPreview(parsed) {
   });
   process.stdout.write(`${JSON.stringify({
     kind: PREVIEW_KIND,
+    coverageMode: preview.coverageMode,
+    maximumCoverageIncluded: preview.maximumCoverageSelection.includedProposalIds.length,
     previewPath,
     eligible: preview.proposals.filter((item) => ["eligible", "no-change"].includes(item.disposition)).length,
     rejected: preview.proposals.filter((item) => !["eligible", "no-change"].includes(item.disposition)).length,
@@ -237,9 +252,10 @@ async function runClarify(parsed) {
 function defaultBuildPaths(previewPath, preview) {
   const directory = path.dirname(previewPath);
   const slug = slugify(preview.account.canonicalName);
+  const suffix = preview.coverageMode === MAXIMUM_COVERAGE_MODE ? "-maximum-coverage-draft" : "";
   return {
-    outputPath: path.join(directory, `${slug}-day2-dashboard.json`),
-    reportPath: path.join(directory, `${slug}-day2-evidence-report.md`),
+    outputPath: path.join(directory, `${slug}-day2${suffix}-dashboard.json`),
+    reportPath: path.join(directory, `${slug}-day2${suffix}-evidence-report.md`),
   };
 }
 
@@ -284,6 +300,9 @@ async function runBuild(parsed) {
     outputPath: result.outputPath,
     reportPath: result.reportPath,
     acceptedProposalIds: result.acceptedProposalIds,
+    coverageMode: result.coverageMode,
+    maximumCoverageIncludedProposalIds: result.maximumCoverageIncludedProposalIds,
+    unresolvedCoveragePaths: result.unresolvedCoveragePaths,
     remainingBlocks: result.readiness.blocks.length,
     remainingWarnings: result.readiness.warnings.length,
     cleanupWarnings: result.cleanupWarnings,

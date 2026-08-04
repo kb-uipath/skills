@@ -20,7 +20,7 @@
   "properties": {
     "kind": { "const": "day2-account-team-attestations/v1" },
     "dashboardSchemaVersion": { "const": "1.4" },
-    "policyVersion": { "const": "day2-evidence-policy/v2" },
+    "policyVersion": { "const": "day2-evidence-policy/v3" },
     "account": {
       "type": "object",
       "additionalProperties": false,

@@ -4,17 +4,20 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const DASHBOARD_SCHEMA_VERSION = "1.4";
-export const POLICY_VERSION = "day2-evidence-policy/v2";
+export const POLICY_VERSION = "day2-evidence-policy/v3";
 export const LEDGER_KIND = "day2-evidence-ledger";
 export const LEDGER_VERSION = "2";
-export const PREVIEW_KIND = "day2-context-preview/v2";
-export const REPORT_KIND = "day2-evidence-report/v2";
-export const QUESTION_PLAN_KIND = "day2-question-plan/v1";
+export const PREVIEW_KIND = "day2-context-preview/v3";
+export const REPORT_KIND = "day2-evidence-report/v3";
+export const QUESTION_PLAN_KIND = "day2-question-plan/v2";
 export const CLARIFICATION_ANSWERS_KIND = "day2-clarification-answers/v1";
 export const ATTESTATION_KIND = "day2-account-team-attestations/v1";
 export const SALESFORCE_FIELD_MAP_VERSION = "salesforce-day2-field-map/v1";
 export const SALESFORCE_REPORT_KIND = "salesforce-day2-mapping-report/v1";
 export const SALESFORCE_REVALIDATION_KIND = "salesforce-day2-revalidation/v1";
+export const STRICT_COVERAGE_MODE = "strict";
+export const MAXIMUM_COVERAGE_MODE = "maximum";
+export const MAXIMUM_COVERAGE_POLICY_VERSION = "day2-maximum-coverage-policy/v1";
 
 export const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 export const SKILL_DIRECTORY = path.dirname(SCRIPT_DIRECTORY);
@@ -91,8 +94,12 @@ const DATED_AUTHORITIES = new Set([
   "public-web",
 ]);
 const MAX_SOURCE_CLOCK_SKEW_MS = 5 * 60 * 1_000;
+const MAX_BUILD_REVALIDATION_AGE_MS = 60 * 60 * 1_000;
+const MAXIMUM_VOLATILE_ATTESTATION_AGE_MS = 24 * 60 * 60 * 1_000;
 const MAX_EVIDENCE_ITEMS = 500;
 const MAX_CONTEXT_PROPOSALS = 500;
+const COVERAGE_MODES = new Set([STRICT_COVERAGE_MODE, MAXIMUM_COVERAGE_MODE]);
+const VOLATILE_ATTESTATION_POLICY_KEYS = new Set(["health", "relationships"]);
 const ACCOUNT_SIGNALS = new Set([
   "canonical-name",
   "alias",
@@ -189,13 +196,22 @@ const PAGE_ONE_SCALAR_PATHS = new Set([
 ]);
 const PROMPT_INJECTION_PATTERNS = [
   /ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions/i,
+  /\bdisregard\s+(?:all\s+)?(?:previous|prior|earlier)\s+(?:instructions|directives)\b/i,
+  /\b(?:ignore|disregard|forget|bypass|override)\b.{0,50}\b(?:instructions?|directives?|guidance|policy|rules?)\b/iu,
   /\b(system|assistant|developer)\s+message\b/i,
   /\bexecute\s+(?:this\s+)?(?:command|script|tool)\b/i,
+  /\bcall\s+(?:the\s+)?(?:shell|terminal|command|tool)\b/i,
+  /\b(?:use|run|invoke|call|execute)\b.{0,30}\b(?:bash|shell|terminal|command|tool|script)\b/iu,
+  /\breveal\s+(?:all\s+)?(?:secrets?|credentials?|tokens?)\b/i,
+  /\b(?:reveal|exfiltrate|extract|leak|send|print)\b.{0,40}\b(?:secrets?|credentials?|tokens?|private keys?)\b/iu,
+  /\boverride\s+(?:the\s+)?(?:system|instructions|policy)\b/i,
   /\bapprove(?:\s+all)?\s+proposal/i,
   /\bfollow\s+this\s+link\s+and\b/i,
   /<script\b/i,
   /```(?:system|assistant|developer)/i,
 ];
+const PLACEHOLDER_SENTINEL_PATTERN = /^(?:(?:owner|target|date|status|value|evidence)\s*:\s*)?(?:unknown|tbd|tbc|n\/?a|none|not (?:available|known|provided)|validation required|pending validation|to be (?:determined|confirmed)|placeholder)$/iu;
+const PLACEHOLDER_SENTINEL_TOKEN_PATTERN = /\b(?:unknown|tbd|tbc|none|not (?:available|known|provided)|validation required|pending validation|to be (?:determined|confirmed)|placeholder)\b|\bn\/?a\b/iu;
 
 export const FIELD_POLICY_MAP = Object.freeze({
   protectedCommercial: {
@@ -436,12 +452,59 @@ export function deepClone(value) {
   return structuredClone(value);
 }
 
+export function normalizeCoverageMode(value = STRICT_COVERAGE_MODE) {
+  if (typeof value !== "string" || !COVERAGE_MODES.has(value)) {
+    throw new ContextEnricherError(
+      "INVALID_COVERAGE_MODE",
+      `Coverage mode must be ${STRICT_COVERAGE_MODE} or ${MAXIMUM_COVERAGE_MODE}.`,
+    );
+  }
+  return value;
+}
+
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function hasText(value) {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function stripContextualProvenanceBlocks(value) {
+  return String(value ?? "")
+    .replace(
+      /\[(DAY2-(?:DRAFT-)?EVIDENCE):([a-f0-9]{16})\][\s\S]*?\[\/\1:\2\]\n?/gu,
+      "",
+    )
+    .trim();
+}
+
+function dashboardProvenanceDigest(dashboard) {
+  const normalized = deepClone(dashboard);
+  normalized.sourceNotes = stripContextualProvenanceBlocks(normalized.sourceNotes);
+  return digestObject(normalized);
+}
+
+function contextualProvenanceBlocks(dashboard) {
+  const notes = String(dashboard?.sourceNotes ?? "");
+  const pattern = /\[(DAY2-(?:DRAFT-)?EVIDENCE):([a-f0-9]{16})\]\nSalesforce scope: ([^\s/]+) \/ (001[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?)\nDashboard digest: (sha256:[a-f0-9]{64})\n(?:Accepted contextual evidence:|Evidence-backed proposals included by maximum-coverage draft policy:)\n((?:- P-[a-f0-9]{20} [^\n]+\n?)+)\[\/\1:\2\]/gu;
+  return [...notes.matchAll(pattern)].map((match) => ({
+    kind: match[1],
+    digest: match[2],
+    orgId: match[3],
+    accountId: match[4],
+    dashboardDigest: match[5],
+    rows: match[6].trim().split("\n"),
+    verified: match[5] === dashboardProvenanceDigest(dashboard),
+  }));
+}
+
+function hasContextualProvenance(dashboard, { orgId = "", accountId = "" } = {}) {
+  const blocks = contextualProvenanceBlocks(dashboard);
+  return blocks.some((block) =>
+    block.verified &&
+    (!orgId || block.orgId === orgId) &&
+    (!accountId || sameSalesforceAccountId(block.accountId, accountId)));
 }
 
 function codePointLength(value) {
@@ -622,7 +685,33 @@ function accountMatchIsStrong(accountMatch) {
 }
 
 function containsPromptInjection(text) {
-  return PROMPT_INJECTION_PATTERNS.some((pattern) => pattern.test(String(text ?? "")));
+  const normalized = normalizeSafetyScanText(text);
+  return PROMPT_INJECTION_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function normalizeSafetyScanText(text) {
+  return String(text ?? "")
+    .normalize("NFKC")
+    .replace(/[\t\n\v\f\r\u0085]/gu, " ")
+    .replace(/\p{Cc}/gu, "")
+    .replace(/[\p{Cf}\p{Default_Ignorable_Code_Point}]/gu, "")
+    .replace(/\s+/gu, " ");
+}
+
+function stringLeaves(value) {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap((item) => stringLeaves(item));
+  if (isPlainObject(value)) return Object.values(value).flatMap((item) => stringLeaves(item));
+  return [];
+}
+
+function containsPlaceholderSentinel(value) {
+  return stringLeaves(value).some((text) =>
+    String(text).split(/\r?\n/u).some((line) => {
+      const normalized = normalizeSafetyScanText(line).trim();
+      return PLACEHOLDER_SENTINEL_PATTERN.test(normalized) ||
+        PLACEHOLDER_SENTINEL_TOKEN_PATTERN.test(normalized);
+    }));
 }
 
 function sanitizeLocator(value, target) {
@@ -1518,12 +1607,10 @@ function stableLedgerPayload(ledger, { includeProposals = true } = {}) {
     account: ledger.account,
     scope: {
       ...ledger.scope,
-      collectedAt: undefined,
       discoveryRuns: ledger.scope.discoveryRuns.map(({ verifiedAt: _verifiedAt, ...run }) => run),
     },
     items: ledger.items.map((item) => {
       const {
-        retrievedAt: _retrievedAt,
         verifiedAt: _verifiedAt,
         scopeDate: _scopeDate,
         outsideWindow: _outsideWindow,
@@ -1536,7 +1623,6 @@ function stableLedgerPayload(ledger, { includeProposals = true } = {}) {
     }),
     gaps: ledger.gaps,
   };
-  delete payload.scope.collectedAt;
   if (includeProposals) payload.proposals = ledger.proposals;
   return payload;
 }
@@ -1765,12 +1851,85 @@ function allowedPublicWebTarget(targetPath) {
   return targetPath === "/tagline" || targetPath === "/goals" || targetPath === "/motionAnswers";
 }
 
+function evidenceMentionsCadence(item, token) {
+  return new RegExp(`\\b${token}\\b`, "iu").test(`${item.title}\n${item.excerpt ?? ""}`);
+}
+
+function requiredRowTextReasons(proposal) {
+  if (!isPlainObject(proposal.value)) return [];
+  const value = proposal.value;
+  const missing = [];
+  const requireFields = (...fields) => {
+    for (const field of fields) {
+      if (!hasText(value[field])) missing.push(field);
+    }
+  };
+  if (proposal.targetPath === "/goals") requireFields("text");
+  if (proposal.targetPath === "/cadenceGoals") {
+    requireFields("label", "date");
+    if (hasText(value.date) && !isRealIsoDate(value.date)) missing.push("valid ISO date");
+  }
+  if (proposal.targetPath === "/workstreams") requireFields("name");
+  if (proposal.targetPath === "/relationships") {
+    requireFields("uipathName", "customerName");
+  }
+  if (proposal.targetPath === "/eltAsks") requireFields("type", "owner", "ask");
+  if (proposal.targetPath === "/timeline") {
+    requireFields("date", "title");
+    if (hasText(value.date) && !isRealIsoDate(value.date)) missing.push("valid ISO date");
+  }
+  return missing.length
+    ? [`${proposal.targetPath} row is not substantive; missing ${[...new Set(missing)].join(", ")}.`]
+    : [];
+}
+
+function consumptionGroupContentReasons(proposal) {
+  if (proposal.targetPath !== "/consumptionPlan/groups" || !isPlainObject(proposal.value)) return [];
+  const reasons = [];
+  if (!hasText(proposal.value.element)) {
+    reasons.push("Consumption Plan group requires a nonblank license category.");
+  }
+  if (!Array.isArray(proposal.value.rows) || proposal.value.rows.length === 0) {
+    reasons.push("Consumption Plan group requires at least one substantive product row.");
+    return reasons;
+  }
+  for (const [index, row] of proposal.value.rows.entries()) {
+    if (!isPlainObject(row)) continue;
+    if (!hasText(row.product)) {
+      reasons.push(`Consumption Plan row ${index + 1} requires a nonblank product identity.`);
+    }
+    if (!hasText(row.purchased) && !hasText(row.utilization)) {
+      reasons.push(`Consumption Plan row ${index + 1} requires an evidenced purchased or utilization value.`);
+    }
+    if (row.utilizationStatus !== "Unset" && !hasText(row.utilization)) {
+      reasons.push(`Consumption Plan row ${index + 1} cannot set utilization status without utilization evidence.`);
+    }
+    if (
+      isPlainObject(row.forecast) && Object.values(row.forecast).some(hasText) ||
+      hasText(row.comments)
+    ) {
+      reasons.push(`Consumption Plan row ${index + 1} must leave forecast and comments blank; use the typed productForecast update.`);
+    }
+  }
+  return reasons;
+}
+
 function contentPolicyReasons(dashboard, proposal) {
   const reasons = [];
   const value = proposal.value;
+  const proposalText = [proposal.value, proposal.semanticKey, proposal.rationale];
+  if (proposalText.flatMap((item) => stringLeaves(item)).some((item) => containsPromptInjection(item))) {
+    reasons.push("Proposal content contains potential prompt-injection language.");
+  }
+  if (containsPlaceholderSentinel(proposalText)) {
+    reasons.push("Proposal content contains a placeholder sentinel; record the gap instead of writing Unknown, TBD, or an equivalent token.");
+  }
   if (proposal.operation === "set" && typeof value !== "string") {
     reasons.push("Typed scalar set proposals require a string value.");
     return reasons;
+  }
+  if (proposal.operation === "set" && !hasText(value)) {
+    reasons.push("Typed scalar set proposals cannot write a blank value.");
   }
   if (proposal.targetPath === "/tagline" && codePointLength(value) > 170) {
     reasons.push("Customer value headline exceeds 170 characters.");
@@ -1816,6 +1975,8 @@ function contentPolicyReasons(dashboard, proposal) {
   if (proposal.operation === "insert" || (proposal.operation === "update" && proposal.targetPath !== "/motionAnswers")) {
     if (!isPlainObject(value)) reasons.push("Atomic row proposals require an object value.");
   }
+  reasons.push(...requiredRowTextReasons(proposal));
+  reasons.push(...consumptionGroupContentReasons(proposal));
   if (proposal.targetPath === "/motionAnswers") {
     if (proposal.operation !== "update" || !MOTION_QUESTIONS.has(proposal.semanticKey) || typeof value !== "string") {
       reasons.push("Motion answers require an exact canonical question semanticKey and a string value.");
@@ -1907,6 +2068,10 @@ function authorityPolicyReasons(ledger, proposal) {
       item.authority === "account-team-attestation" && item.allowedClaimClasses.includes(proposal.claimClass));
   const claimMatchedAuthorities = new Set(claimMatchedEvidence.map((item) => item.authority));
   const attestationEvidence = evidence.filter((item) => item.authority === "account-team-attestation");
+
+  if (evidence.some((item) => item.potentialPromptInjection)) {
+    reasons.push("Potential prompt-injection language cannot support a dashboard proposal.");
+  }
 
   for (const item of attestationEvidence) {
     const attestedAnnotationClasses = proposal.claimAnnotations
@@ -2037,6 +2202,59 @@ function authorityPolicyReasons(ledger, proposal) {
       reasons.push("Deployment and delivery models require same-claim system or validated account evidence.");
     }
   }
+  if (proposal.targetPath === "/useCases") {
+    if (proposal.claimClass !== "actual") {
+      reasons.push("Where Used must describe actual customer use, not a target, plan, risk, opinion, or scheduled meeting.");
+    }
+    if (![...claimMatchedAuthorities].some((item) =>
+      ["product-telemetry", "validated-account-document", "customer-statement"].includes(item))) {
+      reasons.push("Where Used requires same-claim telemetry, a dated validated use-case record, or an authenticated customer statement of actual use.");
+    }
+  }
+  if (proposal.targetPath === "/tagline") {
+    if (["risk", "meeting-scheduled"].includes(proposal.claimClass)) {
+      reasons.push("The customer value headline cannot be sourced from a risk or scheduled meeting.");
+    }
+    const headlineAuthorityPresent = proposal.claimClass === "actual"
+      ? claimMatchedEvidence.some((item) =>
+        ["product-telemetry", "validated-account-document"].includes(item.authority))
+      : claimMatchedEvidence.some((item) =>
+        ["customer-statement", "public-web"].includes(item.authority) ||
+        item.authority === "validated-account-document" && ["customer", "public"].includes(item.author.kind));
+    if (!headlineAuthorityPresent) {
+      reasons.push(
+        proposal.claimClass === "actual"
+          ? "An actual value headline requires same-claim telemetry or a dated validated outcome record."
+          : "A planned or priority headline requires same-claim customer/public authority or a customer-authored validated record; internal planning alone is insufficient.",
+      );
+    }
+  }
+  if (["/executiveCadence/type", "/executiveCadence/date"].includes(proposal.targetPath)) {
+    if (!["actual", "meeting-scheduled"].includes(proposal.claimClass)) {
+      reasons.push("Executive cadence must be an occurred actual or an explicitly scheduled meeting.");
+    }
+    if (![...claimMatchedAuthorities].some((item) =>
+      ["calendar-event", "validated-account-document"].includes(item))) {
+      reasons.push("Executive cadence requires same-claim Calendar or dated validated-account authority.");
+    }
+    if (proposal.targetPath === "/executiveCadence/type") {
+      const expectedToken = /Qbr$/u.test(proposal.value) ? "QBR" : "EBC";
+      if (!claimMatchedEvidence.some((item) => evidenceMentionsCadence(item, expectedToken))) {
+        reasons.push(`Executive cadence type ${proposal.value} is not explicit in its supporting evidence.`);
+      }
+    }
+    if (
+      proposal.targetPath === "/executiveCadence/date" &&
+      isRealIsoDate(proposal.value) &&
+      !claimMatchedEvidence.some((item) =>
+        item.occurredAt === proposal.value ||
+        item.occurredAt.startsWith(`${proposal.value}T`) ||
+        item.title.includes(proposal.value) ||
+        item.excerpt.includes(proposal.value))
+    ) {
+      reasons.push("Executive cadence date must be explicit in the supporting evidence occurrence or content.");
+    }
+  }
   if (/^\/metrics\/(?:savings|automations|agentic)\/value$/u.test(proposal.targetPath)) {
     if (proposal.claimClass !== "actual") reasons.push("Realized KPI values require actual evidence.");
     if (![...claimMatchedAuthorities].some((item) => ["product-telemetry", "validated-account-document"].includes(item))) {
@@ -2053,6 +2271,25 @@ function authorityPolicyReasons(ledger, proposal) {
     if (![...claimMatchedAuthorities].some((item) =>
       ["product-telemetry", "license-record", "contract-order", "validated-account-document"].includes(item))) {
       reasons.push("Consumption Plan data requires same-claim product telemetry, license, contract, or validated account evidence.");
+    }
+  }
+  if (proposal.targetPath === "/consumptionPlan/groups" && isPlainObject(proposal.value)) {
+    if (proposal.claimClass !== "actual") {
+      reasons.push("A Consumption Plan product row must seed actual product, purchase, or utilization facts.");
+    }
+    const rows = Array.isArray(proposal.value.rows) ? proposal.value.rows : [];
+    if (
+      rows.some((row) => isPlainObject(row) && hasText(row.purchased)) &&
+      ![...claimMatchedAuthorities].some((item) => ["contract-order", "license-record"].includes(item))
+    ) {
+      reasons.push("Purchased quantity requires same-claim contract, order, or license authority.");
+    }
+    if (
+      rows.some((row) => isPlainObject(row) &&
+        (hasText(row.utilization) || row.utilizationStatus !== "Unset")) &&
+      ![...claimMatchedAuthorities].some((item) => ["product-telemetry", "validated-account-document"].includes(item))
+    ) {
+      reasons.push("Utilization and utilization status require same-claim telemetry or a dated validated usage record.");
     }
   }
   if (proposal.targetPath === PRODUCT_FORECAST_TARGET) {
@@ -2085,6 +2322,13 @@ function authorityPolicyReasons(ledger, proposal) {
     !ATTESTATION_INTERNAL_ACTUAL_PATHS.some((pattern) => pattern.test(proposal.targetPath))
   ) {
     reasons.push("Account-team attestation cannot establish this actual.");
+  }
+  const healthMatch = proposal.targetPath.match(/^\/health\/[^/]+\/(status|evidence|mitigation|owner)$/u);
+  if (healthMatch?.[1] === "status" && proposal.claimClass !== "opinion") {
+    reasons.push("A contextual Red or Green health status must be an explicit judgment classified as opinion.");
+  }
+  if (healthMatch?.[1] === "evidence" && !["actual", "risk", "opinion"].includes(proposal.claimClass)) {
+    reasons.push("Health basis must be an actual, risk, or explicit opinion—not a target, plan, or meeting.");
   }
   return reasons;
 }
@@ -2226,6 +2470,8 @@ export async function prepareProposals(dashboard, ledger, inputDigest) {
         authority: item.authority,
         claimClass: item.claimClass,
         potentialPromptInjection: item.potentialPromptInjection,
+        cadenceTokens: ["QBR", "EBC"].filter((token) => evidenceMentionsCadence(item, token)),
+        attestedAt: item.authority === "account-team-attestation" ? item.modifiedAt : "",
       })),
     });
   }
@@ -2275,6 +2521,274 @@ export async function prepareProposals(dashboard, ledger, inputDigest) {
     }
   }
   return prepared;
+}
+
+function coverageSelectionPayload(selection) {
+  const { digest: _digest, ...payload } = selection;
+  return payload;
+}
+
+function addCoverageExclusion(exclusions, proposal, reason) {
+  exclusions.set(proposal.proposalId, {
+    proposalId: proposal.proposalId,
+    targetPath: proposal.targetPath,
+    reason,
+  });
+}
+
+function isBlankOnlyCompletion(existingValue, proposedValue, field = "") {
+  if (existingValue === undefined || existingValue === null) return true;
+  if (typeof existingValue === "string") {
+    return !hasText(existingValue) ||
+      (field === "utilizationStatus" && existingValue === "Unset") ||
+      existingValue === proposedValue;
+  }
+  if (Array.isArray(existingValue)) {
+    return existingValue.length === 0 || stableStringify(existingValue) === stableStringify(proposedValue);
+  }
+  if (isPlainObject(existingValue) && isPlainObject(proposedValue)) {
+    return Object.keys(existingValue).every((key) =>
+      Object.hasOwn(proposedValue, key) && isBlankOnlyCompletion(existingValue[key], proposedValue[key], key));
+  }
+  return stableStringify(existingValue) === stableStringify(proposedValue);
+}
+
+function changesPopulatedContent(proposal) {
+  return proposal.conflict && !(
+    proposal.operation === "update" &&
+    isBlankOnlyCompletion(proposal.existingValue, proposal.value)
+  );
+}
+
+export function selectMaximumCoverageProposals(
+  dashboard,
+  proposals,
+  coverageMode = STRICT_COVERAGE_MODE,
+  referenceTime = new Date().toISOString(),
+) {
+  const mode = normalizeCoverageMode(coverageMode);
+  const referenceDate = referenceTime.slice(0, 10);
+  const empty = {
+    mode,
+    policyVersion: mode === MAXIMUM_COVERAGE_MODE ? MAXIMUM_COVERAGE_POLICY_VERSION : "",
+    includedProposalIds: [],
+    excluded: [],
+  };
+  if (mode === STRICT_COVERAGE_MODE) {
+    empty.digest = digestObject(empty);
+    return empty;
+  }
+
+  const exclusions = new Map();
+  const candidates = [];
+  for (const proposal of proposals) {
+    if (!["eligible", "no-change"].includes(proposal.disposition)) {
+      addCoverageExclusion(
+        exclusions,
+        proposal,
+        proposal.reasons.join("; ") || `Proposal is ${proposal.disposition}.`,
+      );
+      continue;
+    }
+    if (changesPopulatedContent(proposal)) {
+      addCoverageExclusion(exclusions, proposal, "Existing dashboard content differs; maximum coverage never overwrites it.");
+      continue;
+    }
+    if (proposal.evidence.some((item) => item.potentialPromptInjection)) {
+      addCoverageExclusion(exclusions, proposal, "Supporting evidence contains potential prompt-injection language.");
+      continue;
+    }
+    if (
+      proposal.targetPath === "/relationships" &&
+      !proposal.evidence.some((item) => item.authority === "account-team-attestation")
+    ) {
+      addCoverageExclusion(
+        exclusions,
+        proposal,
+        "Relationship pairing and action require an explicit account-team attestation before maximum coverage may include the row.",
+      );
+      continue;
+    }
+    if (
+      (proposal.targetPath === "/relationships" || proposal.targetPath.startsWith("/health/")) &&
+      proposal.evidence.some((item) =>
+        item.authority === "account-team-attestation" &&
+        Date.parse(referenceTime) - Date.parse(item.attestedAt) >= MAXIMUM_VOLATILE_ATTESTATION_AGE_MS)
+    ) {
+      addCoverageExclusion(
+        exclusions,
+        proposal,
+        "Health and relationship attestations must be answered within 24 hours of a maximum-coverage preview.",
+      );
+      continue;
+    }
+    candidates.push(proposal);
+  }
+
+  const selectedByTarget = new Map();
+  for (const proposal of candidates.sort((left, right) =>
+    left.targetKey.localeCompare(right.targetKey) ||
+    right.evidenceIds.length - left.evidenceIds.length ||
+    left.proposalId.localeCompare(right.proposalId))) {
+    const existing = selectedByTarget.get(proposal.targetKey);
+    if (existing) {
+      addCoverageExclusion(
+        exclusions,
+        proposal,
+        `A deterministic proposal for the same target was already selected: ${existing.proposalId}.`,
+      );
+      continue;
+    }
+    selectedByTarget.set(proposal.targetKey, proposal);
+  }
+
+  const excludeAtomicGroup = (group, reason) => {
+    for (const proposal of group) {
+      selectedByTarget.delete(proposal.targetKey);
+      addCoverageExclusion(exclusions, proposal, reason);
+    }
+  };
+
+  for (const key of HEALTH_KEYS) {
+    const group = [...selectedByTarget.values()].filter((proposal) =>
+      proposal.targetPath.startsWith(`/health/${key}/`));
+    if (!group.length) continue;
+    const groupHasValueChange = proposals.some((proposal) =>
+      proposal.targetPath.startsWith(`/health/${key}/`) && changesPopulatedContent(proposal));
+    if (groupHasValueChange) {
+      excludeAtomicGroup(
+        group,
+        `Health ${key} contains a value-changing conflict; its proposals stay together and require strict review.`,
+      );
+      continue;
+    }
+    const simulated = deepClone(dashboard);
+    applyApprovedProposals(simulated, group);
+    const item = simulated.health[key];
+    const missing = [];
+    const statusProposal = group.find((proposal) => proposal.targetPath === `/health/${key}/status`);
+    const evidenceProposal = group.find((proposal) => proposal.targetPath === `/health/${key}/evidence`);
+    if (!statusProposal) missing.push("explicit status proposal");
+    if (!evidenceProposal) missing.push("explicit evidence proposal");
+    if (
+      statusProposal &&
+      !statusProposal.evidence.some((evidence) => evidence.authority === "account-team-attestation")
+    ) {
+      missing.push("account-team health judgment");
+    }
+    if (!["Red", "Green"].includes(item.status)) missing.push("status");
+    if (!hasText(item.evidence)) missing.push("evidence");
+    if (item.status === "Red") {
+      if (!hasText(item.mitigation)) missing.push("mitigation");
+      if (!hasText(item.owner)) missing.push("owner");
+    }
+    if (
+      item.status === "Green" &&
+      evidenceProposal &&
+      !["actual", "opinion"].includes(evidenceProposal.claimClass)
+    ) {
+      missing.push("non-risk Green basis");
+    }
+    if (missing.length) {
+      excludeAtomicGroup(
+        group,
+        `Health ${key} is not an atomic supported judgment; missing ${[...new Set(missing)].join(", ")}.`,
+      );
+    }
+  }
+
+  const cadenceGroup = [...selectedByTarget.values()].filter((proposal) =>
+    proposal.targetPath.startsWith("/executiveCadence/"));
+  if (cadenceGroup.length) {
+    const cadenceHasValueChange = proposals.some((proposal) =>
+      proposal.targetPath.startsWith("/executiveCadence/") && changesPopulatedContent(proposal));
+    if (cadenceHasValueChange) {
+      excludeAtomicGroup(
+        cadenceGroup,
+        "Executive cadence contains a value-changing conflict; its proposals stay together and require strict review.",
+      );
+      return finalizeMaximumCoverageSelection(mode, selectedByTarget, exclusions);
+    }
+    const simulated = deepClone(dashboard);
+    applyApprovedProposals(simulated, cadenceGroup);
+    const typeProposal = cadenceGroup.find((proposal) => proposal.targetPath === "/executiveCadence/type");
+    const dateProposal = cadenceGroup.find((proposal) => proposal.targetPath === "/executiveCadence/date");
+    const sharedEvidence = typeProposal && dateProposal
+      ? typeProposal.evidenceIds.some((id) => dateProposal.evidenceIds.includes(id))
+      : false;
+    const cadenceType = simulated.executiveCadence.type;
+    const cadenceDate = simulated.executiveCadence.date;
+    const temporalMismatch =
+      cadenceType.startsWith("last") && cadenceDate > referenceDate ||
+      cadenceType.startsWith("next") && cadenceDate < referenceDate ||
+      cadenceType.startsWith("next") && cadenceGroup.some((proposal) => proposal.claimClass !== "meeting-scheduled");
+    if (
+      !typeProposal ||
+      !dateProposal ||
+      !sharedEvidence ||
+      !hasText(cadenceType) ||
+      !hasText(cadenceDate) ||
+      temporalMismatch
+    ) {
+      excludeAtomicGroup(
+        cadenceGroup,
+        "Executive cadence requires same-evidence type and date proposals whose last/next meaning matches the preview date.",
+      );
+    }
+  }
+
+  return finalizeMaximumCoverageSelection(mode, selectedByTarget, exclusions);
+}
+
+function finalizeMaximumCoverageSelection(mode, selectedByTarget, exclusions) {
+  const selection = {
+    mode,
+    policyVersion: MAXIMUM_COVERAGE_POLICY_VERSION,
+    includedProposalIds: [...selectedByTarget.values()]
+      .map((proposal) => proposal.proposalId)
+      .sort(),
+    excluded: [...exclusions.values()].sort((left, right) =>
+      left.proposalId.localeCompare(right.proposalId)),
+  };
+  selection.digest = digestObject(selection);
+  return selection;
+}
+
+function validateCoverageSelection(selection, coverageMode) {
+  assertExactKeys(
+    selection,
+    ["mode", "policyVersion", "includedProposalIds", "excluded", "digest"],
+    "preview.maximumCoverageSelection",
+  );
+  const mode = normalizeCoverageMode(coverageMode);
+  if (selection.mode !== mode) {
+    throw new ContextEnricherError("COVERAGE_SELECTION_TAMPERED", "Coverage selection mode does not match the preview.");
+  }
+  const expectedPolicy = mode === MAXIMUM_COVERAGE_MODE ? MAXIMUM_COVERAGE_POLICY_VERSION : "";
+  if (selection.policyVersion !== expectedPolicy) {
+    throw new ContextEnricherError("STALE_PREVIEW", "Coverage selection policy version is stale.");
+  }
+  if (!Array.isArray(selection.includedProposalIds) || !Array.isArray(selection.excluded)) {
+    throw new ContextEnricherError("INVALID_PREVIEW", "Coverage selection IDs and exclusions must be arrays.");
+  }
+  for (const id of selection.includedProposalIds) {
+    if (!/^P-[a-f0-9]{20}$/u.test(id)) {
+      throw new ContextEnricherError("INVALID_PREVIEW", "Coverage selection contains an invalid proposal ID.");
+    }
+  }
+  if (new Set(selection.includedProposalIds).size !== selection.includedProposalIds.length) {
+    throw new ContextEnricherError("INVALID_PREVIEW", "Coverage selection contains duplicate proposal IDs.");
+  }
+  for (const item of selection.excluded) {
+    assertExactKeys(item, ["proposalId", "targetPath", "reason"], "preview.maximumCoverageSelection.excluded[]");
+    if (!/^P-[a-f0-9]{20}$/u.test(item.proposalId) || !hasText(item.targetPath) || !hasText(item.reason)) {
+      throw new ContextEnricherError("INVALID_PREVIEW", "Coverage exclusion is malformed.");
+    }
+  }
+  if (selection.digest !== digestObject(coverageSelectionPayload(selection))) {
+    throw new ContextEnricherError("COVERAGE_SELECTION_TAMPERED", "Coverage selection digest is invalid.");
+  }
+  return selection;
 }
 
 function isBlankDashboardValue(value) {
@@ -2760,7 +3274,7 @@ async function verifyOverwriteCandidate(filePath, kind) {
       kind === "dashboard" &&
       (
         value.schemaVersion !== DASHBOARD_SCHEMA_VERSION ||
-        !String(value.sourceNotes ?? "").includes("[DAY2-EVIDENCE:")
+        !hasContextualProvenance(value)
       )
     ) {
       throw new ContextEnricherError("UNSAFE_OVERWRITE", "The existing dashboard target is not a prior contextual build.");
@@ -2804,13 +3318,27 @@ async function atomicWrite(filePath, content, { overwrite = false, kind }) {
       await link(temporary, resolved);
     }
   } catch (error) {
-    await unlink(temporary).catch(() => {});
+    try {
+      await unlink(temporary);
+    } catch (cleanupError) {
+      throw new ContextEnricherError(
+        "CONFIDENTIAL_CLEANUP_FAILED",
+        `Write failed and the confidential temporary file could not be removed: ${temporary}. ${cleanupError.message}`,
+      );
+    }
     if (error?.code === "EEXIST") {
       throw new ContextEnricherError("OUTPUT_EXISTS", `Refusing to overwrite existing file ${resolved}.`);
     }
     throw error;
   }
-  await unlink(temporary).catch(() => {});
+  try {
+    await unlink(temporary);
+  } catch (cleanupError) {
+    throw new ContextEnricherError(
+      "CONFIDENTIAL_CLEANUP_FAILED",
+      `Output was committed at ${resolved}, but its confidential temporary duplicate remains at ${temporary}. ${cleanupError.message}`,
+    );
+  }
   return resolved;
 }
 
@@ -2910,8 +3438,23 @@ async function writeDerivedPairAtomic(entries, { overwrite }) {
           }
         }
       }
-      await unlink(entry.temporary).catch(() => {});
-      if (entry.backup && !entry.committed) await unlink(entry.backup).catch(() => {});
+      try {
+        await unlink(entry.temporary);
+      } catch (cleanupError) {
+        if (cleanupError?.code !== "ENOENT") {
+          rollbackFailures.push(`${entry.resolved}: temporary preserved at ${entry.temporary}: ${cleanupError.message}`);
+        }
+      }
+      if (entry.backup && !entry.committed) {
+        try {
+          await unlink(entry.backup);
+          entry.backup = "";
+        } catch (cleanupError) {
+          if (cleanupError?.code !== "ENOENT") {
+            rollbackFailures.push(`${entry.resolved}: backup preserved at ${entry.backup}: ${cleanupError.message}`);
+          }
+        }
+      }
     }
     if (rollbackFailures.length) {
       throw new ContextEnricherError(
@@ -2924,11 +3467,34 @@ async function writeDerivedPairAtomic(entries, { overwrite }) {
     }
     throw error;
   }
+  const cleanupWarnings = [];
   for (const entry of prepared) {
-    await unlink(entry.temporary).catch(() => {});
-    if (entry.backup) await unlink(entry.backup).catch(() => {});
+    try {
+      await unlink(entry.temporary);
+    } catch (cleanupError) {
+      if (cleanupError?.code !== "ENOENT") {
+        cleanupWarnings.push(
+          `Confidential temporary duplicate remains at ${entry.temporary}: ${cleanupError.message}`,
+        );
+      }
+    }
+    if (entry.backup) {
+      try {
+        await unlink(entry.backup);
+        entry.backup = "";
+      } catch (cleanupError) {
+        if (cleanupError?.code !== "ENOENT") {
+          cleanupWarnings.push(
+            `Confidential overwrite backup remains at ${entry.backup}: ${cleanupError.message}`,
+          );
+        }
+      }
+    }
   }
-  return prepared.map((entry) => entry.resolved);
+  return {
+    paths: prepared.map((entry) => entry.resolved),
+    cleanupWarnings,
+  };
 }
 
 function sameSalesforceAccountId(left, right) {
@@ -3066,6 +3632,12 @@ async function assertSalesforceRevalidationCurrent({
       "Salesforce must be revalidated after the current contextual preview.",
     );
   }
+  if (Date.now() - Date.parse(receipt.verifiedAt) > MAX_BUILD_REVALIDATION_AGE_MS) {
+    throw new ContextEnricherError(
+      "STALE_SALESFORCE_REVALIDATION",
+      "Salesforce revalidation is more than 60 minutes old; re-run the read-only revalidation before build.",
+    );
+  }
   if (
     receipt.mappingReportPath !== mappingReceipt.path ||
     receipt.mappingReportDigest !== mappingReceipt.digest ||
@@ -3178,18 +3750,44 @@ function dashboardMeaningPresent(dashboard, targetPath) {
   return isPlainObject(value) ? Object.values(value).some(hasText) : hasText(value);
 }
 
-function proposalCoversTarget(proposals, targetPath) {
-  return proposals.some((proposal) =>
+function proposalCoversTarget(dashboard, proposals, targetPath) {
+  const candidates = proposals.filter((proposal) =>
     ["eligible", "no-change"].includes(proposal.disposition) &&
     (
       proposal.targetPath === targetPath ||
       targetPath.endsWith("/utilization") && proposal.targetPath.startsWith(`${targetPath}/`) ||
       targetPath === "/health" && proposal.targetPath.startsWith("/health/")
     ));
+  if (!candidates.length) return false;
+  if (!["/health", "/motionAnswers", "/metrics/utilization", PRODUCT_FORECAST_TARGET].includes(targetPath)) {
+    return true;
+  }
+  const simulationProposals = targetPath === "/motionAnswers"
+    ? [
+        ...proposals.filter((proposal) =>
+          ["eligible", "no-change"].includes(proposal.disposition) && proposal.targetPath === "/motion"),
+        ...candidates,
+      ]
+    : candidates;
+  try {
+    const simulated = deepClone(dashboard);
+    applyApprovedProposals(simulated, simulationProposals);
+    return dashboardMeaningPresent(simulated, targetPath);
+  } catch {
+    return false;
+  }
 }
 
-function attestationStatusByPolicy(attestations) {
-  return new Map((attestations?.records ?? []).map((record) => [record.policyKey, record]));
+function activeAttestationRecords(attestations, coverageMode, referenceTime) {
+  const mode = normalizeCoverageMode(coverageMode);
+  if (mode !== MAXIMUM_COVERAGE_MODE) return attestations?.records ?? [];
+  const reference = Date.parse(referenceTime);
+  return (attestations?.records ?? []).filter((record) =>
+    !(
+      record.status === "answered" &&
+      VOLATILE_ATTESTATION_POLICY_KEYS.has(record.policyKey) &&
+      reference - Date.parse(record.answeredAt) >= MAXIMUM_VOLATILE_ATTESTATION_AGE_MS
+    ));
 }
 
 export function createQuestionPlan({
@@ -3198,8 +3796,12 @@ export function createQuestionPlan({
   inputDigest,
   sourceEvidenceDigest,
   attestations = null,
+  coverageMode = STRICT_COVERAGE_MODE,
+  referenceTime = new Date().toISOString(),
 }) {
-  const answeredByPolicy = attestationStatusByPolicy(attestations);
+  const mode = normalizeCoverageMode(coverageMode);
+  const activeRecords = activeAttestationRecords(attestations, mode, referenceTime);
+  const answeredByPolicy = new Map(activeRecords.map((record) => [record.policyKey, record]));
   const resolved = new Set();
   for (const [policyKey, policy] of Object.entries(FIELD_POLICY_MAP)) {
     if (answeredByPolicy.has(policyKey)) {
@@ -3209,7 +3811,7 @@ export function createQuestionPlan({
     if (
       policy.targetPaths.length &&
       policy.targetPaths.every((targetPath) =>
-        dashboardMeaningPresent(dashboard, targetPath) || proposalCoversTarget(proposals, targetPath))
+        dashboardMeaningPresent(dashboard, targetPath) || proposalCoversTarget(dashboard, proposals, targetPath))
     ) {
       resolved.add(policyKey);
     }
@@ -3219,14 +3821,17 @@ export function createQuestionPlan({
     .map(([key]) => key);
   const decisionCriticalComplete = decisionCriticalKeys.every((key) => resolved.has(key));
   const optionalGate = answeredByPolicy.get("optionalPass");
-  const optionalEnabled = optionalGate?.status === "answered" && /^yes\b/iu.test(optionalGate.response.trim());
+  if (mode === MAXIMUM_COVERAGE_MODE && decisionCriticalComplete) resolved.add("optionalPass");
+  const optionalEnabled = mode === MAXIMUM_COVERAGE_MODE
+    ? decisionCriticalComplete
+    : optionalGate?.status === "answered" && /^yes\b/iu.test(optionalGate.response.trim());
   const optionalDeclined = optionalGate && !optionalEnabled;
   const questions = [];
   for (const [policyKey, policy] of Object.entries(FIELD_POLICY_MAP)) {
     if (resolved.has(policyKey)) continue;
     if (policy.dependencies.some((dependency) => !resolved.has(dependency))) continue;
-    if (policy.phase === "optional-gate" && !decisionCriticalComplete) continue;
-    if (["supporting", "optional"].includes(policy.phase) && !optionalEnabled) continue;
+    if (policy.phase === "optional-gate" && (mode === MAXIMUM_COVERAGE_MODE || !decisionCriticalComplete)) continue;
+    if (["supporting", "optional"].includes(policy.phase) && (!decisionCriticalComplete || !optionalEnabled)) continue;
     if (optionalDeclined && ["supporting", "optional", "optional-gate"].includes(policy.phase)) continue;
     const questionId = questionIdFor(policyKey, inputDigest, sourceEvidenceDigest);
     questions.push({
@@ -3246,15 +3851,16 @@ export function createQuestionPlan({
   questions.sort((left, right) => left.priority - right.priority || left.questionId.localeCompare(right.questionId));
   const payload = {
     kind: QUESTION_PLAN_KIND,
+    coverageMode: mode,
     questions,
     nextQuestionIds: questions.slice(0, 3).map((item) => item.questionId),
     summary: {
       decisionCriticalComplete,
-      optionalOffered: Boolean(optionalGate) || questions.some((item) => item.policyKey === "optionalPass"),
+      optionalOffered: mode === MAXIMUM_COVERAGE_MODE || Boolean(optionalGate) || questions.some((item) => item.policyKey === "optionalPass"),
       optionalEnabled,
-      accepted: (attestations?.records ?? []).filter((item) => item.status === "answered").length,
-      skipped: (attestations?.records ?? []).filter((item) => item.status === "skipped").length,
-      unknown: (attestations?.records ?? []).filter((item) => item.status === "unknown").length,
+      accepted: activeRecords.filter((item) => item.status === "answered").length,
+      skipped: activeRecords.filter((item) => item.status === "skipped").length,
+      unknown: activeRecords.filter((item) => item.status === "unknown").length,
       unresolved: questions.length,
     },
   };
@@ -3263,15 +3869,17 @@ export function createQuestionPlan({
 }
 
 function validateQuestionPlan(plan, inputDigest, sourceEvidenceDigest) {
-  assertExactKeys(plan, ["kind", "questions", "nextQuestionIds", "summary", "digest"], "preview.questionPlan");
+  assertExactKeys(plan, ["kind", "coverageMode", "questions", "nextQuestionIds", "summary", "digest"], "preview.questionPlan");
   if (plan.kind !== QUESTION_PLAN_KIND || plan.digest !== digestObject({
     kind: plan.kind,
+    coverageMode: plan.coverageMode,
     questions: plan.questions,
     nextQuestionIds: plan.nextQuestionIds,
     summary: plan.summary,
   })) {
     throw new ContextEnricherError("QUESTION_PLAN_TAMPERED", "Question plan kind or digest is invalid.");
   }
+  normalizeCoverageMode(plan.coverageMode);
   if (!Array.isArray(plan.questions) || plan.nextQuestionIds.length > 3) {
     throw new ContextEnricherError("INVALID_QUESTION_PLAN", "Question plan must contain questions and at most three next IDs.");
   }
@@ -3372,12 +3980,29 @@ async function assertClarificationPreviewCurrent(preview) {
   ) {
     throw new ContextEnricherError("STALE_PREVIEW", "Clarification proposals do not match the current dashboard and evidence.");
   }
-  const canonicalPlan = createQuestionPlan({
+  const canonicalSelection = selectMaximumCoverageProposals(
     dashboard,
     proposals,
+    preview.coverageMode,
+    preview.createdAt,
+  );
+  if (stableStringify(canonicalSelection) !== stableStringify(preview.maximumCoverageSelection)) {
+    throw new ContextEnricherError(
+      "COVERAGE_SELECTION_TAMPERED",
+      "Maximum-coverage selection does not match the current dashboard and proposals.",
+    );
+  }
+  const questionProposals = preview.coverageMode === MAXIMUM_COVERAGE_MODE
+    ? proposals.filter((proposal) => canonicalSelection.includedProposalIds.includes(proposal.proposalId))
+    : proposals;
+  const canonicalPlan = createQuestionPlan({
+    dashboard,
+    proposals: questionProposals,
     inputDigest: preview.input.digest,
     sourceEvidenceDigest: preview.evidence.contextDigest,
     attestations,
+    coverageMode: preview.coverageMode,
+    referenceTime: preview.createdAt,
   });
   if (stableStringify(canonicalPlan) !== stableStringify(preview.questionPlan)) {
     throw new ContextEnricherError(
@@ -3423,10 +4048,19 @@ export async function createAttestationBundle({
     throw new ContextEnricherError("STALE_ATTESTATION", "Prior attestations do not match the current account, dashboard, or source evidence.");
   }
   const records = [...(prior?.records ?? [])];
-  const priorQuestions = new Set(records.map((item) => item.questionId));
   for (const answer of normalizedAnswers.answers) {
-    if (priorQuestions.has(answer.questionId)) {
-      throw new ContextEnricherError("DUPLICATE_ATTESTATION", `Question ${answer.questionId} was already recorded.`);
+    const priorIndex = records.findIndex((item) => item.questionId === answer.questionId);
+    if (priorIndex >= 0) {
+      const priorRecord = records[priorIndex];
+      const renewable = preview.coverageMode === MAXIMUM_COVERAGE_MODE &&
+        priorRecord.status === "answered" &&
+        VOLATILE_ATTESTATION_POLICY_KEYS.has(priorRecord.policyKey) &&
+        Date.parse(normalizedAnswers.answeredAt) - Date.parse(priorRecord.answeredAt) >=
+          MAXIMUM_VOLATILE_ATTESTATION_AGE_MS;
+      if (!renewable) {
+        throw new ContextEnricherError("DUPLICATE_ATTESTATION", `Question ${answer.questionId} was already recorded.`);
+      }
+      records.splice(priorIndex, 1);
     }
     const policy = FIELD_POLICY_MAP[answer.question.policyKey];
     const responseDigest = digestObject({ status: answer.status, response: answer.response });
@@ -3477,18 +4111,17 @@ export async function createPreviewDocument({
   evidencePath,
   attestations = null,
   attestationsPath = "",
+  coverageMode = STRICT_COVERAGE_MODE,
   createdAt = new Date().toISOString(),
 }) {
+  const mode = normalizeCoverageMode(coverageMode);
   await strictValidateDashboard(dashboard);
   const salesforceReceipt = await loadSalesforceMappingReceipt(salesforceReportPath);
   const canonicalInputPath = await canonicalPath(inputPath);
-  if (
-    salesforceReceipt.dashboardOutput !== canonicalInputPath &&
-    !String(dashboard.sourceNotes ?? "").includes("[DAY2-EVIDENCE:")
-  ) {
+  if (salesforceReceipt.dashboardOutput !== canonicalInputPath) {
     throw new ContextEnricherError(
       "SALESFORCE_RECEIPT_MISMATCH",
-      "The contextual input is neither the Salesforce child output nor a prior contextual derivative with retained provenance.",
+      "The contextual input path is not the exact dashboard output bound to the Salesforce mapping report. Re-run the Salesforce child layer for this input.",
     );
   }
   const salesforceBase = validateDashboardIdentity(dashboard, ledger, salesforceReceipt);
@@ -3512,12 +4145,23 @@ export async function createPreviewDocument({
     throw new ContextEnricherError("STALE_ATTESTATION", "Attestations do not match the current dashboard, evidence, or Salesforce identity.");
   }
   const prepared = await prepareProposals(dashboard, ledger, inputDigest);
+  const maximumCoverageSelection = selectMaximumCoverageProposals(
+    dashboard,
+    prepared,
+    mode,
+    createdAt,
+  );
+  const questionProposals = mode === MAXIMUM_COVERAGE_MODE
+    ? prepared.filter((proposal) => maximumCoverageSelection.includedProposalIds.includes(proposal.proposalId))
+    : prepared;
   const questionPlan = createQuestionPlan({
     dashboard,
-    proposals: prepared,
+    proposals: questionProposals,
     inputDigest,
     sourceEvidenceDigest: evidenceContextDigest(ledger),
     attestations,
+    coverageMode: mode,
+    referenceTime: createdAt,
   });
   const warnings = [];
   if (ledger.items.some((item) => item.potentialPromptInjection)) {
@@ -3534,6 +4178,8 @@ export async function createPreviewDocument({
     kind: PREVIEW_KIND,
     dashboardSchemaVersion: DASHBOARD_SCHEMA_VERSION,
     policyVersion: POLICY_VERSION,
+    coverageMode: mode,
+    coveragePolicyVersion: mode === MAXIMUM_COVERAGE_MODE ? MAXIMUM_COVERAGE_POLICY_VERSION : "",
     createdAt,
     account: {
       salesforceOrgId: ledger.account.salesforceOrgId,
@@ -3571,6 +4217,7 @@ export async function createPreviewDocument({
     gaps: deepClone(ledger.gaps),
     warnings,
     unsubstantiatedGreenPaths,
+    maximumCoverageSelection,
     questionPlan,
   };
   preview.integrityDigest = digestObject(previewIntegrityPayload(preview));
@@ -3582,6 +4229,8 @@ export function validatePreviewDocument(preview) {
     "kind",
     "dashboardSchemaVersion",
     "policyVersion",
+    "coverageMode",
+    "coveragePolicyVersion",
     "createdAt",
     "account",
     "input",
@@ -3594,6 +4243,7 @@ export function validatePreviewDocument(preview) {
     "gaps",
     "warnings",
     "unsubstantiatedGreenPaths",
+    "maximumCoverageSelection",
     "questionPlan",
     "integrityDigest",
   ];
@@ -3603,6 +4253,13 @@ export function validatePreviewDocument(preview) {
   }
   if (preview.dashboardSchemaVersion !== DASHBOARD_SCHEMA_VERSION || preview.policyVersion !== POLICY_VERSION) {
     throw new ContextEnricherError("STALE_PREVIEW", "Preview schema or policy version is stale.");
+  }
+  const coverageMode = normalizeCoverageMode(preview.coverageMode);
+  const expectedCoveragePolicy = coverageMode === MAXIMUM_COVERAGE_MODE
+    ? MAXIMUM_COVERAGE_POLICY_VERSION
+    : "";
+  if (preview.coveragePolicyVersion !== expectedCoveragePolicy) {
+    throw new ContextEnricherError("STALE_PREVIEW", "Preview coverage policy version is stale.");
   }
   requireIsoDateTime(preview.createdAt, "preview.createdAt");
   assertNotFuture(preview.createdAt, "preview.createdAt");
@@ -3622,7 +4279,40 @@ export function validatePreviewDocument(preview) {
   if (Boolean(preview.attestations.path) !== Boolean(preview.attestations.digest)) {
     throw new ContextEnricherError("INVALID_PREVIEW", "Preview attestation path and digest must both be present or blank.");
   }
+  validateCoverageSelection(preview.maximumCoverageSelection, coverageMode);
+  const proposalById = new Map(preview.proposals.map((proposal) => [proposal.proposalId, proposal]));
+  const includedCoverageIds = new Set(preview.maximumCoverageSelection.includedProposalIds);
+  const excludedCoverageIds = new Set(
+    preview.maximumCoverageSelection.excluded.map((item) => item.proposalId),
+  );
+  if (excludedCoverageIds.size !== preview.maximumCoverageSelection.excluded.length) {
+    throw new ContextEnricherError("INVALID_PREVIEW", "Coverage selection contains duplicate exclusions.");
+  }
+  if (coverageMode === STRICT_COVERAGE_MODE && (includedCoverageIds.size || excludedCoverageIds.size)) {
+    throw new ContextEnricherError("INVALID_PREVIEW", "Strict coverage cannot carry an automatic proposal selection.");
+  }
+  if (coverageMode === MAXIMUM_COVERAGE_MODE) {
+    const selectedIds = new Set([...includedCoverageIds, ...excludedCoverageIds]);
+    if (
+      selectedIds.size !== preview.proposals.length ||
+      preview.proposals.some((proposal) => !selectedIds.has(proposal.proposalId)) ||
+      [...includedCoverageIds].some((id) => excludedCoverageIds.has(id))
+    ) {
+      throw new ContextEnricherError(
+        "INVALID_PREVIEW",
+        "Maximum coverage must classify every proposal exactly once as included or excluded.",
+      );
+    }
+    for (const exclusion of preview.maximumCoverageSelection.excluded) {
+      if (proposalById.get(exclusion.proposalId)?.targetPath !== exclusion.targetPath) {
+        throw new ContextEnricherError("INVALID_PREVIEW", "Coverage exclusion target does not match its proposal.");
+      }
+    }
+  }
   validateQuestionPlan(preview.questionPlan, preview.input.digest, preview.evidence.contextDigest);
+  if (preview.questionPlan.coverageMode !== coverageMode) {
+    throw new ContextEnricherError("QUESTION_PLAN_TAMPERED", "Question plan coverage mode does not match the preview.");
+  }
   if (preview.integrityDigest !== digestObject(previewIntegrityPayload(preview))) {
     throw new ContextEnricherError("PREVIEW_TAMPERED", "Preview integrity digest does not match its contents.");
   }
@@ -3632,11 +4322,17 @@ export function validatePreviewDocument(preview) {
 function assertFreshEvidence(ledger, preview, approvedProposals) {
   const previewTime = Date.parse(preview.createdAt);
   const collectionTime = Date.parse(ledger.scope.collectedAt);
+  const buildTime = Date.now();
   for (const run of ledger.scope.discoveryRuns) {
-    if (!run.verifiedAt || Date.parse(run.verifiedAt) <= Math.max(previewTime, collectionTime)) {
+    const verificationTime = Date.parse(run.verifiedAt);
+    if (
+      !run.verifiedAt ||
+      verificationTime <= Math.max(previewTime, collectionTime) ||
+      buildTime - verificationTime > MAX_BUILD_REVALIDATION_AGE_MS
+    ) {
       throw new ContextEnricherError(
         "STALE_DISCOVERY",
-        `Discovery for ${run.sourceType} was not re-run after preview and the recorded collection.`,
+        `Discovery for ${run.sourceType} was not re-run after preview or is more than 60 minutes old.`,
       );
     }
   }
@@ -3644,10 +4340,30 @@ function assertFreshEvidence(ledger, preview, approvedProposals) {
   for (const item of ledger.items) {
     if (!requiredEvidenceIds.has(item.evidenceId)) continue;
     const freshnessFloor = Math.max(previewTime, collectionTime, Date.parse(item.retrievedAt));
-    if (!item.verifiedAt || Date.parse(item.verifiedAt) <= freshnessFloor) {
+    const verificationTime = Date.parse(item.verifiedAt);
+    if (
+      !item.verifiedAt ||
+      verificationTime <= freshnessFloor ||
+      buildTime - verificationTime > MAX_BUILD_REVALIDATION_AGE_MS
+    ) {
       throw new ContextEnricherError(
         "STALE_EVIDENCE",
-        `Evidence ${item.evidenceId} was not re-fetched or re-confirmed after preview, collection, and retrieval.`,
+        `Evidence ${item.evidenceId} was not re-fetched after preview or its verification is more than 60 minutes old.`,
+      );
+    }
+  }
+  if (preview.coverageMode === MAXIMUM_COVERAGE_MODE) {
+    const volatileRefs = new Set(approvedProposals
+      .filter((proposal) =>
+        proposal.targetPath === "/relationships" || proposal.targetPath.startsWith("/health/"))
+      .flatMap((proposal) => proposal.evidenceRefs));
+    const staleAttestation = (ledger.attestationItems ?? []).find((item) =>
+      volatileRefs.has(item.ref) &&
+      buildTime - Date.parse(item.modifiedAt) >= MAXIMUM_VOLATILE_ATTESTATION_AGE_MS);
+    if (staleAttestation) {
+      throw new ContextEnricherError(
+        "STALE_ATTESTATION",
+        "Maximum-coverage health and relationship attestations must still be less than 24 hours old at build.",
       );
     }
   }
@@ -3686,16 +4402,71 @@ function validateApprovedHealth(dashboard, proposals) {
       ) {
         throw new ContextEnricherError(
           "INCOMPLETE_GREEN_HEALTH",
-          `Attested Green health.${key} requires separately approved status and evidence proposals.`,
+          `Attested Green health.${key} requires separate accepted status and evidence proposals.`,
         );
       }
     }
   }
 }
 
-function provenanceBlock(ledger, proposals) {
+function validateApprovedCadence(
+  dashboard,
+  proposals,
+  referenceDate,
+  temporalMismatchCode = "CADENCE_TIME_MISMATCH",
+) {
+  const cadenceProposals = proposals.filter((proposal) =>
+    proposal.targetPath.startsWith("/executiveCadence/"));
+  if (!cadenceProposals.length) return;
+  const { type, date } = dashboard.executiveCadence;
+  if (!hasText(type) || !isRealIsoDate(date)) {
+    throw new ContextEnricherError(
+      "INCOMPLETE_EXECUTIVE_CADENCE",
+      "Approved cadence changes must leave both an explicit type and exact ISO date.",
+    );
+  }
+  const expectedToken = /Qbr$/u.test(type) ? "QBR" : "EBC";
+  if (!cadenceProposals.some((proposal) =>
+    proposal.evidence.some((item) => item.cadenceTokens.includes(expectedToken)))) {
+    throw new ContextEnricherError(
+      "CADENCE_EVIDENCE_MISMATCH",
+      `Approved cadence evidence does not explicitly identify ${expectedToken}.`,
+    );
+  }
+  if (
+    type.startsWith("next") &&
+    cadenceProposals.some((proposal) => proposal.claimClass !== "meeting-scheduled")
+  ) {
+    throw new ContextEnricherError(
+      "CADENCE_TIME_MISMATCH",
+      "Approved next cadence requires meeting-scheduled evidence.",
+    );
+  }
+  if (
+    type.startsWith("last") && date > referenceDate ||
+    type.startsWith("next") && date < referenceDate
+  ) {
+    throw new ContextEnricherError(
+      temporalMismatchCode,
+      "Approved cadence last/next meaning no longer matches its date; create a fresh preview.",
+    );
+  }
+}
+
+function provenanceBlock(
+  ledger,
+  proposals,
+  coverageMode = STRICT_COVERAGE_MODE,
+  dashboard,
+) {
   if (!proposals.length) return { marker: "", block: "" };
+  const mode = normalizeCoverageMode(coverageMode);
   const buildKey = sha256(stableStringify({
+    policyVersion: POLICY_VERSION,
+    maximumCoveragePolicyVersion: mode === MAXIMUM_COVERAGE_MODE
+      ? MAXIMUM_COVERAGE_POLICY_VERSION
+      : "",
+    coverageMode: mode,
     orgId: ledger.account.salesforceOrgId,
     accountId: ledger.account.salesforceAccountId,
     acceptedFacts: proposals.map((proposal) => ({
@@ -3704,9 +4475,14 @@ function provenanceBlock(ledger, proposals) {
       value: proposal.value,
       semanticKey: proposal.semanticKey,
       evidenceIds: proposal.evidenceIds,
+      claimClass: proposal.claimClass,
+      claimAnnotations: proposal.claimAnnotations,
     })).sort((left, right) => stableStringify(left).localeCompare(stableStringify(right))),
   })).slice(0, 16);
-  const marker = `DAY2-EVIDENCE:${buildKey}`;
+  const markerPrefix = mode === MAXIMUM_COVERAGE_MODE
+    ? "DAY2-DRAFT-EVIDENCE"
+    : "DAY2-EVIDENCE";
+  const marker = `${markerPrefix}:${buildKey}`;
   const rows = proposals.map((proposal) => {
     const evidence = proposal.evidence
       .map((item) => `${item.evidenceId}/${item.sourceType}/${item.occurredAt || "undated"}`)
@@ -3719,26 +4495,120 @@ function provenanceBlock(ledger, proposals) {
     block: [
       `[${marker}]`,
       `Salesforce scope: ${ledger.account.salesforceOrgId} / ${ledger.account.salesforceAccountId}`,
-      "Accepted contextual evidence:",
+      `Dashboard digest: ${dashboardProvenanceDigest(dashboard)}`,
+      mode === MAXIMUM_COVERAGE_MODE
+        ? "Evidence-backed proposals included by maximum-coverage draft policy:"
+        : "Accepted contextual evidence:",
       ...rows,
       `[/${marker}]`,
     ].join("\n"),
   };
 }
 
-function appendCompactProvenance(existingNotes, ledger, proposals) {
-  const { marker, block } = provenanceBlock(ledger, proposals);
+function appendCompactProvenance(
+  existingNotes,
+  ledger,
+  proposals,
+  coverageMode = STRICT_COVERAGE_MODE,
+  dashboard,
+) {
+  const { marker, block } = provenanceBlock(ledger, proposals, coverageMode, dashboard);
   if (!block) return existingNotes;
-  const openingCount = (String(existingNotes).match(/\[DAY2-EVIDENCE:/g) ?? []).length;
-  const closingCount = (String(existingNotes).match(/\[\/DAY2-EVIDENCE:/g) ?? []).length;
+  const openingCount = (String(existingNotes).match(/\[DAY2-(?:DRAFT-)?EVIDENCE:/g) ?? []).length;
+  const closingCount = (String(existingNotes).match(/\[\/DAY2-(?:DRAFT-)?EVIDENCE:/g) ?? []).length;
   if (openingCount !== closingCount) {
     throw new ContextEnricherError(
       "MALFORMED_PROVENANCE",
       "sourceNotes contains a malformed Day 2 evidence marker. Repair it before building.",
     );
   }
-  if (String(existingNotes).includes(`[${marker}]`)) return existingNotes;
+  if (String(existingNotes).includes(`[${marker}]`)) {
+    const escapedMarker = marker.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const existingBlockPattern = new RegExp(`\\[${escapedMarker}\\][\\s\\S]*?\\[\\/${escapedMarker}\\]`, "u");
+    if (!existingBlockPattern.test(String(existingNotes))) {
+      throw new ContextEnricherError(
+        "MALFORMED_PROVENANCE",
+        "sourceNotes contains an incomplete Day 2 evidence block. Repair it before building.",
+      );
+    }
+    return String(existingNotes).replace(existingBlockPattern, block);
+  }
   return [String(existingNotes).trim(), block].filter(Boolean).join("\n\n");
+}
+
+export function collectDashboardCoverageGaps(dashboard) {
+  const gaps = [];
+  const pointerSegment = (value) => String(value).replace(/~/gu, "~0").replace(/\//gu, "~1");
+  const checkString = (value, targetPath) => {
+    if (!hasText(value)) gaps.push(targetPath);
+  };
+  for (const key of [
+    "customerName",
+    "tagline",
+    "segment",
+    "motion",
+    "currentArr",
+    "renewalDate",
+    "deploymentType",
+    "deliveryModel",
+    "soldProducts",
+    "useCases",
+    "statusSummary",
+    "sourceNotes",
+  ]) checkString(dashboard[key], `/${key}`);
+  for (const metric of METRIC_KEYS) {
+    checkString(dashboard.metrics[metric].value, `/metrics/${metric}/value`);
+    checkString(dashboard.metrics[metric].note, `/metrics/${metric}/note`);
+  }
+  for (const key of UTILIZATION_KEYS) {
+    checkString(dashboard.metrics.utilization[key], `/metrics/utilization/${key}`);
+  }
+  for (const key of HEALTH_KEYS) {
+    for (const field of ["status", "evidence", "mitigation", "owner"]) {
+      checkString(dashboard.health[key][field], `/health/${key}/${field}`);
+    }
+  }
+  if (!hasText(dashboard.executiveCadence.type) || !hasText(dashboard.executiveCadence.date)) {
+    gaps.push("/executiveCadence/type", "/executiveCadence/date");
+  }
+  for (const question of MOTION_QUESTION_GROUPS[dashboard.motion] ?? []) {
+    checkString(dashboard.motionAnswers[question], `/motionAnswers/${pointerSegment(question)}`);
+  }
+  const arrayFields = [
+    ["goals", ["text", "target", "owner"]],
+    ["cadenceGoals", ["label", "target", "date", "owner", "status"]],
+    ["workstreams", ["name", "owner", "risk", "milestones", "outcomes"]],
+    ["relationships", ["uipathName", "uipathRole", "customerName", "customerRole", "note"]],
+    ["eltAsks", ["type", "owner", "ask", "status"]],
+    ["timeline", ["date", "title", "description", "status"]],
+  ];
+  for (const [arrayKey, fields] of arrayFields) {
+    if (!dashboard[arrayKey].length) gaps.push(`/${arrayKey}`);
+    dashboard[arrayKey].forEach((row, index) => {
+      fields.forEach((field) => checkString(row[field], `/${arrayKey}/${index}/${field}`));
+    });
+  }
+  checkString(dashboard.consumptionPlan.asOf, "/consumptionPlan/asOf");
+  checkString(dashboard.consumptionPlan.forecastPeriod, "/consumptionPlan/forecastPeriod");
+  if (!dashboard.consumptionPlan.groups.length) gaps.push("/consumptionPlan/groups");
+  dashboard.consumptionPlan.groups.forEach((group, groupIndex) => {
+    checkString(group.element, `/consumptionPlan/groups/${groupIndex}/element`);
+    if (!group.rows.length) gaps.push(`/consumptionPlan/groups/${groupIndex}/rows`);
+    group.rows.forEach((row, rowIndex) => {
+      const base = `/consumptionPlan/groups/${groupIndex}/rows/${rowIndex}`;
+      for (const field of ["product", "purchased", "utilization", "comments"]) {
+        checkString(row[field], `${base}/${field}`);
+      }
+      if (!hasText(row.utilizationStatus) || row.utilizationStatus === "Unset") {
+        gaps.push(`${base}/utilizationStatus`);
+      }
+      for (const quarter of ["q1", "q2", "q3", "q4"]) {
+        checkString(row.forecast[quarter], `${base}/forecast/${quarter}`);
+      }
+    });
+  });
+  if (!dashboard.sources.length) gaps.push("/sources");
+  return [...new Set(gaps)].sort();
 }
 
 export function evaluateReadiness(dashboard) {
@@ -3906,17 +4776,28 @@ function sanitizeReportText(value, max = 400) {
     .join("");
 }
 
-function renderAcceptedEvidenceInventory(ledger, acceptedProposals) {
+function renderAcceptedEvidenceInventory(
+  ledger,
+  acceptedProposals,
+  title = "Accepted evidence inventory",
+) {
   const acceptedEvidenceIds = new Set(acceptedProposals.flatMap((proposal) => proposal.evidenceIds));
   const acceptedItems = ledger.items.filter((item) => acceptedEvidenceIds.has(item.evidenceId));
-  const rows = ["## Accepted evidence inventory", ""];
-  if (!acceptedItems.length) {
+  const acceptedAttestations = (ledger.attestationItems ?? [])
+    .filter((item) => acceptedEvidenceIds.has(item.evidenceId));
+  const rows = [`## ${title}`, ""];
+  if (!acceptedItems.length && !acceptedAttestations.length) {
     rows.push("- None.");
     return rows.join("\n");
   }
   for (const item of acceptedItems) {
     rows.push(
       `- ${sanitizeReportText(item.evidenceId)} — ${sanitizeReportText(item.sourceType)}; source locator retained only in the confidential evidence ledger; author kind ${sanitizeReportText(item.author.kind)}; occurred ${sanitizeReportText(item.occurredAt || "not recorded")}; modified ${sanitizeReportText(item.modifiedAt || "not recorded")}; digest ${sanitizeReportText(item.contentDigest)}; account match ${item.accountMatch.signals.map((signal) => sanitizeReportText(signal)).join(", ")} (${sanitizeReportText(item.accountMatch.rationale)}); claim ${sanitizeReportText(item.claimClass)}; authority ${sanitizeReportText(item.authority)}${item.limitations.length ? `; limits ${item.limitations.map((limit) => sanitizeReportText(limit)).join("; ")}` : ""}.`,
+    );
+  }
+  for (const item of acceptedAttestations) {
+    rows.push(
+      `- ${sanitizeReportText(item.evidenceId)} — account-team-attestation; policy ${sanitizeReportText(item.policyKey)}; answered ${sanitizeReportText(item.modifiedAt)}; digest ${sanitizeReportText(item.contentDigest)}; response retained only in the confidential attestation bundle${item.limitations.length ? `; limits ${item.limitations.map((limit) => sanitizeReportText(limit)).join("; ")}` : ""}.`,
     );
   }
   return rows.join("\n");
@@ -3947,6 +4828,7 @@ export function createEvidenceReport({
   acceptedProposals,
   dashboard,
 }) {
+  const maximumCoverage = preview.coverageMode === MAXIMUM_COVERAGE_MODE;
   const acceptedIds = new Set(acceptedProposals.map((proposal) => proposal.proposalId));
   const notApproved = preview.proposals.filter((proposal) =>
     ["eligible", "no-change"].includes(proposal.disposition) && !acceptedIds.has(proposal.proposalId));
@@ -3954,6 +4836,7 @@ export function createEvidenceReport({
     ["rejected", "duplicate", "contradicted"].includes(proposal.disposition));
   const readiness = evaluateReadiness(dashboard);
   const greenWarnings = findUnsubstantiatedGreens(dashboard, acceptedProposals);
+  const coverageGaps = collectDashboardCoverageGaps(dashboard);
 
   const sections = [
     `<!-- ${REPORT_KIND} -->`,
@@ -3968,12 +4851,23 @@ export function createEvidenceReport({
     `- Window: ${sanitizeReportText(ledger.scope.windowStart)} through ${sanitizeReportText(ledger.scope.windowEnd)}`,
     `- Selected sources: ${ledger.scope.sources.map((item) => sanitizeReportText(item)).join(", ") || "none"}`,
     `- Private Slack consent: ${ledger.scope.privateSlackConsent ? "Yes, for named scopes only" : "No"}`,
+    `- Coverage mode: ${maximumCoverage ? "maximum evidence-backed draft" : "strict exact approval"}`,
     "",
-    renderProposalTable("Accepted proposals", acceptedProposals),
+    renderProposalTable(
+      maximumCoverage ? "Evidence-backed proposals included in the draft" : "Accepted proposals",
+      acceptedProposals,
+    ),
     "",
-    renderAcceptedEvidenceInventory(ledger, acceptedProposals),
+    renderAcceptedEvidenceInventory(
+      ledger,
+      acceptedProposals,
+      maximumCoverage ? "Evidence inventory included in the draft" : "Accepted evidence inventory",
+    ),
     "",
-    renderProposalTable("Eligible proposals not approved", notApproved),
+    renderProposalTable(
+      maximumCoverage ? "Eligible proposals not included" : "Eligible proposals not approved",
+      notApproved,
+    ),
     "",
     "## Rejected, duplicate, or contradicted proposals",
     "",
@@ -3994,6 +4888,27 @@ export function createEvidenceReport({
   const gaps = [...ledger.gaps, ...ledger.scope.coverageNotes];
   if (!gaps.length) sections.push("- None recorded.");
   else gaps.forEach((item) => sections.push(`- ${sanitizeReportText(item)}`));
+  if (maximumCoverage) {
+    sections.push(
+      "",
+      "## Maximum-coverage draft status",
+      "",
+      `- Included ${acceptedProposals.length} policy-eligible proposal(s) that preserved every populated value and did not manufacture unsupported content.`,
+      `- Excluded ${preview.maximumCoverageSelection.excluded.length} proposal(s) under the preview-bound selector.`,
+      `- ${coverageGaps.length} text/list data path(s) remain unresolved because no qualifying value was available.`,
+      "- Blank fields, empty arrays, and Unset values are intentional evidence gaps—not omissions to replace with Unknown, TBD, or invented facts.",
+    );
+    sections.push("", "### Selector exclusions", "");
+    if (!preview.maximumCoverageSelection.excluded.length) sections.push("- None.");
+    for (const exclusion of preview.maximumCoverageSelection.excluded) {
+      sections.push(
+        `- ${sanitizeReportText(exclusion.proposalId)} ${sanitizeReportText(exclusion.targetPath)}: ${sanitizeReportText(exclusion.reason)}.`,
+      );
+    }
+    sections.push("", "### Unresolved text/list data paths", "");
+    if (!coverageGaps.length) sections.push("- No unresolved text/list data paths were detected.");
+    coverageGaps.forEach((targetPath) => sections.push(`- Unresolved: ${sanitizeReportText(targetPath)}.`));
+  }
   sections.push("", "## Clarification summary", "");
   const clarification = preview.questionPlan.summary;
   sections.push(
@@ -4043,6 +4958,7 @@ export async function buildFromPreview({
   overwrite = false,
 }) {
   validatePreviewDocument(preview);
+  const maximumCoverage = preview.coverageMode === MAXIMUM_COVERAGE_MODE;
   if (preview.attestations.path) {
     if (!attestations) {
       throw new ContextEnricherError("MISSING_ATTESTATION", "This preview requires its bound attestation bundle.");
@@ -4058,6 +4974,12 @@ export async function buildFromPreview({
   }
   if (!Array.isArray(approvedProposalIds)) {
     throw new ContextEnricherError("INVALID_APPROVAL", "approvedProposalIds must be an array.");
+  }
+  if (maximumCoverage && approvedProposalIds.length) {
+    throw new ContextEnricherError(
+      "INVALID_APPROVAL",
+      "Maximum coverage is a preview-bound deterministic draft mode; do not combine it with proposal approvals.",
+    );
   }
   if (new Set(approvedProposalIds).size !== approvedProposalIds.length) {
     throw new ContextEnricherError("INVALID_APPROVAL", "Duplicate proposal approvals are not allowed.");
@@ -4127,8 +5049,23 @@ export async function buildFromPreview({
   ) {
     throw new ContextEnricherError("STALE_PREVIEW", "Current proposals do not match the integrity-checked preview.");
   }
+  const currentCoverageSelection = selectMaximumCoverageProposals(
+    dashboard,
+    currentProposals,
+    preview.coverageMode,
+    preview.createdAt,
+  );
+  if (stableStringify(currentCoverageSelection) !== stableStringify(preview.maximumCoverageSelection)) {
+    throw new ContextEnricherError(
+      "COVERAGE_SELECTION_TAMPERED",
+      "Maximum-coverage proposal selection changed after preview.",
+    );
+  }
   const byId = new Map(currentProposals.map((proposal) => [proposal.proposalId, proposal]));
-  const approved = approvedProposalIds.map((id) => {
+  const selectedProposalIds = maximumCoverage
+    ? currentCoverageSelection.includedProposalIds
+    : approvedProposalIds;
+  const approved = selectedProposalIds.map((id) => {
     const proposal = byId.get(id);
     if (!proposal) {
       throw new ContextEnricherError("UNKNOWN_APPROVAL", `Proposal ${id} is not present in the current preview.`);
@@ -4153,7 +5090,19 @@ export async function buildFromPreview({
   const output = deepClone(dashboard);
   applyApprovedProposals(output, approved);
   validateApprovedHealth(output, approved);
-  output.sourceNotes = appendCompactProvenance(output.sourceNotes, ledger, approved);
+  validateApprovedCadence(
+    output,
+    approved,
+    new Date().toISOString().slice(0, 10),
+    "STALE_CADENCE",
+  );
+  output.sourceNotes = appendCompactProvenance(
+    output.sourceNotes,
+    ledger,
+    approved,
+    preview.coverageMode,
+    output,
+  );
   await strictValidateDashboard(output);
 
   const localSourcePaths = ledger.items
@@ -4172,7 +5121,7 @@ export async function buildFromPreview({
     ],
   );
   const report = createEvidenceReport({ preview, ledger, acceptedProposals: approved, dashboard: output });
-  const [writtenOutputPath, writtenReportPath] = await writeDerivedPairAtomic([
+  const pairWrite = await writeDerivedPairAtomic([
     {
       filePath: outputPath,
       content: `${JSON.stringify(output, null, 2)}\n`,
@@ -4185,16 +5134,24 @@ export async function buildFromPreview({
     },
   ], { overwrite });
 
-  const cleanupWarnings = [];
-  try {
-    await unlink(previewPath);
-  } catch (error) {
-    cleanupWarnings.push(`Could not remove the confidential preview: ${error.message}`);
+  const [writtenOutputPath, writtenReportPath] = pairWrite.paths;
+  const cleanupWarnings = [...pairWrite.cleanupWarnings];
+  if (!maximumCoverage) {
+    try {
+      await unlink(previewPath);
+    } catch (error) {
+      cleanupWarnings.push(`Could not remove the confidential preview: ${error.message}`);
+    }
   }
   return {
     dashboard: output,
     report,
-    acceptedProposalIds: approved.map((proposal) => proposal.proposalId),
+    acceptedProposalIds: maximumCoverage ? [] : approved.map((proposal) => proposal.proposalId),
+    coverageMode: preview.coverageMode,
+    maximumCoverageIncludedProposalIds: maximumCoverage
+      ? approved.map((proposal) => proposal.proposalId)
+      : [],
+    unresolvedCoveragePaths: collectDashboardCoverageGaps(output),
     outputPath: writtenOutputPath,
     reportPath: writtenReportPath,
     readiness: evaluateReadiness(output),

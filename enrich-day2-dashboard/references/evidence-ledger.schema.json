@@ -19,7 +19,7 @@
     "kind": { "const": "day2-evidence-ledger" },
     "version": { "const": "2" },
     "dashboardSchemaVersion": { "const": "1.4" },
-    "policyVersion": { "const": "day2-evidence-policy/v2" },
+    "policyVersion": { "const": "day2-evidence-policy/v3" },
     "account": {
       "type": "object",
       "additionalProperties": false,
