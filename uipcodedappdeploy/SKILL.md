@@ -11,7 +11,7 @@ and deployment are always a separate, human-approved execution.
 
 ## Hard Boundaries
 
-- Never deploy directly from planning arguments. Persist and display the v2.2
+- Never deploy directly from planning arguments. Persist and display the v2.3
   plan, obtain approval of its exact `plan_hash`, then pass that hash through
   `--approved-plan-hash`.
 - Never invent or reuse a target, tenant, organization, folder, OAuth client,
@@ -100,7 +100,7 @@ For alpha, change both target arguments together to `--environment alpha` and
 
 Review all of the following:
 
-- Plan schema `2.2`, explicit environment, plan hash, deployment-binding hash,
+- Plan schema `2.3`, explicit environment, plan hash, deployment-binding hash,
   and input hashes.
 - Three plan-bound `raw-tracked-worktree-v1` digests for the exact initial,
   version-written, and versioned tracked worktree states.
@@ -113,6 +113,12 @@ Review all of the following:
 - The pack command contains no `--base-url`, `--profile`, org, tenant, token, or
   reuse-client flag.
 - Publish and deploy commands use only the reviewed target/profile fields.
+- When package and display names differ, the plan includes a local app-config
+  binding stage after publish. It verifies the CLI-created package, version,
+  type, tenant-feed mode, and system name; atomically binds the approved display
+  title; records the exact config digest; and deploys without the CLI's
+  ambiguous `--name` flag. When the names are identical, deploy uses the exact
+  package name directly.
 - There are no execution blockers.
 
 Planning without `--plan-output` is inspectable but cannot be executed.
@@ -144,8 +150,9 @@ present, its exact project-version-only `uv.lock` update. Any other
 build-generated, tracked, staged, submodule, or untracked drift stops execution.
 It then validates the CLI executable digest/version, authenticated profile
 org/tenant, and package; records the exact produced package file digest;
-rechecks those exact bytes immediately before publish; publishes; deploys; and
-optionally verifies HTTPS. The redacted v2.2 receipt repeats the approved plan
+rechecks those exact bytes immediately before publish; publishes; binds and
+revalidates the CLI-created app config when package/display names differ;
+deploys; and optionally verifies HTTPS. The redacted v2.3 receipt repeats the approved plan
 and release provenance hashes.
 
 ## Resume And Indeterminate Writes
@@ -176,9 +183,10 @@ python3.11 uipcodedappdeploy/scripts/uipcodedappdeploy.py \
 Both are integrity contracts, not signatures. Exact-hash approval is required,
 but the helper does not claim non-repudiation.
 
-Contract `2.2` is intentionally incompatible with `2.1`. Existing `2.1` plans
+Contract `2.3` is intentionally incompatible with `2.2`. Existing `2.2` plans
 and receipts are rejected and must be regenerated; the helper performs no silent
-migration because `2.1` did not bind raw execution bytes.
+migration because `2.2` could not preserve a distinct package lookup name and
+display title through UiPath CLI 1.198.0.
 
 ## Validation
 

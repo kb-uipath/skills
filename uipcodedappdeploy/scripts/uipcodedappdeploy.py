@@ -29,9 +29,9 @@ from urllib.parse import urlsplit
 
 
 PLAN_KIND = "uipcodedappdeploy.plan"
-PLAN_SCHEMA_VERSION = "2.2"
+PLAN_SCHEMA_VERSION = "2.3"
 RECEIPT_KIND = "uipcodedappdeploy.receipt"
-RECEIPT_SCHEMA_VERSION = "2.2"
+RECEIPT_SCHEMA_VERSION = "2.3"
 RESULT_KIND = "uipcodedappdeploy.result"
 RESULT_SCHEMA_VERSION = "1.0"
 STAGING_CONTROL_PLANE_URL = "https://staging.uipath.com"
@@ -48,6 +48,7 @@ TARGET_ENVIRONMENTS = {
 }
 PACKAGE_DIGEST_ALGORITHM = "uipath-coded-app-content-v1"
 RAW_WORKTREE_DIGEST_ALGORITHM = "raw-tracked-worktree-v1"
+APP_CONFIG_RELATIVE_PATH = ".uipath/app.config.json"
 HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 SOURCE_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 PATH_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -58,6 +59,7 @@ GUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+APP_SYSTEM_NAME_RE = re.compile(r"^ID[0-9a-fA-F]{32}$")
 SEMVER_RE = re.compile(
     r"^(0|[1-9][0-9]*)\."
     r"(0|[1-9][0-9]*)\."
@@ -77,6 +79,7 @@ VERSION_ASSIGNMENT_RE = re.compile(
     r"(?P<suffix>\s*(?:#.*)?)(?P<newline>\r?\n?)$"
 )
 PARAMETER_KEYS = {
+    "app_config_binding_hash",
     "app_name",
     "app_type",
     "author",
@@ -923,6 +926,24 @@ def _execution_blockers(
     return blockers
 
 
+def _expected_app_config_binding(
+    *,
+    package_name: str,
+    app_name: str,
+    app_version: str,
+    app_type: str,
+) -> dict[str, Any] | None:
+    if app_name == package_name:
+        return None
+    return {
+        "appName": package_name,
+        "displayName": app_name,
+        "appVersion": app_version,
+        "appType": app_type,
+        "personalWorkspace": False,
+    }
+
+
 def _build_stages(project: dict[str, Any], parameters: dict[str, Any]) -> list[dict[str, Any]]:
     cli = parameters["cli_executable"] or "[MISSING_CLI_EXECUTABLE]"
     stages: list[dict[str, Any]] = [
@@ -1013,8 +1034,6 @@ def _build_stages(project: dict[str, Any], parameters: dict[str, Any]) -> list[d
         cli,
         "codedapp",
         "deploy",
-        "--name",
-        parameters["app_name"],
         "--version",
         project["new_version"],
         "--path-name",
@@ -1027,6 +1046,8 @@ def _build_stages(project: dict[str, Any], parameters: dict[str, Any]) -> list[d
     ]
     if parameters["folder_key"]:
         deploy_command.extend(["--folder-key", parameters["folder_key"]])
+    if parameters["app_config_binding_hash"] is None:
+        deploy_command[3:3] = ["--name", parameters["package_name"]]
     stages.extend(
         [
             {
@@ -1048,14 +1069,24 @@ def _build_stages(project: dict[str, Any], parameters: dict[str, Any]) -> list[d
                 "cwd": ".",
                 "command": publish_command,
             },
-            {
-                "name": "deploy",
-                "action": "command",
-                "effect": "external_write",
-                "cwd": ".",
-                "command": deploy_command,
-            },
         ]
+    )
+    if parameters["app_config_binding_hash"] is not None:
+        stages.append(
+            {
+                "name": "app_config",
+                "action": "bind_app_config",
+                "effect": "project_write",
+            }
+        )
+    stages.append(
+        {
+            "name": "deploy",
+            "action": "command",
+            "effect": "external_write",
+            "cwd": ".",
+            "command": deploy_command,
+        }
     )
     if parameters["verify_url"]:
         stages.append(
@@ -1188,6 +1219,7 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         _fail("--folder-key must be a GUID copied from the target UiPath folder.")
     package_name = _safe_text(args.package_name or metadata["name"], "--package-name")
     app_name = _safe_text(args.app_name or package_name, "--app-name")
+    app_type = args.app_type or "Web"
     author = _safe_text(args.author or metadata["author"], "--author")
     description = _safe_text(
         metadata["description"] if args.description is None else args.description,
@@ -1296,6 +1328,15 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "old_version": old_version,
         "new_version": new_version,
     }
+    app_config_binding = _expected_app_config_binding(
+        package_name=package_name,
+        app_name=app_name,
+        app_version=new_version,
+        app_type=app_type,
+    )
+    app_config_binding_hash = (
+        _hash_json(app_config_binding) if app_config_binding is not None else None
+    )
     cli_profile_hash = (
         _hash_json(
             {
@@ -1310,6 +1351,7 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         else None
     )
     parameters = {
+        "app_config_binding_hash": app_config_binding_hash,
         "environment": environment,
         "control_plane_url": control_plane_url,
         "tenant_name": args.tenant_name,
@@ -1326,7 +1368,7 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "package_digest_algorithm": PACKAGE_DIGEST_ALGORITHM,
         "candidate_package_file_digest": candidate_package_file_digest,
         "app_name": app_name,
-        "app_type": args.app_type or "Web",
+        "app_type": app_type,
         "path_name": path_name,
         "client_id": client_id,
         "tags": tags,
@@ -1349,11 +1391,16 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "verify_timeout": verify_timeout,
     }
     deployment_binding = {
+        "app_config_binding_hash": app_config_binding_hash,
+        "app_name": app_name,
+        "app_type": app_type,
+        "app_version": new_version,
         "environment": environment,
         "cli_profile_hash": cli_profile_hash,
         "cli_executable_sha256": cli_executable_sha256,
         "control_plane_url": control_plane_url,
         "org_id": args.org_id,
+        "package_name": package_name,
         "tenant_id": args.tenant_id,
         "path_name": path_name,
         "client_id": client_id,
@@ -1461,6 +1508,7 @@ def _validate_parameters(root: Path, parameters: Any) -> None:
     if _project_relative_path(root, parameters["dist"], "Plan dist") != parameters["dist"]:
         _fail("Plan dist path is not normalized.")
     for field in (
+        "app_config_binding_hash",
         "dist_digest",
         "package_digest",
         "candidate_package_file_digest",
@@ -1631,12 +1679,30 @@ def _validate_plan_document(plan: Any) -> dict[str, Any]:
         plan["parameters"]["package_name"], project["new_version"]
     ):
         _fail("Plan package_path does not match the package name and version.")
+    expected_app_config = _expected_app_config_binding(
+        package_name=plan["parameters"]["package_name"],
+        app_name=plan["parameters"]["app_name"],
+        app_version=project["new_version"],
+        app_type=plan["parameters"]["app_type"],
+    )
+    expected_app_config_hash = (
+        _hash_json(expected_app_config) if expected_app_config is not None else None
+    )
+    if plan["parameters"]["app_config_binding_hash"] != expected_app_config_hash:
+        _fail(
+            "Plan app_config_binding_hash does not match the package/display-name binding."
+        )
     deployment_binding = {
+        "app_config_binding_hash": plan["parameters"]["app_config_binding_hash"],
+        "app_name": plan["parameters"]["app_name"],
+        "app_type": plan["parameters"]["app_type"],
+        "app_version": project["new_version"],
         "environment": plan["parameters"]["environment"],
         "cli_profile_hash": plan["parameters"]["cli_profile_hash"],
         "cli_executable_sha256": plan["parameters"]["cli_executable_sha256"],
         "control_plane_url": plan["parameters"]["control_plane_url"],
         "org_id": plan["parameters"]["org_id"],
+        "package_name": plan["parameters"]["package_name"],
         "tenant_id": plan["parameters"]["tenant_id"],
         "path_name": plan["parameters"]["path_name"],
         "client_id": plan["parameters"]["client_id"],
@@ -1805,6 +1871,7 @@ def _new_receipt(
             "candidate_package_file_digest"
         ],
         "package_file_digest": None,
+        "app_config_file_digest": None,
         "status": "in_progress",
         "started_at": _utc_now(),
         "updated_at": _utc_now(),
@@ -1843,6 +1910,7 @@ def _validate_receipt(receipt: Any, plan: dict[str, Any]) -> dict[str, Any]:
         "package_digest_algorithm",
         "candidate_package_file_digest",
         "package_file_digest",
+        "app_config_file_digest",
         "status",
         "started_at",
         "updated_at",
@@ -1886,6 +1954,9 @@ def _validate_receipt(receipt: Any, plan: dict[str, Any]) -> dict[str, Any]:
     package_file_digest = receipt["package_file_digest"]
     if package_file_digest is not None:
         _validate_hash(package_file_digest, "Receipt package_file_digest")
+    app_config_file_digest = receipt["app_config_file_digest"]
+    if app_config_file_digest is not None:
+        _validate_hash(app_config_file_digest, "Receipt app_config_file_digest")
     if receipt["status"] not in ("in_progress", "failed", "succeeded"):
         _fail("Receipt status is invalid.")
     if receipt["redaction"] != REDACTION_POLICY:
@@ -1924,6 +1995,17 @@ def _validate_receipt(receipt: Any, plan: dict[str, Any]) -> dict[str, Any]:
         _fail("Receipt is missing the exact package file digest verified before publish.")
     if package_stage["status"] != "succeeded" and package_file_digest is not None:
         _fail("Receipt records a package file digest before package validation succeeded.")
+    app_config_stage = next(
+        (stage for stage in receipt["stages"] if stage["name"] == "app_config"),
+        None,
+    )
+    if app_config_stage is None and app_config_file_digest is not None:
+        _fail("Receipt records an app config digest for a plan without that stage.")
+    if app_config_stage is not None:
+        if app_config_stage["status"] == "succeeded" and app_config_file_digest is None:
+            _fail("Receipt is missing the exact app config digest verified before deploy.")
+        if app_config_stage["status"] != "succeeded" and app_config_file_digest is not None:
+            _fail("Receipt records an app config digest before its binding succeeded.")
     if receipt["status"] == "succeeded" and any(
         status != "succeeded" for status in statuses
     ):
@@ -2557,6 +2639,165 @@ def _validate_package(
     return observed_file
 
 
+def _validate_app_config_metadata(
+    document: dict[str, Any],
+    project: dict[str, Any],
+    parameters: dict[str, Any],
+    *,
+    require_bound_display_name: bool,
+) -> None:
+    allowed_keys = {
+        "appName",
+        "displayName",
+        "appVersion",
+        "systemName",
+        "appUrl",
+        "registeredAt",
+        "appType",
+        "personalWorkspace",
+        "deploymentId",
+        "deployedAt",
+    }
+    unknown = sorted(set(document) - allowed_keys)
+    if unknown:
+        _fail(
+            "UiPath app config contains unsupported fields: " + ", ".join(unknown)
+        )
+    required = {
+        "appName",
+        "displayName",
+        "appVersion",
+        "systemName",
+        "appUrl",
+        "registeredAt",
+        "appType",
+        "personalWorkspace",
+    }
+    missing = sorted(required - set(document))
+    if missing:
+        _fail("UiPath app config is missing fields: " + ", ".join(missing))
+    expected = _expected_app_config_binding(
+        package_name=parameters["package_name"],
+        app_name=parameters["app_name"],
+        app_version=project["new_version"],
+        app_type=parameters["app_type"],
+    )
+    if expected is None or parameters["app_config_binding_hash"] is None:
+        _fail("UiPath app config binding is not enabled for this plan.")
+    for field in ("appName", "appVersion", "appType", "personalWorkspace"):
+        if document[field] != expected[field]:
+            _fail(f"UiPath app config {field} does not match the approved plan.")
+    if (
+        not isinstance(document["displayName"], str)
+        or not document["displayName"].strip()
+    ):
+        _fail("UiPath app config displayName must be a non-empty string.")
+    if require_bound_display_name and document["displayName"] != expected["displayName"]:
+        _fail("UiPath app config displayName changed after its approved binding.")
+    if (
+        not isinstance(document["systemName"], str)
+        or APP_SYSTEM_NAME_RE.fullmatch(document["systemName"]) is None
+    ):
+        _fail("UiPath app config systemName is missing or invalid.")
+    for field in ("registeredAt", "deployedAt"):
+        if field not in document:
+            continue
+        value = document[field]
+        if not isinstance(value, str):
+            _fail(f"UiPath app config {field} must be an ISO-8601 timestamp.")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            _fail(f"UiPath app config {field} must be an ISO-8601 timestamp.")
+        if parsed.tzinfo is None:
+            _fail(f"UiPath app config {field} must include a timezone.")
+    app_url = document["appUrl"]
+    if app_url is not None:
+        _fail("UiPath app config appUrl must be null before deployment.")
+    stale_deployment_fields = sorted(
+        field for field in ("deploymentId", "deployedAt") if field in document
+    )
+    if stale_deployment_fields:
+        _fail(
+            "UiPath app config contains stale deployment metadata: "
+            + ", ".join(stale_deployment_fields)
+        )
+
+
+def _require_regular_app_config(path: Path, label: str) -> None:
+    try:
+        parent_metadata = path.parent.lstat()
+        metadata = path.lstat()
+    except OSError as exc:
+        _fail(f"Could not inspect {label} {path}: {exc}")
+    if not stat.S_ISDIR(parent_metadata.st_mode):
+        _fail(f"{label} parent must be a real directory, not a symlink: {path.parent}")
+    if not stat.S_ISREG(metadata.st_mode):
+        _fail(f"{label} must be a regular non-symlink file: {path}")
+
+
+def _app_config_binding_from_document(document: dict[str, Any]) -> dict[str, Any]:
+    return {
+        field: document[field]
+        for field in (
+            "appName",
+            "displayName",
+            "appVersion",
+            "appType",
+            "personalWorkspace",
+        )
+    }
+
+
+def _bind_app_config(
+    root: Path,
+    project: dict[str, Any],
+    parameters: dict[str, Any],
+) -> str:
+    path = root / APP_CONFIG_RELATIVE_PATH
+    _require_regular_app_config(path, "UiPath app config")
+    document = _load_json_object(path, "UiPath app config")
+    _validate_app_config_metadata(
+        document,
+        project,
+        parameters,
+        require_bound_display_name=False,
+    )
+    document["displayName"] = parameters["app_name"]
+    if _hash_json(_app_config_binding_from_document(document)) != parameters[
+        "app_config_binding_hash"
+    ]:
+        _fail("UiPath app config binding does not match the approved plan.")
+    _atomic_write_json(path, document)
+    return _hash_file(path, "UiPath app config")
+
+
+def _validate_bound_app_config(
+    root: Path,
+    project: dict[str, Any],
+    parameters: dict[str, Any],
+    *,
+    expected_file_digest: str | None = None,
+) -> str:
+    path = root / APP_CONFIG_RELATIVE_PATH
+    _require_regular_app_config(path, "bound UiPath app config")
+    document = _load_json_object(path, "bound UiPath app config")
+    _validate_app_config_metadata(
+        document,
+        project,
+        parameters,
+        require_bound_display_name=True,
+    )
+    if _hash_json(_app_config_binding_from_document(document)) != parameters[
+        "app_config_binding_hash"
+    ]:
+        _fail("Bound UiPath app config does not match the approved plan.")
+    observed = _hash_file(path, "bound UiPath app config")
+    if expected_file_digest is not None and observed != expected_file_digest:
+        _fail("Bound UiPath app config changed before deployment.")
+    return observed
+
+
 def _validate_plan_output_path(path: Path, plan: dict[str, Any]) -> None:
     root = Path(plan["project"]["root"])
     reserved = {
@@ -2632,6 +2873,8 @@ def _execute_stage(
         return None
     if stage["action"] == "validate_package":
         return _validate_package(root, plan["parameters"])
+    if stage["action"] == "bind_app_config":
+        return _bind_app_config(root, plan["project"], plan["parameters"])
     if stage["action"] == "verify_url":
         _verify_url(
             plan["parameters"]["verify_url"],
@@ -2691,6 +2934,18 @@ def _execute_plan(
                 plan["parameters"],
                 expected_file_digest=package_file_digest,
             )
+        if planned_stage["name"] == "deploy" and plan["parameters"][
+            "app_config_binding_hash"
+        ] is not None:
+            app_config_file_digest = receipt["app_config_file_digest"]
+            if app_config_file_digest is None:
+                _fail("Cannot deploy before the exact UiPath app config is bound.")
+            _validate_bound_app_config(
+                root,
+                plan["project"],
+                plan["parameters"],
+                expected_file_digest=app_config_file_digest,
+            )
         stage_receipt["status"] = "running"
         stage_receipt["started_at"] = _utc_now()
         stage_receipt.pop("finished_at", None)
@@ -2730,6 +2985,10 @@ def _execute_plan(
             if not isinstance(stage_result, str) or HASH_RE.fullmatch(stage_result) is None:
                 _fail("Package validation did not return an exact package file digest.")
             receipt["package_file_digest"] = stage_result
+        if planned_stage["name"] == "app_config":
+            if not isinstance(stage_result, str) or HASH_RE.fullmatch(stage_result) is None:
+                _fail("App config binding did not return an exact file digest.")
+            receipt["app_config_file_digest"] = stage_result
         stage_receipt["status"] = "succeeded"
         stage_receipt["finished_at"] = _utc_now()
         stage_receipt.pop("recovery", None)

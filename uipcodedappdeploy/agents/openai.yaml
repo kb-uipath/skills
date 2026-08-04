@@ -1,4 +1,4 @@
 interface:
   display_name: "UiPath Coded App Deploy"
   short_description: "Plan and explicitly deploy UiPath coded apps"
-  default_prompt: "Use $uipcodedappdeploy to validate this coded app, create a v2.2 environment-bound deployment plan with raw tracked-worktree binding, and do not execute until I approve its exact plan hash. Regenerate any v2.1 plan; do not migrate it."
+  default_prompt: "Use $uipcodedappdeploy to validate this coded app, create a v2.3 environment-bound deployment plan with raw tracked-worktree and package/display-name binding, and do not execute until I approve its exact plan hash. Regenerate any v2.2 plan; do not migrate it."
