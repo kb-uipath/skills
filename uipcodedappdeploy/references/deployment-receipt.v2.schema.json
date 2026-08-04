@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://kb-uipath.github.io/skills/uipcodedappdeploy/deployment-receipt.v2.schema.json",
-  "title": "UiPath Coded App Deployment Receipt v2.2",
+  "title": "UiPath Coded App Deployment Receipt v2.3",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -22,6 +22,7 @@
     "package_digest_algorithm",
     "candidate_package_file_digest",
     "package_file_digest",
+    "app_config_file_digest",
     "status",
     "started_at",
     "updated_at",
@@ -34,7 +35,7 @@
       "const": "uipcodedappdeploy.receipt"
     },
     "schema_version": {
-      "const": "2.2"
+      "const": "2.3"
     },
     "environment": {
       "enum": [
@@ -83,6 +84,16 @@
       "$ref": "#/$defs/hash"
     },
     "package_file_digest": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/hash"
+        }
+      ]
+    },
+    "app_config_file_digest": {
       "oneOf": [
         {
           "type": "null"

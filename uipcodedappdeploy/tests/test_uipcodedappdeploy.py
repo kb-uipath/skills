@@ -283,7 +283,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(stderr, "")
             plan = json.loads(stdout)
-            self.assertEqual(plan["schema_version"], "2.2")
+            self.assertEqual(plan["schema_version"], "2.3")
             self.assertRegex(plan["plan_hash"], r"^sha256:[0-9a-f]{64}$")
             self.assertRegex(plan["inputs"]["initial"]["hash"], r"^sha256:[0-9a-f]{64}$")
             self.assertEqual(plan["parameters"]["dist"], "dist")
@@ -1207,7 +1207,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             write_dist(root)
             plan_path, plan = self.create_plan(root)
 
-            self.assertEqual(plan["schema_version"], "2.2")
+            self.assertEqual(plan["schema_version"], "2.3")
             self.assertRegex(
                 plan["deployment_binding_hash"], r"^sha256:[0-9a-f]{64}$"
             )
@@ -1261,6 +1261,229 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             plan_path.write_text(json.dumps(persisted))
             with self.assertRaisesRegex(SystemExit, "deployment_binding_hash"):
                 self.module.main(["--plan", str(plan_path)])
+
+    def test_distinct_display_name_uses_a_bound_cli_app_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            plan_path, plan = self.create_plan(
+                root,
+                extras=["--app-name", "Fixture Display"],
+            )
+
+            parameters = plan["parameters"]
+            self.assertRegex(
+                parameters["app_config_binding_hash"],
+                r"^sha256:[0-9a-f]{64}$",
+            )
+            stage_names = [stage["name"] for stage in plan["stages"]]
+            self.assertLess(stage_names.index("publish"), stage_names.index("app_config"))
+            self.assertLess(stage_names.index("app_config"), stage_names.index("deploy"))
+            deploy = next(stage for stage in plan["stages"] if stage["name"] == "deploy")
+            self.assertNotIn("--name", deploy["command"])
+
+            calls = []
+
+            def fake_run(cmd, cwd, env):
+                calls.append(cmd)
+                if cmd[1:3] == ["codedapp", "publish"]:
+                    config_path = root / self.module.APP_CONFIG_RELATIVE_PATH
+                    config_path.parent.mkdir(parents=True, exist_ok=True)
+                    config_path.write_text(
+                        json.dumps(
+                            {
+                                "appName": "fixture-app",
+                                "displayName": "fixture-app",
+                                "appVersion": "1.2.4",
+                                "systemName": "ID" + "a" * 32,
+                                "appUrl": None,
+                                "registeredAt": "2026-08-04T22:39:09.575Z",
+                                "appType": "Web",
+                                "personalWorkspace": False,
+                            }
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+
+            with mock.patch.object(self.module, "_run", side_effect=fake_run):
+                code, _, _ = self.run_main(self.execution_args(plan_path))
+            self.assertEqual(code, 0)
+            config = json.loads(
+                (root / self.module.APP_CONFIG_RELATIVE_PATH).read_text(encoding="utf-8")
+            )
+            self.assertEqual(config["appName"], "fixture-app")
+            self.assertEqual(config["displayName"], "Fixture Display")
+            deploy_call = next(
+                command for command in calls if command[1:3] == ["codedapp", "deploy"]
+            )
+            self.assertNotIn("--name", deploy_call)
+            receipt = json.loads(
+                self.module._receipt_path(plan_path).read_text(encoding="utf-8")
+            )
+            self.assertRegex(
+                receipt["app_config_file_digest"],
+                r"^sha256:[0-9a-f]{64}$",
+            )
+
+    def test_app_config_plan_and_stage_binding_are_not_editable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            _, plan = self.create_plan(
+                root,
+                extras=["--app-name", "Fixture Display"],
+            )
+
+            binding_tamper = json.loads(json.dumps(plan))
+            binding_tamper["parameters"]["app_config_binding_hash"] = None
+            binding_tamper["plan_hash"] = self.module._document_hash(
+                binding_tamper,
+                "plan_hash",
+            )
+            with self.assertRaisesRegex(SystemExit, "app_config_binding_hash"):
+                self.module._validate_plan_document(binding_tamper)
+
+            stage_tamper = json.loads(json.dumps(plan))
+            stage_tamper["stages"] = [
+                stage for stage in stage_tamper["stages"] if stage["name"] != "app_config"
+            ]
+            stage_tamper["plan_hash"] = self.module._document_hash(
+                stage_tamper,
+                "plan_hash",
+            )
+            with self.assertRaisesRegex(SystemExit, "allowlisted command sequence"):
+                self.module._validate_plan_document(stage_tamper)
+
+    def test_app_config_binding_rejects_untrusted_metadata_and_predeploy_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            plan_path, plan = self.create_plan(
+                root,
+                extras=["--app-name", "Fixture Display"],
+            )
+            config_path = root / self.module.APP_CONFIG_RELATIVE_PATH
+
+            def write_config(**updates):
+                config_path.parent.mkdir(parents=True, exist_ok=True)
+                document = {
+                    "appName": "fixture-app",
+                    "displayName": "fixture-app",
+                    "appVersion": "1.2.4",
+                    "systemName": "ID" + "b" * 32,
+                    "appUrl": None,
+                    "registeredAt": "2026-08-04T22:39:09.575Z",
+                    "appType": "Web",
+                    "personalWorkspace": False,
+                }
+                document.update(updates)
+                config_path.write_text(json.dumps(document) + "\n", encoding="utf-8")
+
+            write_config(accessToken="must-not-be-accepted")
+            with self.assertRaisesRegex(SystemExit, "unsupported fields: accessToken"):
+                self.module._bind_app_config(root, plan["project"], plan["parameters"])
+            write_config(appName="another-package")
+            with self.assertRaisesRegex(SystemExit, "appName does not match"):
+                self.module._bind_app_config(root, plan["project"], plan["parameters"])
+
+            invalid_metadata = (
+                ({"appVersion": "9.9.9"}, "appVersion does not match"),
+                ({"appType": "Action"}, "appType does not match"),
+                ({"personalWorkspace": True}, "personalWorkspace does not match"),
+                ({"systemName": "not-a-system-name"}, "systemName is missing or invalid"),
+                ({"appUrl": "https://example.invalid/app"}, "appUrl must be null"),
+                ({"deploymentId": GUID}, "stale deployment metadata: deploymentId"),
+                (
+                    {"deployedAt": "2026-08-04T22:40:00Z"},
+                    "stale deployment metadata: deployedAt",
+                ),
+            )
+            for updates, message in invalid_metadata:
+                with self.subTest(updates=updates):
+                    write_config(**updates)
+                    with self.assertRaisesRegex(SystemExit, message):
+                        self.module._bind_app_config(
+                            root,
+                            plan["project"],
+                            plan["parameters"],
+                        )
+
+            write_config()
+            symlink_target = root / "untrusted-app-config.json"
+            config_path.replace(symlink_target)
+            config_path.symlink_to(symlink_target)
+            with self.assertRaisesRegex(SystemExit, "regular non-symlink file"):
+                self.module._bind_app_config(root, plan["project"], plan["parameters"])
+            config_path.unlink()
+
+            original_execute_stage = self.module._execute_stage
+            calls = []
+
+            def fake_run(cmd, cwd, env):
+                calls.append(cmd[1:3])
+                if cmd[1:3] == ["codedapp", "publish"]:
+                    write_config()
+
+            def mutate_after_binding(stage, plan_document, env):
+                result = original_execute_stage(stage, plan_document, env)
+                if stage["name"] == "app_config":
+                    document = json.loads(config_path.read_text(encoding="utf-8"))
+                    document["displayName"] = "Tampered Display"
+                    config_path.write_text(json.dumps(document) + "\n", encoding="utf-8")
+                return result
+
+            with mock.patch.object(
+                self.module,
+                "_run",
+                side_effect=fake_run,
+            ), mock.patch.object(
+                self.module,
+                "_execute_stage",
+                side_effect=mutate_after_binding,
+            ):
+                with self.assertRaisesRegex(SystemExit, "displayName changed"):
+                    self.module.main(self.execution_args(plan_path))
+            self.assertNotIn(["codedapp", "deploy"], calls)
+
+    def test_app_config_receipt_digest_and_stage_order_are_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_project(root)
+            write_dist(root)
+            _, plan = self.create_plan(
+                root,
+                extras=["--app-name", "Fixture Display"],
+            )
+            receipt = self.module._new_receipt(plan, plan["plan_hash"])
+            package_index = next(
+                index
+                for index, stage in enumerate(receipt["stages"])
+                if stage["name"] == "package"
+            )
+            app_config_index = next(
+                index
+                for index, stage in enumerate(receipt["stages"])
+                if stage["name"] == "app_config"
+            )
+            for stage in receipt["stages"][: app_config_index + 1]:
+                stage["status"] = "succeeded"
+            receipt["package_file_digest"] = "sha256:" + "1" * 64
+            receipt["receipt_hash"] = self.module._document_hash(receipt, "receipt_hash")
+            with self.assertRaisesRegex(SystemExit, "missing the exact app config digest"):
+                self.module._validate_receipt(receipt, plan)
+
+            receipt["app_config_file_digest"] = "sha256:" + "2" * 64
+            receipt["stages"][package_index], receipt["stages"][app_config_index] = (
+                receipt["stages"][app_config_index],
+                receipt["stages"][package_index],
+            )
+            receipt["receipt_hash"] = self.module._document_hash(receipt, "receipt_hash")
+            with self.assertRaisesRegex(SystemExit, "stages do not match"):
+                self.module._validate_receipt(receipt, plan)
 
     def test_execution_requires_the_exact_explicit_plan_hash_approval(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1439,7 +1662,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             plan_path, plan = self.create_plan(root)
             receipt = self.module._new_receipt(plan, plan["plan_hash"])
 
-            self.assertEqual(receipt["schema_version"], "2.2")
+            self.assertEqual(receipt["schema_version"], "2.3")
             self.assertEqual(receipt["environment"], "staging")
             self.assertEqual(receipt["approved_plan_hash"], plan["plan_hash"])
             self.assertEqual(
@@ -1465,11 +1688,11 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
                 plan["inputs"]["raw_worktree"]["initial"],
             )
 
-    def test_published_v2_2_contract_schemas_cover_generated_documents(self):
+    def test_published_v2_3_contract_schemas_cover_generated_documents(self):
         plan_schema = json.loads(PLAN_SCHEMA.read_text(encoding="utf-8"))
         receipt_schema = json.loads(RECEIPT_SCHEMA.read_text(encoding="utf-8"))
-        self.assertEqual(plan_schema["properties"]["schema_version"]["const"], "2.2")
-        self.assertEqual(receipt_schema["properties"]["schema_version"]["const"], "2.2")
+        self.assertEqual(plan_schema["properties"]["schema_version"]["const"], "2.3")
+        self.assertEqual(receipt_schema["properties"]["schema_version"]["const"], "2.3")
         self.assertFalse(plan_schema["additionalProperties"])
         self.assertFalse(receipt_schema["additionalProperties"])
         self.assertEqual(
@@ -1567,7 +1790,7 @@ class UiPathCodedAppDeployTests(unittest.TestCase):
             plan["plan_hash"] = self.module._document_hash(plan, "plan_hash")
             plan_path.write_text(json.dumps(plan), encoding="utf-8")
 
-            with self.assertRaisesRegex(SystemExit, "expected .*version 2.2.*Regenerate"):
+            with self.assertRaisesRegex(SystemExit, "expected .*version 2.3.*Regenerate"):
                 self.module._load_plan(plan_path)
 
 
