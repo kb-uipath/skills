@@ -2,7 +2,7 @@
   "kind": "day2-evidence-ledger",
   "version": "2",
   "dashboardSchemaVersion": "1.4",
-  "policyVersion": "day2-evidence-policy/v2",
+  "policyVersion": "day2-evidence-policy/v3",
   "account": {
     "salesforceOrgId": "00D000000000001",
     "salesforceAccountId": "001000000000001",

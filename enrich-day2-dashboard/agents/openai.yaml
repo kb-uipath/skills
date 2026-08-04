@@ -1,4 +1,4 @@
 interface:
   display_name: "Enrich Day 2 Dashboard"
-  short_description: "Research, clarify, and build Day 2 JSON"
-  default_prompt: "Use $enrich-day2-dashboard to research this Salesforce Account, ask only the highest-priority missing questions, and build reviewable Day 2 dashboard JSON proposals."
+  short_description: "Build strict or maximum-coverage Day 2 JSON"
+  default_prompt: "Use $enrich-day2-dashboard to research this Salesforce Account, ask only the highest-priority missing questions, and build either a strict exact-approval dashboard or an explicitly requested maximum evidence-backed draft."

@@ -72,7 +72,7 @@ Use public research only when the user includes it. It may support external cust
 
 ## Freshness before build
 
-Re-fetch stable Slack, Outlook, SharePoint, Teams, Calendar, and file locators after preview. Confirm unchanged content digest and source date. For OneNote, re-confirm the selected snapshot and its non-OneNote corroboration. Update `verifiedAt` without changing the stable evidence content.
+Re-fetch stable Slack, Outlook, SharePoint, Teams, Calendar, and file locators after preview. Confirm unchanged content digest and source date. For OneNote, re-confirm the selected snapshot and its non-OneNote corroboration. Update only `verifiedAt` in the exact preview-bound ledger path and build within 60 minutes.
 
 Use one current evidence record for each `{sourceType, tenantId, container, sourceId}` tuple. Do not represent changed or contradictory captures as parallel records with the same identity; record the conflict as a gap and create a new preview.
 
@@ -80,6 +80,6 @@ Use one current evidence record for each `{sourceType, tenantId, container, sour
 
 Use only search, list, get, read, fetch, or download operations. Never send, reply, react, comment, share, upload, create, update, delete, move, change read state, or change permissions in a connected system.
 
-Download only explicitly selected attachments into a skill-created private temporary directory. Use generated filenames, mode `0600`, a `0700` directory, and conservative size/count limits. Reject archives, macros, OLE objects, path traversal, and active links; never execute source content.
+Download at most 20 explicitly selected attachments, at most 25 MiB each and 100 MiB total, into a skill-created private temporary directory. Use generated filenames, mode `0600`, and a `0700` directory. Require provider-declared size plus file-signature/type inspection; if either is unavailable or mismatched, retain metadata only. Reject archives, macros, OLE objects, path traversal, and active links; never execute source content.
 
 Do not place private excerpts, email addresses, internal identifiers, or confidential details into public-web queries. Strip URL query strings and fragments from ledger locators. Keep every source locator, raw body, and tokenized URL out of reports and dashboard `sourceNotes`; the evidence ID resolves back to the confidential ledger. Retain the evidence ledger as the confidential audit artifact; build never auto-deletes it. Keep only minimized accepted-source provenance in the report.
