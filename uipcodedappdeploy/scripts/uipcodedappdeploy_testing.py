@@ -29,7 +29,7 @@ import sys
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -83,6 +83,33 @@ NONWAIVABLE_CONTROLS = [
     "redacted_automatic_receipt",
     "post_deploy_verification",
 ]
+
+# These full-line hashes bind six reviewed, non-secret security-test fixtures
+# to their exact repository-relative paths.  One is a lexical false positive
+# from a synthetic token-provider call; five are deliberate rejection
+# sentinels.  Matching only the regex finding would permit suffix smuggling, so
+# the complete raw line and exact path are committed here.  Package, dist,
+# configuration, and command audits never use these source-only commitments.
+KNOWN_SYNTHETIC_SOURCE_LINES = {
+    "apps/frontend/src/uipath/commandGateway.v0.test.ts": frozenset(
+        {"sha256:6f6f174c1fa885d37799853a1664f622fba5b394edd28c9dea55fae0749f2d78"}
+    ),
+    "release/certification/test/certification.test.mjs": frozenset(
+        {"sha256:9f7e96fd5cfa451d4e8ebb679c36d38ce0bd475084c9a92c25329bffca69c3ae"}
+    ),
+    "release/config/validate-release-profile.test.mjs": frozenset(
+        {
+            "sha256:f55bde8c5ca374ddc0badcc3f44e3e6292bcd4bfa1fb60992d0d9b507283794e",
+            "sha256:79e195a7cec16c008ab335d6440173d88125493733e4a2eeaf676b0aadd3547f",
+        }
+    ),
+    "release/test/package-inspection.test.mjs": frozenset(
+        {
+            "sha256:8b7f7fb824aaff6fc06460533233d72adef959741ddb7af7e0d060ff3e8fdb1b",
+            "sha256:59fa57a9330fa68e54e1a2bf26a772bb75e87f601d9634255b785c0d08a54b2a",
+        }
+    ),
+}
 
 REDACTION = {
     "commands": "omitted",
@@ -572,7 +599,7 @@ def _immutable_runtime_digest(root: Path, mutable_files: list[Path]) -> str:
     return core._hash_json({"excluded": sorted(excluded), "files": records})
 
 
-def _audit_payload(payload: bytes) -> None:
+def _secret_like_matches(payload: bytes) -> Iterator[tuple[int, int, bytes]]:
     forbidden = (
         b"-----BEGIN " + b"PRIVATE KEY-----",
         b"UIPATH_" + b"ACCESS_TOKEN=",
@@ -580,8 +607,16 @@ def _audit_payload(payload: bytes) -> None:
         b"authorization: " + b"bearer eyJ",
     )
     lowered = payload.lower()
-    if any(marker.lower() in lowered for marker in forbidden):
-        core._fail("Testing artifact secret audit failed; candidate bytes are prohibited.")
+    for marker in forbidden:
+        lowered_marker = marker.lower()
+        offset = 0
+        while (index := lowered.find(lowered_marker, offset)) >= 0:
+            yield (
+                index,
+                index + len(marker),
+                payload[index : index + len(marker)],
+            )
+            offset = index + len(marker)
     assignment = re.compile(
         rb"(?i)\b(?:api[_-]?key|client[_-]?secret|password|access[_-]?token|private[_-]?key)"
         rb"\s*[:=]\s*[\"']?[A-Za-z0-9_./+=-]{16,}"
@@ -591,13 +626,29 @@ def _audit_payload(payload: bytes) -> None:
     private_key = re.compile(
         rb"-----BEGIN (?:RSA |DSA |EC |OPENSSH )?PRIVATE KEY-----"
     )
-    if (
-        assignment.search(payload)
-        or bearer.search(payload)
-        or jwt.search(payload)
-        or private_key.search(payload)
-    ):
+    for pattern in (assignment, bearer, jwt, private_key):
+        for match in pattern.finditer(payload):
+            yield match.start(), match.end(), match.group(0)
+
+
+def _audit_payload(payload: bytes) -> None:
+    if next(_secret_like_matches(payload), None) is not None:
         core._fail("Testing artifact secret audit failed; candidate bytes are prohibited.")
+
+
+def _audit_tracked_source_payload(relative: Path, payload: bytes) -> None:
+    allowed_lines = KNOWN_SYNTHETIC_SOURCE_LINES.get(
+        relative.as_posix(), frozenset()
+    )
+    for start, end, _ in _secret_like_matches(payload):
+        line_start = payload.rfind(b"\n", 0, start) + 1
+        line_end = payload.find(b"\n", end)
+        if line_end < 0:
+            line_end = len(payload)
+        if core._hash_bytes(payload[line_start:line_end]) not in allowed_lines:
+            core._fail(
+                "Testing artifact secret audit failed; candidate bytes are prohibited."
+            )
 
 
 def _audit_dist(path: Path) -> None:
@@ -692,7 +743,7 @@ def _audit_tracked_source(project_root: Path, source_root: Path) -> None:
         path = project_root / relative
         if path.is_symlink() or not path.is_file():
             core._fail("Testing source contains a non-regular tracked file.")
-        _audit_payload(path.read_bytes())
+        _audit_tracked_source_payload(relative, path.read_bytes())
 
 
 def _workspace_for(receipt_path: Path) -> Path:
