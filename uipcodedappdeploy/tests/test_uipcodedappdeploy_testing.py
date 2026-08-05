@@ -934,6 +934,155 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
             ), self.assertRaisesRegex(SystemExit, "secret audit failed"):
                 self.testing._resolve_reconciled_package(root, plan, context)
 
+    def test_source_audit_allows_only_exact_path_and_line_commitments(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decode_fixture = bytes.fromhex
+            fixture_lines = {
+                "apps/frontend/src/uipath/commandGateway.v0.test.ts": [
+                    decode_fixture(
+                        "20202020636f6e737420616363657373546f6b656e203d2076616c69644163"
+                        "63657373546f6b656e28293b"
+                    )
+                ],
+                "release/certification/test/certification.test.mjs": [
+                    decode_fixture(
+                        "2020706c616e2e676f7665726e616e63652e636c69656e7453656372657420"
+                        "3d202273686f756c642d6e6f742d62652d68657265223b"
+                    )
+                ],
+                "release/config/validate-release-profile.test.mjs": [
+                    decode_fixture(
+                        "202070726f66696c652e7569706174682e636c69656e74536563726574203d"
+                        "20226e6f742d6576656e2d612d7265616c2d736563726574223b"
+                    ),
+                    decode_fixture(
+                        "2020202022726566732f68656164732f65794a68624763694f694a49557a49"
+                        "314e694a392e6162636465666768696a6b6c6d6e6f702e7172737475767778"
+                        "797a303132333435223b"
+                    ),
+                ],
+                "release/test/package-inspection.test.mjs": [
+                    decode_fixture(
+                        "202020202020202064697374496e6465783a20224265617265722061626364"
+                        "65666768696a6b6c6d6e6f707172737475767778797a222c"
+                    ),
+                    decode_fixture(
+                        "202020202020202061726368697665496e6465783a20224265617265722061"
+                        "62636465666768696a6b6c6d6e6f707172737475767778797a222c"
+                    ),
+                ],
+            }
+            fixtures = {
+                relative: b"\n".join(lines) + b"\n"
+                for relative, lines in fixture_lines.items()
+            }
+            findings = [
+                finding
+                for payload in fixtures.values()
+                for finding in self.testing._secret_like_matches(payload)
+            ]
+            self.assertEqual(len(findings), 6)
+            observed_line_commitments = {
+                relative: frozenset(self.core._hash_bytes(line) for line in lines)
+                for relative, lines in fixture_lines.items()
+            }
+            self.assertEqual(
+                observed_line_commitments,
+                self.testing.KNOWN_SYNTHETIC_SOURCE_LINES,
+            )
+            for relative, payload in fixtures.items():
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(payload)
+            listing = subprocess.CompletedProcess(
+                ["git", "ls-files"],
+                0,
+                b"\0".join(path.encode() for path in fixtures) + b"\0",
+                b"",
+            )
+            with mock.patch.object(
+                self.testing.subprocess, "run", return_value=listing
+            ):
+                self.testing._audit_tracked_source(root, root)
+
+            committed_path = "apps/frontend/src/uipath/commandGateway.v0.test.ts"
+            committed_line = fixture_lines[committed_path][0]
+            random_line = (
+                bytes.fromhex("636f6e7374206163636573735f746f6b656e203d2022")
+                + os.urandom(24).hex().encode("ascii")
+                + b'";'
+            )
+
+            def assert_source_rejected(relative, payload):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(payload)
+                source_listing = subprocess.CompletedProcess(
+                    ["git", "ls-files"], 0, relative.encode() + b"\0", b""
+                )
+                with mock.patch.object(
+                    self.testing.subprocess, "run", return_value=source_listing
+                ), self.assertRaisesRegex(SystemExit, "secret audit failed"):
+                    self.testing._audit_tracked_source(root, root)
+
+            for near_miss in (
+                "apps/frontend/src/uipath/application.ts",
+                "apps/frontend/src/uipath/copied.test.ts",
+                "apps/frontend/src/contest/commandGateway.v0.test.ts",
+                "apps/frontend/src/test-data/commandGateway.v0.test.ts",
+                "apps/frontend/src/uipath/latest.ts",
+            ):
+                assert_source_rejected(near_miss, committed_line + b"\n")
+
+            for random_path in (
+                "src/credential.test.ts",
+                "src/tests/credential.ts",
+            ):
+                assert_source_rejected(random_path, random_line + b"\n")
+
+            for mutation in (
+                b" " + committed_line,
+                committed_line.replace(b"validAccess", b"validaccess", 1),
+                committed_line + b"$" + os.urandom(12).hex().encode("ascii"),
+                committed_line + b' + "' + os.urandom(12).hex().encode("ascii") + b'"',
+                committed_line + b"\n" + random_line,
+            ):
+                assert_source_rejected(committed_path, mutation + b"\n")
+
+    def test_reviewed_source_line_remains_strict_outside_tracked_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sentinel = bytes.fromhex(
+                "20202020636f6e737420616363657373546f6b656e203d2076616c69644163"
+                "63657373546f6b656e28293b"
+            )
+            dist = root / "dist"
+            dist.mkdir()
+            (dist / "index.js").write_bytes(sentinel)
+            with self.assertRaisesRegex(SystemExit, "secret audit failed"):
+                self.testing._audit_dist(dist)
+
+            package = Path(tmp) / "candidate.nupkg"
+            with zipfile.ZipFile(package, "w") as archive:
+                archive.writestr("content/index.js", sentinel)
+            with self.assertRaisesRegex(SystemExit, "secret audit failed"):
+                self.testing._audit_package_archive(package)
+
+            config = root / "uipath.json"
+            config.write_text(
+                json.dumps({"sourceFixture": sentinel.decode("utf-8")}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(SystemExit, "secret audit failed"):
+                self.testing._load_and_audit_uipath_config(config, "Testing")
+
+            serialized_arguments = json.dumps(
+                ["--testing-purpose", sentinel.decode("utf-8")]
+            ).encode("utf-8")
+            with self.assertRaisesRegex(SystemExit, "secret audit failed"):
+                self.testing._audit_payload(serialized_arguments)
+
     def test_dist_digest_rejects_symlinks_and_empty_directories(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
