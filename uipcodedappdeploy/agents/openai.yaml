@@ -1,4 +1,4 @@
 interface:
   display_name: "UiPath Coded App Deploy"
-  short_description: "Plan and explicitly deploy UiPath coded apps"
-  default_prompt: "Use $uipcodedappdeploy to validate this coded app, create a v2.3 environment-bound deployment plan with raw tracked-worktree and package/display-name binding, and do not execute until I approve its exact plan hash. Regenerate any v2.2 plan; do not migrate it."
+  short_description: "Governed, recovery, or testing-only coded app deploy"
+  default_prompt: "Use $uipcodedappdeploy to classify this request as governed v2.3 release, exact v1.2 recovery, or explicit synthetic-only Alpha/Staging testing. Keep governed plan-hash approval as the default; use the one-step testing helper only when I explicitly request testing, and never retry an indeterminate write, change a route, or treat testing evidence as production evidence."
