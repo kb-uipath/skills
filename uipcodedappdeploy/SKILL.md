@@ -1,17 +1,19 @@
 ---
 name: uipcodedappdeploy
-description: Plan, validate, and explicitly execute UiPath coded app deployments with exact source, dist, package, CLI, profile, route, client, and target provenance.
+description: Plan and execute governed UiPath coded app releases, exact upgrade recovery, or explicitly requested synthetic-only Alpha/Staging test deployments with exact target and artifact binding.
 ---
 
 # UiPath Coded App Deploy
 
-Use this skill for plan-first deployment of a UiPath Coded App. Planning is
-local and non-mutating except for an explicitly requested plan file. Publishing
-and deployment are always a separate, human-approved execution.
+Use this skill for UiPath Coded App deployment. Governed release is the default:
+planning is local and non-mutating except for an explicitly requested plan file,
+and publishing/deployment require approval of its exact hash. A separate
+testing-only entrypoint exists for an explicit internal, synthetic Alpha or
+Staging test request. Testing receipts are never production release evidence.
 
 ## Hard Boundaries
 
-- Never deploy directly from planning arguments. Persist and display the v2.3
+- For governed release, never deploy directly from planning arguments. Persist and display the v2.3
   plan, obtain approval of its exact `plan_hash`, then pass that hash through
   `--approved-plan-hash`.
 - Never invent or reuse a target, tenant, organization, folder, OAuth client,
@@ -36,8 +38,149 @@ and deployment are always a separate, human-approved execution.
   `codedapp deploy --client-id`.
 - Never pass, print, or persist access tokens, client secrets, profile files, or
   subprocess response bodies.
-- Do not run `publish`, `deploy`, live route verification, or any other external
-  write without explicit user authorization of the persisted plan hash.
+- Do not run a governed `publish`, `deploy`, live route verification, or other
+  external write without explicit user authorization of the persisted plan
+  hash. The only exception is the separate testing-only lane below, where an
+  explicit user testing request plus `--testing-only --execute` is the
+  authorization and the helper creates an automatic redacted receipt.
+
+## Choose The Deployment Lane
+
+Use exactly one lane:
+
+1. **Governed release** — use `uipcodedappdeploy.py` v2.3. This remains the
+   default whenever intent, data classification, or environment is ambiguous.
+2. **Exact route-collision recovery** — use `uipcodedappdeploy_recover.py` v1.2
+   only for an already-published candidate and an exactly reconciled existing
+   deployment.
+3. **Testing-only** — use `uipcodedappdeploy_testing.py` v1.0 only when the user
+   explicitly requests an internal, synthetic test deployment to Alpha or
+   Staging and accepts that it is not release evidence.
+
+Never add `--force`, weaken the governed helper, or translate an ordinary
+deployment request into testing intent.
+
+## Explicit Testing-only Deployment
+
+Read [`references/testing-only-policy.md`](references/testing-only-policy.md)
+before invoking this lane. It waives clean-Git release provenance, independent
+approval, production signing, full rebuild/test reruns for an exact candidate,
+and the second plan-hash response. It does not waive exact target/artifact
+binding, mandatory internal-authentication acceptance, synthetic data, route safety, host-local
+atomic claims, redacted receipts, or post-deploy verification. The testing lane
+does not provide distributed serialization, so never execute the same candidate
+concurrently from another user or host.
+
+Schema 1.0 supports only these combinations:
+
+- `--candidate-mode dist --intent create`: copy and hash an exact built dist in
+  an isolated workspace; prepare a read-only exact-version absence guard; prove
+  no matching deployment and an unused route; then pack, publish, and deploy.
+- `--candidate-mode reconciled --intent upgrade`: validate an exact v1.2
+  recovery plan/runtime; skip build, pack, and publish; guard and upgrade only
+  its bound deployment while preserving its route.
+
+Run only after the direct user request is in the current task:
+
+```bash
+python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_testing.py \
+  --testing-only \
+  --execute \
+  --intent create \
+  --candidate-mode dist \
+  --environment alpha \
+  --control-plane-url https://alpha.uipath.com \
+  --org-id '<exact-org-guid>' \
+  --org-name '<organization>' \
+  --tenant-id '<exact-tenant-guid>' \
+  --tenant-name '<tenant>' \
+  --folder-key '<exact-folder-guid>' \
+  --package-name '<package-name>' \
+  --app-name '<display-title>' \
+  --path-name '<unused-route>' \
+  --client-id '<public-client-guid>' \
+  --version '<candidate-version>' \
+  --tags internal,synthetic-testing \
+  --cli-executable /absolute/pinned/node_modules/@uipath/cli/dist/index.js \
+  --cli-version 1.198.0 \
+  --cli-profile '<named-profile>' \
+  --node-executable /absolute/pinned/node \
+  --node-version 24.13.0 \
+  --project-root /absolute/project \
+  --app-dist /absolute/project/dist \
+  --main-file index.html \
+  --content-type webapp \
+  --testing-purpose 'Synthetic coded app acceptance' \
+  --receipt-output /absolute/ignored/evidence/testing-receipt.json
+```
+
+For an exact in-place upgrade of an already-published candidate:
+
+```bash
+python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_testing.py \
+  --testing-only \
+  --execute \
+  --intent upgrade \
+  --candidate-mode reconciled \
+  --environment alpha \
+  --control-plane-url https://alpha.uipath.com \
+  --org-id '<exact-org-guid>' \
+  --org-name '<organization>' \
+  --tenant-id '<exact-tenant-guid>' \
+  --tenant-name '<tenant>' \
+  --folder-key '<exact-folder-guid>' \
+  --package-name '<package-name>' \
+  --app-name '<display-title>' \
+  --path-name '<existing-route>' \
+  --client-id '<public-client-guid>' \
+  --version '<published-candidate-version>' \
+  --tags internal,synthetic-testing \
+  --cli-executable /absolute/pinned/node_modules/@uipath/cli/dist/index.js \
+  --cli-version 1.198.0 \
+  --cli-profile '<named-profile>' \
+  --recovery-plan /absolute/ignored/evidence/upgrade-recovery-plan.json \
+  --recovery-runtime-manifest /absolute/ignored/evidence/guarded-runtime.manifest.json \
+  --expected-recovery-plan-hash 'sha256:<exact-technical-input-hash>' \
+  --expected-deployment-id '<exact-deployment-guid>' \
+  --expected-system-name 'ID<32-hex-characters>' \
+  --expected-current-version '<currently-deployed-version>' \
+  --expected-deploy-version '<published-candidate-number>' \
+  --expected-runtime-manifest-hash 'sha256:<exact-runtime-manifest-hash>' \
+  --testing-purpose 'Synthetic browser mockup acceptance' \
+  --receipt-output /absolute/ignored/evidence/testing-receipt.json
+```
+
+There is no plan file, approval hash, or resume. The output path must be new.
+Malformed or secret-bearing arguments, an invalid receipt path, an unknown CLI
+build, or an incomplete/mismatched target are rejected before an execution
+attempt can be reserved and therefore produce no receipt. Once the new path,
+pinned CLI, and complete target validate, the helper exclusively reserves the
+receipt; every later handled failure writes its preflight or claimed state.
+The helper exclusively reserves the receipt path and creates an atomic,
+home-scoped operation claim before any external write. Reconciled testing uses
+the same exact-candidate claim namespace as recovery, so the two lanes cannot
+race one PATCH. Dist/create claims remain stable across repacks for the same
+target, package version, and route, preventing a changed ZIP timestamp from
+bypassing an indeterminate write. The schema-1.0 receipt records Git state only
+as informational metadata and binds the exact dist/package/runtime/target
+bytes. A recovery-plan hash is a required technical input, not approval.
+
+The helper accepts only the allowlisted CLI 1.198.0 build and its supported
+Node build. It revalidates helper, CLI, Node, package, configuration, and guarded
+runtime bytes after durably marking each write indeterminate and immediately
+before spawning it. Unknown or drifted bytes fail closed and retain replay
+protection.
+
+Any interrupted, nonzero, timed-out, or otherwise ambiguous `publish` or
+`deploy` becomes `publish_indeterminate` or `deploy_indeterminate`. Do not rerun
+the command. Reconcile exact remote state and require a fresh explicit testing
+request. Report success only as a synthetic nonproduction test deployment.
+The automatic receipt deliberately leaves
+`authentication_certification: pending_external_acceptance`; `succeeded_testing`
+means the exact deployment, route, and local app configuration passed the
+helper's technical checks. Anonymous denial, named-user sign-in, referenced
+assets, and browser behavior remain mandatory rollout acceptance evidence and
+must not be inferred from that receipt alone.
 
 ## Prerequisites
 
@@ -324,9 +467,13 @@ authentication and application behavior remain separate acceptance gates.
 - `references/deployment-receipt.v2.schema.json`
 - `references/deployment-recovery-plan.v1.schema.json`
 - `references/deployment-recovery-receipt.v1.schema.json`
+- `references/deployment-testing-receipt.v1.schema.json`
+- `references/testing-only-policy.md`
 
-Both are integrity contracts, not signatures. Exact-hash approval is required,
-but the helper does not claim non-repudiation.
+The governed and recovery schemas are integrity contracts, not signatures.
+Their exact-hash approval remains required. The testing receipt is automatic,
+contains no approval hash, and explicitly states that it is not release
+evidence.
 
 Contract `2.3` is intentionally incompatible with `2.2`. Existing `2.2` plans
 and receipts are rejected and must be regenerated; the helper performs no silent

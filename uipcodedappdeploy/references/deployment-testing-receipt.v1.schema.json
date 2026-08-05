@@ -1,0 +1,559 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kb-uipath.github.io/skills/uipcodedappdeploy/deployment-testing-receipt.v1.schema.json",
+  "title": "UiPath Coded App Testing-only Deployment Receipt v1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind", "schema_version", "helper_sha256", "attempt_phase",
+    "preflight_error_code", "authorization", "target",
+    "candidate", "policy", "execution_claim", "status", "external_write_started",
+    "started_at", "updated_at", "redaction", "stages", "observations",
+    "verification", "receipt_reservation", "receipt_hash"
+  ],
+  "properties": {
+    "kind": { "const": "uipcodedappdeploy.testing-receipt" },
+    "schema_version": { "const": "1.0" },
+    "helper_sha256": { "$ref": "#/$defs/hash" },
+    "attempt_phase": { "enum": ["preflight", "claimed"] },
+    "preflight_error_code": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^[A-Z0-9_]+$" }
+      ]
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "testing_only", "execute", "purpose"],
+      "properties": {
+        "mode": { "const": "explicit_testing_request" },
+        "testing_only": { "const": true },
+        "execute": { "const": true },
+        "purpose": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "target": { "$ref": "#/$defs/target" },
+    "candidate": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/candidate" }]
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_version", "data_classification", "internal_authenticated_required", "production_eligible", "release_evidence", "waived_gates", "nonwaivable_controls"],
+      "properties": {
+        "policy_version": { "const": "1.0" },
+        "data_classification": { "const": "synthetic_only" },
+        "internal_authenticated_required": { "const": true },
+        "production_eligible": { "const": false },
+        "release_evidence": { "const": false },
+        "waived_gates": {
+          "const": [
+            "clean_git_release_provenance",
+            "independent_release_approval",
+            "protected_release_environment",
+            "signed_release_receipt",
+            "second_plan_hash_approval",
+            "full_build_and_test_rerun_for_exact_candidate",
+            "production_services_absent_from_mockup"
+          ]
+        },
+        "nonwaivable_controls": {
+          "const": [
+            "alpha_or_staging_only",
+            "synthetic_data_only",
+            "internal_authenticated_acceptance_required",
+            "exact_target_cli_profile_and_artifact",
+            "explicit_create_or_upgrade",
+            "no_route_mutation_or_recreation",
+            "no_blind_retry_or_resume",
+            "host_local_atomic_candidate_claim",
+            "redacted_automatic_receipt",
+            "post_deploy_verification"
+          ]
+        }
+      }
+    },
+    "execution_claim": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/executionClaim" }]
+    },
+    "receipt_reservation": { "$ref": "#/$defs/receiptReservation" },
+    "status": {
+      "enum": [
+        "in_progress", "failed_prewrite", "publish_indeterminate",
+        "published_not_deployed", "deploy_indeterminate",
+        "deployed_unverified", "succeeded_testing"
+      ]
+    },
+    "external_write_started": { "type": "boolean" },
+    "started_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "redaction": {
+      "const": {
+        "commands": "omitted",
+        "environment": "omitted",
+        "subprocess_output": "omitted",
+        "errors": "stable_code_only",
+        "secrets": "prohibited"
+      }
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/stage" }
+    },
+    "observations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prewrite", "postwrite"],
+      "properties": {
+        "prewrite": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/observation" }] },
+        "postwrite": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/observation" }] }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["route_url", "route_verified", "configuration_verified", "pre_deploy_app_config_digest", "post_deploy_app_config_digest", "authentication_certification"],
+      "properties": {
+        "route_url": { "type": ["string", "null"], "format": "uri" },
+        "route_verified": { "type": ["boolean", "null"] },
+        "configuration_verified": { "type": ["boolean", "null"] },
+        "pre_deploy_app_config_digest": { "$ref": "#/$defs/nullableHash" },
+        "post_deploy_app_config_digest": { "$ref": "#/$defs/nullableHash" },
+        "authentication_certification": { "const": "pending_external_acceptance" }
+      }
+    },
+    "receipt_hash": { "$ref": "#/$defs/hash" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "attempt_phase": { "const": "preflight" } } },
+      "then": {
+        "properties": {
+          "candidate": { "type": "null" },
+          "execution_claim": { "type": "null" },
+          "status": { "const": "failed_prewrite" },
+          "external_write_started": { "const": false },
+          "preflight_error_code": { "type": "string" },
+          "stages": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "prefixItems": [
+              {
+                "allOf": [
+                  { "$ref": "#/$defs/localPreflightStage" },
+                  { "properties": { "status": { "const": "failed" } } }
+                ]
+              }
+            ],
+            "items": false
+          },
+          "observations": {
+            "properties": {
+              "prewrite": { "type": "null" },
+              "postwrite": { "type": "null" }
+            }
+          },
+          "verification": {
+            "properties": {
+              "route_verified": { "type": "null" },
+              "configuration_verified": { "type": "null" },
+              "pre_deploy_app_config_digest": { "type": "null" },
+              "post_deploy_app_config_digest": { "type": "null" }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "candidate": { "$ref": "#/$defs/candidate" },
+          "execution_claim": { "$ref": "#/$defs/executionClaim" },
+          "preflight_error_code": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "candidate": {
+            "type": "object",
+            "required": ["mode"],
+            "properties": { "mode": { "const": "dist" } }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "candidate": {
+            "properties": {
+              "intent": { "const": "create" },
+              "dist_digest": { "$ref": "#/$defs/hash" },
+              "recovery_plan_hash": { "type": "null" },
+              "deployment_id": { "type": "null" },
+              "system_name": { "type": "null" },
+              "deploy_version": { "type": "null" },
+              "current_version": { "type": "null" },
+              "runtime_manifest_hash": { "$ref": "#/$defs/hash" }
+            }
+          },
+          "stages": { "$ref": "#/$defs/distStages" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "candidate": {
+            "type": "object",
+            "required": ["mode"],
+            "properties": { "mode": { "const": "reconciled" } }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "candidate": {
+            "properties": {
+              "intent": { "const": "upgrade" },
+              "dist_digest": { "type": "null" },
+              "recovery_plan_hash": { "$ref": "#/$defs/hash" },
+              "deployment_id": { "$ref": "#/$defs/guid" },
+              "system_name": { "type": "string", "pattern": "^ID[0-9a-fA-F]{32}$" },
+              "deploy_version": { "type": "integer", "minimum": 1 },
+              "current_version": { "$ref": "#/$defs/semver" },
+              "runtime_manifest_hash": { "$ref": "#/$defs/hash" }
+            }
+          },
+          "stages": { "$ref": "#/$defs/reconciledStages" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "succeeded_testing" } } },
+      "then": {
+        "properties": {
+          "external_write_started": { "const": true },
+          "observations": {
+            "properties": { "postwrite": { "$ref": "#/$defs/observation" } }
+          },
+          "verification": {
+            "properties": {
+              "route_verified": { "const": true },
+              "configuration_verified": { "const": true },
+              "post_deploy_app_config_digest": { "$ref": "#/$defs/hash" }
+            }
+          },
+          "stages": {
+            "items": {
+              "properties": { "status": { "const": "succeeded" } },
+              "required": ["status"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": { "enum": ["in_progress", "failed_prewrite"] }
+        }
+      },
+      "then": { "properties": { "external_write_started": { "const": false } } },
+      "else": { "properties": { "external_write_started": { "const": true } } }
+    },
+    {
+      "if": { "properties": { "target": { "properties": { "environment": { "const": "alpha" } } } } },
+      "then": { "properties": { "target": { "properties": { "control_plane_url": { "const": "https://alpha.uipath.com" } } } } },
+      "else": { "properties": { "target": { "properties": { "control_plane_url": { "const": "https://staging.uipath.com" } } } } }
+    },
+    {
+      "if": { "properties": { "status": { "enum": ["in_progress", "failed_prewrite"] } } },
+      "then": {
+        "properties": {
+          "stages": {
+            "not": {
+              "contains": {
+                "properties": {
+                  "effect": { "const": "external_write" },
+                  "status": { "enum": ["running", "failed", "succeeded"] }
+                },
+                "required": ["effect", "status"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "publish_indeterminate" } } },
+      "then": {
+        "properties": {
+          "stages": {
+            "contains": {
+              "properties": {
+                "name": { "const": "publish" },
+                "status": { "enum": ["running", "failed"] }
+              },
+              "required": ["name", "status"]
+            },
+            "minContains": 1,
+            "maxContains": 1
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "published_not_deployed" } } },
+      "then": {
+        "properties": {
+          "stages": {
+            "allOf": [
+              {
+                "contains": {
+                  "properties": { "name": { "const": "publish" }, "status": { "const": "succeeded" } },
+                  "required": ["name", "status"]
+                },
+                "minContains": 1,
+                "maxContains": 1
+              },
+              {
+                "contains": {
+                  "properties": { "name": { "const": "deploy" }, "status": { "const": "pending" } },
+                  "required": ["name", "status"]
+                },
+                "minContains": 1,
+                "maxContains": 1
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "deploy_indeterminate" } } },
+      "then": {
+        "properties": {
+          "stages": {
+            "contains": {
+              "properties": { "name": { "const": "deploy" }, "status": { "enum": ["running", "failed"] } },
+              "required": ["name", "status"]
+            },
+            "minContains": 1,
+            "maxContains": 1
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "deployed_unverified" } } },
+      "then": {
+        "properties": {
+          "stages": {
+            "contains": {
+              "properties": { "name": { "const": "deploy" }, "status": { "const": "succeeded" } },
+              "required": ["name", "status"]
+            },
+            "minContains": 1,
+            "maxContains": 1
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "nullableHash": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/hash" }] },
+    "guid": { "type": "string", "format": "uuid" },
+    "semver": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$" },
+    "absolutePath": { "type": "string", "pattern": "^/" },
+    "executionClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "key", "file_sha256", "claim_hash", "released"],
+      "properties": {
+        "path": { "$ref": "#/$defs/absolutePath" },
+        "key": { "$ref": "#/$defs/hash" },
+        "file_sha256": { "$ref": "#/$defs/hash" },
+        "claim_hash": { "$ref": "#/$defs/hash" },
+        "released": { "type": "boolean" }
+      }
+    },
+    "receiptReservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "file_sha256", "reservation_hash"],
+      "properties": {
+        "path": { "$ref": "#/$defs/absolutePath" },
+        "file_sha256": { "$ref": "#/$defs/hash" },
+        "reservation_hash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deploymentId", "systemName", "deployVersion", "currentVersion", "routeName", "version", "appName", "appUrl", "operation"],
+      "properties": {
+        "deploymentId": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/guid" }] },
+        "systemName": { "type": ["string", "null"], "pattern": "^ID[0-9a-fA-F]{32}$" },
+        "deployVersion": { "type": ["integer", "null"], "minimum": 1 },
+        "currentVersion": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/semver" }] },
+        "routeName": { "type": "string", "minLength": 1 },
+        "version": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/semver" }] },
+        "appName": { "type": "string", "minLength": 1 },
+        "appUrl": { "type": "string", "format": "uri" },
+        "operation": { "enum": ["testing_create_verify", "testing_create_post", "deploy", "recovery_verify"] }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environment", "control_plane_url", "organization_name", "organization_id",
+        "tenant_name", "tenant_id", "folder_key", "client_id", "cli_profile",
+        "cli_profile_hash", "cli_executable", "cli_executable_sha256", "cli_version"
+      ],
+      "properties": {
+        "environment": { "enum": ["staging", "alpha"] },
+        "control_plane_url": { "enum": ["https://staging.uipath.com", "https://alpha.uipath.com"] },
+        "organization_name": { "type": "string", "minLength": 1 },
+        "organization_id": { "$ref": "#/$defs/guid" },
+        "tenant_name": { "type": "string", "minLength": 1 },
+        "tenant_id": { "$ref": "#/$defs/guid" },
+        "folder_key": { "$ref": "#/$defs/guid" },
+        "client_id": { "$ref": "#/$defs/guid" },
+        "cli_profile": { "type": "string", "minLength": 1 },
+        "cli_profile_hash": { "$ref": "#/$defs/hash" },
+        "cli_executable": { "$ref": "#/$defs/absolutePath" },
+        "cli_executable_sha256": { "$ref": "#/$defs/hash" },
+        "cli_version": { "const": "1.198.0" }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode", "intent", "package_name", "app_name", "version", "path_name",
+        "tags", "git_head", "git_status_digest", "source_sha", "dist_digest",
+        "uipath_config_digest", "package_content_digest", "package_file_digest", "recovery_plan_hash",
+        "deployment_id", "system_name", "deploy_version", "current_version",
+        "runtime_manifest_hash", "node_executable", "node_executable_sha256",
+        "node_version", "runtime_app_config_digest", "runtime_immutable_digest", "helper_sha256",
+        "main_file", "content_type"
+      ],
+      "properties": {
+        "mode": { "enum": ["dist", "reconciled"] },
+        "intent": { "enum": ["create", "upgrade"] },
+        "package_name": { "type": "string", "minLength": 1 },
+        "app_name": { "type": "string", "minLength": 1 },
+        "version": { "$ref": "#/$defs/semver" },
+        "path_name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$" },
+        "tags": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" } },
+        "git_head": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+        "git_status_digest": { "$ref": "#/$defs/hash" },
+        "source_sha": { "type": ["string", "null"], "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+        "dist_digest": { "$ref": "#/$defs/nullableHash" },
+        "uipath_config_digest": { "$ref": "#/$defs/hash" },
+        "package_content_digest": { "$ref": "#/$defs/hash" },
+        "package_file_digest": { "$ref": "#/$defs/hash" },
+        "recovery_plan_hash": { "$ref": "#/$defs/nullableHash" },
+        "deployment_id": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/guid" }] },
+        "system_name": { "type": ["string", "null"], "pattern": "^ID[0-9a-fA-F]{32}$" },
+        "deploy_version": { "type": ["integer", "null"], "minimum": 1 },
+        "current_version": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/semver" }] },
+        "runtime_manifest_hash": { "$ref": "#/$defs/nullableHash" },
+        "node_executable": { "$ref": "#/$defs/absolutePath" },
+        "node_executable_sha256": { "$ref": "#/$defs/hash" },
+        "node_version": { "type": "string", "minLength": 1 },
+        "runtime_app_config_digest": { "$ref": "#/$defs/hash" },
+        "runtime_immutable_digest": { "$ref": "#/$defs/hash" },
+        "helper_sha256": { "$ref": "#/$defs/hash" },
+        "main_file": { "type": "string", "minLength": 1 },
+        "content_type": { "type": "string", "minLength": 1 }
+      }
+    },
+    "distStages": {
+      "type": "array",
+      "minItems": 15,
+      "maxItems": 15,
+      "prefixItems": [
+        { "$ref": "#/$defs/localPreflightStage" },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "dist_copy" }, "effect": { "const": "local_write" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "pack" }, "effect": { "const": "local_write" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "package_audit" }, "effect": { "const": "local_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "runtime_prepare" }, "effect": { "const": "local_write" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "pre_guard_barrier" }, "effect": { "const": "local_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "create_absence_guard" }, "effect": { "const": "external_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "pre_publish_barrier" }, "effect": { "const": "local_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "publish" }, "effect": { "const": "external_write" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "app_config_bind" }, "effect": { "const": "local_write" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "pre_deploy_barrier" }, "effect": { "const": "local_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "deploy" }, "effect": { "const": "external_write" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "post_create_guard" }, "effect": { "const": "external_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "route_verify" }, "effect": { "const": "external_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "config_verify" }, "effect": { "const": "local_read" } } }] }
+      ],
+      "items": false
+    },
+    "reconciledStages": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "prefixItems": [
+        { "$ref": "#/$defs/localPreflightStage" },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "remote_pre_guard" }, "effect": { "const": "external_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "runtime_barrier" }, "effect": { "const": "local_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "deploy" }, "effect": { "const": "external_write" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "remote_post_guard" }, "effect": { "const": "external_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "route_verify" }, "effect": { "const": "external_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "config_verify" }, "effect": { "const": "local_read" } } }] }
+      ],
+      "items": false
+    },
+    "localPreflightStage": {
+      "allOf": [
+        { "$ref": "#/$defs/stage" },
+        { "properties": { "name": { "const": "local_preflight" }, "effect": { "const": "local_read" } } }
+      ]
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "effect", "status"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "effect": { "enum": ["local_read", "local_write", "external_read", "external_write"] },
+        "status": { "enum": ["pending", "running", "failed", "succeeded"] },
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": "string", "format": "date-time" },
+        "error_code": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+        "recovery": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "pending" } } },
+          "then": { "not": { "anyOf": [{ "required": ["started_at"] }, { "required": ["finished_at"] }, { "required": ["error_code"] }, { "required": ["recovery"] }] } }
+        },
+        {
+          "if": { "properties": { "status": { "const": "running" } } },
+          "then": {
+            "required": ["started_at"],
+            "not": { "anyOf": [{ "required": ["finished_at"] }, { "required": ["error_code"] }, { "required": ["recovery"] }] }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "succeeded" } } },
+          "then": {
+            "required": ["started_at", "finished_at"],
+            "not": { "anyOf": [{ "required": ["error_code"] }, { "required": ["recovery"] }] }
+          }
+        },
+        {
+          "if": { "properties": { "status": { "const": "failed" } } },
+          "then": { "required": ["started_at", "finished_at", "error_code", "recovery"] }
+        }
+      ]
+    }
+  }
+}

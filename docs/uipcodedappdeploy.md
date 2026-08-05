@@ -1,212 +1,335 @@
 # uipcodedappdeploy
 
-Create a reviewable, hash-bound release plan before packaging, publishing, and
-deploying a UiPath Coded App with a pinned native `uip` CLI.
+Deploy UiPath Coded Apps through one of three deliberately separate lanes.
 
-| Field | Value |
-| --- | --- |
-| Skill name | `uipcodedappdeploy` |
-| Plan contract | `uipcodedappdeploy.plan` v2.2 |
-| Receipt contract | `uipcodedappdeploy.receipt` v2.2 |
-| Result contract | `uipcodedappdeploy.result` v1.0 |
-| Certification status | Offline hardened; live target certification is per release |
-| Last verified | 2026-08-03 |
+| Lane | Contract | Authorization | Intended use |
+| --- | --- | --- | --- |
+| Governed release | Plan/receipt v2.3 | Exact reviewed `plan_hash` | Reviewable Alpha/Staging release candidate |
+| Exact upgrade recovery | Plan/receipt v1.2 | Exact reviewed recovery hash | Reconciled route-collision repair |
+| Testing-only | Automatic receipt v1.0 | Explicit request plus `--testing-only --execute` | Internal synthetic Alpha/Staging testing |
 
-## Why v2.2 Exists
-
-The v1 helper could emit authentication flags that `codedapp pack` does not
-support, relied on whichever `uip` happened to be on `PATH`, and did not bind
-the route, public client, tags, source commit, dist, or package into the
-approval artifact. That was not a defensible release control.
-
-Plan v2.0 removed authentication from pack and bound the release artifacts.
-Plan v2.1 additionally makes the nonproduction environment explicit and binds
-it to an allowlisted control plane and verification-host suffix. Alpha support
-therefore does not relax the staging guard or make production addressable.
-
-Plan v2.2 closes a clean-filter bypass in v2.1. Git status and Git object hashes
-can both report clean when a clean filter maps different raw worktree bytes to
-the same object. v2.2 separately binds the raw tracked worktree at the initial,
-version-written, and versioned stages, including executable modes, symlink
-targets, and recursively checked-out submodules. This still supports legitimate
-clean/smudge filters and LFS because the raw approved worktree bytes—not the Git
-object representation—are the comparison baseline.
-
-Plan v2.2 binds:
-
-- the absolute CLI executable, executable digest, and exact CLI SemVer;
-- a named profile through a safe hash of profile name, environment,
-  control-plane origin, organization ID, and tenant ID;
-- `staging` only to `https://staging.uipath.com` and
-  `*.staging.uipath.host`, or `alpha` only to `https://alpha.uipath.com` and
-  `*.alpha.uipath.host`;
-- exact organization, tenant, folder GUID, route, public OAuth client GUID, and
-  sorted deployment tags;
-- source commit SHA, deterministic dist digest, deterministic coded-app package
-  content digest, and exact candidate package file digest;
-- the input manifests before and after the planned version update;
-- deterministic `raw-tracked-worktree-v1` digests for all three source stages;
-- an allowlisted stage sequence and an exact human-approved plan hash.
+Production targets are rejected in every current lane. Testing receipts are
+explicitly ineligible as production release evidence.
 
 ## Runtime And Dependencies
 
-- Python 3.11 or later; no third-party Python runtime dependency.
-- Valid UTF-8 `pyproject.toml` and `uipath.json`.
-- A built Coded App dist and a prepacked local candidate for the exact planned
-  version.
-- A pinned UiPath CLI with the Coded App tool installed.
-- A named authenticated CLI profile for the reviewed target.
-- `uv` and npm only when their stages are enabled.
+- Python 3.12.
+- UiPath CLI exactly `1.198.0`, supplied as an absolute executable path.
+- A named UiPath CLI profile authenticated to the exact target organization and
+  tenant.
+- Node.js only through the pinned and hash-bound runtime used by the selected
+  lane.
 
-Planning does not authenticate, run project/release commands, or contact UiPath.
-It runs only read-only Git inspection needed to bind the raw tracked worktree,
-and may write only an explicitly named plan file.
+The helper does not accept access tokens or client secrets. Authentication is
+resolved by the named CLI profile, and receipts store only a safe profile hash.
 
 ## Inputs
 
-An executable plan requires:
+All lanes require explicit Alpha or Staging target identifiers, package and app
+names, route, public client ID, CLI path/version/profile, and an ignored output
+path. Governed release additionally requires exact source and package evidence;
+recovery requires its exact reconciliation plan/runtime; testing requires a
+plain-language synthetic testing purpose plus either exact built distribution
+bytes or an exact recovery plan.
 
-- canonical project root and a greater SemVer;
-- explicit `staging` or `alpha` environment and its exact CLI control-plane
-  origin;
-- exact organization and tenant GUIDs plus the exact folder GUID;
-- package name, display title, lowercase route slug, public client GUID, and
-  non-empty sorted tags;
-- full source commit SHA;
-- current deterministic dist digest;
-- deterministic candidate `.nupkg` coded-app content digest and exact candidate
-  file digest;
-- absolute CLI executable, executable digest, exact version, and named profile;
-- optional route verification URL on the selected environment's exact UiPath
-  host suffix.
-
-The SDK/API origin used by the browser is not a helper input and must remain a
-separate runtime configuration value.
+The versioned input/output contracts are plan/receipt v2.3 for governed release,
+plan/receipt v1.2 for recovery, and automatic receipt v1.0 for testing-only.
 
 ## Prompt
 
 ```text
-Use $uipcodedappdeploy to build an exact source/dist/package/CLI/environment-
-bound v2.2 deployment plan. Display the persisted plan and hash, and do not
-execute until I approve that exact hash.
+Use $uipcodedappdeploy to deploy this UiPath Coded App. Classify the request as
+governed release, exact recovery, or explicit testing-only deployment; keep the
+governed lane as the default when intent or environment is ambiguous. Bind the
+exact target, route, profile, CLI, configuration, and candidate bytes, stop on
+remote drift or indeterminate writes, and retain the resulting receipt.
 ```
 
 ## Runnable Example
 
-See the complete plan and execution commands in
-`uipcodedappdeploy/SKILL.md`. Run them from the repository root with reviewed
-values; never copy the illustrative GUIDs or route labels into a real release.
+The governed and testing commands below are complete runnable shapes. Replace
+every bracketed value with verified non-secret input, use ignored evidence
+paths, and never paste profile credentials into arguments.
 
-## Plan And Receipt Contracts
+## Governed v2.3
 
-The published JSON Schemas are:
+The governed helper binds:
+
+- the exact Alpha or Staging control plane and verification host suffix;
+- organization, tenant, folder, route, public OAuth client, tags, CLI bytes,
+  CLI version, and safe named-profile binding;
+- exact source commit, raw tracked-worktree states, dist content, candidate
+  package content, and candidate file bytes;
+- package lookup name separately from the display title; and
+- an allowlisted stage sequence plus a human-approved plan hash.
+
+Version 2.3 supersedes 2.2 because 2.2 could not safely preserve a distinct
+package lookup name and display title through UiPath CLI 1.198.0. Regenerate
+2.2 artifacts; never hand-migrate them.
+
+Generate and review a plan:
+
+```bash
+python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy.py \
+  --project-root /absolute/project \
+  --set-version 0.1.0 \
+  --environment alpha \
+  --control-plane-url https://alpha.uipath.com \
+  --org-id '<org-guid>' \
+  --org-name '<organization>' \
+  --tenant-id '<tenant-guid>' \
+  --tenant-name '<tenant>' \
+  --folder-key '<folder-guid>' \
+  --package-name '<package>' \
+  --app-name '<display-title>' \
+  --path-name '<route>' \
+  --client-id '<public-client-guid>' \
+  --tags governance,internal \
+  --source-sha '<full-commit-sha>' \
+  --package-digest 'sha256:<content-digest>' \
+  --cli-executable /absolute/pinned/uip \
+  --cli-version 1.198.0 \
+  --cli-profile '<profile>' \
+  --plan-output /absolute/ignored/deploy-plan.json \
+  --format json
+```
+
+Execute only after approval of the displayed hash:
+
+```bash
+python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy.py \
+  --plan /absolute/ignored/deploy-plan.json \
+  --execute \
+  --approved-plan-hash 'sha256:<exact-approved-hash>' \
+  --format json
+```
+
+Interrupted or nonzero external writes are indeterminate. Governed resume is
+allowed only for determinate local stages; it is blocked for publish/deploy.
+
+## Exact route-collision recovery v1.2
+
+UiPath CLI 1.198.0 can resend an unchanged `routingName` on an existing-app
+PATCH, which some environments reject as `routing name must be unique`. Never
+randomize the route, omit the route in a stock retry, delete/recreate the app,
+republish an already-published candidate, or infer remote state from local
+`.uipath/app.config` alone.
+
+After authoritative reconciliation, `uipcodedappdeploy_recover.py` creates an
+isolated exact-version runtime. It proves the deployment ID, system name,
+current version, route, and published deploy version; prevents the fresh-create
+branch; and omits `routingName` only from the one guarded PATCH. A second guard
+proves the same deployment now reports the candidate version.
+
+Recovery requires its own reviewed v1.2 plan and exact approval hash. It has no
+resume. The complete preparation, evidence, plan, and execution commands are in
+`uipcodedappdeploy/SKILL.md`.
+
+## Testing-only v1.0
+
+The testing helper restores one-step deployment for a narrow class of work
+without weakening either governed lane. Read
+`uipcodedappdeploy/references/testing-only-policy.md` first.
+
+It is allowed only when:
+
+- the user explicitly asks for testing deployment;
+- both `--testing-only` and `--execute` are present;
+- the target is exactly Alpha or Staging;
+- data is synthetic and the app remains internal/authenticated; and
+- exact target, CLI, profile, route, client, candidate bytes, and automatic
+  receipt output are supplied.
+
+Supported matrices:
+
+- `dist/create` copies and hashes a built dist, produces an isolated package,
+  proves that both the deployment and route are absent before publish, then
+  performs one fresh deployment.
+- `reconciled/upgrade` consumes an exact v1.2 recovery plan/runtime, skips pack
+  and publish, and upgrades only the named deployment in place.
+
+Example fresh test deployment from exact built distribution bytes:
+
+```bash
+python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_testing.py \
+  --testing-only \
+  --execute \
+  --intent create \
+  --candidate-mode dist \
+  --environment alpha \
+  --control-plane-url https://alpha.uipath.com \
+  --org-id '<org-guid>' \
+  --org-name '<organization>' \
+  --tenant-id '<tenant-guid>' \
+  --tenant-name '<tenant>' \
+  --folder-key '<folder-guid>' \
+  --package-name '<package>' \
+  --app-name '<display-title>' \
+  --path-name '<unused-route>' \
+  --client-id '<public-client-guid>' \
+  --version '<candidate-version>' \
+  --tags internal,synthetic-testing \
+  --cli-executable /absolute/pinned/node_modules/@uipath/cli/dist/index.js \
+  --cli-version 1.198.0 \
+  --cli-profile '<profile>' \
+  --node-executable /absolute/pinned/node \
+  --node-version 24.13.0 \
+  --project-root /absolute/project \
+  --app-dist /absolute/project/dist \
+  --main-file index.html \
+  --content-type webapp \
+  --testing-purpose 'Synthetic coded app acceptance' \
+  --receipt-output /absolute/ignored/testing-receipt.json
+```
+
+Example reconciled test upgrade:
+
+```bash
+python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_testing.py \
+  --testing-only \
+  --execute \
+  --intent upgrade \
+  --candidate-mode reconciled \
+  --environment alpha \
+  --control-plane-url https://alpha.uipath.com \
+  --org-id '<org-guid>' \
+  --org-name '<organization>' \
+  --tenant-id '<tenant-guid>' \
+  --tenant-name '<tenant>' \
+  --folder-key '<folder-guid>' \
+  --package-name '<package>' \
+  --app-name '<display-title>' \
+  --path-name '<route>' \
+  --client-id '<public-client-guid>' \
+  --version '<candidate-version>' \
+  --tags internal,synthetic-testing \
+  --cli-executable /absolute/pinned/node_modules/@uipath/cli/dist/index.js \
+  --cli-version 1.198.0 \
+  --cli-profile '<profile>' \
+  --recovery-plan /absolute/ignored/upgrade-recovery-plan.json \
+  --recovery-runtime-manifest /absolute/ignored/guarded-runtime.manifest.json \
+  --expected-recovery-plan-hash 'sha256:<exact-technical-input-hash>' \
+  --expected-deployment-id '<exact-deployment-guid>' \
+  --expected-system-name 'ID<32-hex-characters>' \
+  --expected-current-version '<currently-deployed-version>' \
+  --expected-deploy-version '<published-candidate-number>' \
+  --expected-runtime-manifest-hash 'sha256:<exact-runtime-manifest-hash>' \
+  --testing-purpose 'Synthetic browser mockup acceptance' \
+  --receipt-output /absolute/ignored/testing-receipt.json
+```
+
+There is no plan or second approval hash. Before external writes, the helper
+exclusively reserves the receipt and creates a durable host-local, home-scoped
+operation claim. It is not cross-host serialization, so the same candidate must
+not be run concurrently by another user or machine. Dist/create uses stable remote coordinates so repacking cannot evade a
+retained indeterminate claim; reconciled/upgrade atomically uses the recovery
+lane's exact-candidate claim key so the two lanes cannot race one PATCH. The
+receipt records exact artifact/configuration hashes, informational Git state,
+policy waivers, and these possible outcomes:
+
+Malformed or secret-bearing arguments, an invalid receipt path, an unsupported
+CLI build, or an incomplete target are rejected before attempt reservation and
+therefore produce no receipt. After the output path, pinned CLI, and complete
+target validate, every later handled failure is recorded.
+
+- `failed_prewrite`
+- `publish_indeterminate`
+- `published_not_deployed`
+- `deploy_indeterminate`
+- `deployed_unverified`
+- `succeeded_testing`
+
+The claim is released only for a handled pre-write failure. Once a write may
+have occurred, it remains as replay protection. There is no resume or automatic
+retry. Reconcile remote state and require a fresh explicit testing request.
+The helper revalidates exact helper, CLI, Node, package, configuration, and
+guarded-runtime bytes after the indeterminate stage receipt is durable and
+immediately before each write. Unknown runtime versions fail closed.
+
+`succeeded_testing` certifies only the helper's exact deployment, route, and
+local app-configuration checks. The receipt intentionally leaves
+`authentication_certification` as `pending_external_acceptance`; anonymous
+denial, named-user authentication, referenced assets, and browser behavior must
+be certified separately before the rollout is reported complete.
+
+## Contracts
 
 - `uipcodedappdeploy/references/deployment-plan.v2.schema.json`
 - `uipcodedappdeploy/references/deployment-receipt.v2.schema.json`
+- `uipcodedappdeploy/references/deployment-recovery-plan.v1.schema.json`
+- `uipcodedappdeploy/references/deployment-recovery-receipt.v1.schema.json`
+- `uipcodedappdeploy/references/deployment-testing-receipt.v1.schema.json`
+- `uipcodedappdeploy/references/testing-only-policy.md`
 
-Plan files are written atomically with mode `0600`. The plan hash covers every
-normalized field, command, blocker, input hash, and release binding. A loaded
-plan is rebuilt from its structured fields and rejected if its stage sequence
-has been edited.
+Hashes detect change; they are not signatures or proof of approver identity.
+The automatic testing receipt additionally states
+`production_eligible: false`, `release_evidence: false`, and
+`data_classification: synthetic_only`.
 
-Receipts are also mode `0600`. They contain no commands, process environment variables,
-subprocess output, response bodies, access tokens, or detailed errors. They
-repeat the selected deployment environment, exact approved plan hash,
-deployment-binding hash, CLI/profile
-hashes, source SHA, dist digest, package content digest and algorithm, candidate
-file digest, and the exact package file digest verified immediately before
-publish.
-
-The `2.2` plan and receipt contracts are intentionally incompatible with `2.1`.
-All `2.1` plans and receipts must be regenerated. There is no silent migration,
-because adding a digest after approval cannot prove what raw bytes were reviewed.
-
-Hashes detect changes; they are not signatures or proof of approver identity.
-
-## Execution Order
-
-1. Require `--plan`, `--execute`, and the exact
-   `--approved-plan-hash`.
-2. Revalidate the immutable plan, input hashes, blockers, and exact candidate
-   package file/content digests before any project write.
-3. Verify the current dist before any version or receipt write when the build
-   stage is disabled.
-4. Atomically update `[project].version`.
-5. Run planned lock, test, and build stages.
-6. Verify dist, clean tracked source, exact source SHA, the exact plan-bound raw
-   execution bytes, CLI executable digest and version, and CLI profile org/tenant.
-7. Run `codedapp pack` with no authentication flags.
-8. Compare the produced package's deterministic coded-app content digest with
-   the approved candidate, record its exact raw file digest, and stop before
-   external writes if the content differs.
-9. Recheck the exact recorded package bytes and publish with the reviewed
-   profile/control plane.
-10. Fresh-deploy with exact path, client, tags, folder, org, and tenant.
-11. Optionally verify the HTTPS route.
-
-## Failure And Recovery
+## Failure Recovery
 
 | Failure | Required response |
 | --- | --- |
-| Plan, approval, input, source, CLI, profile, or dist mismatch | No external write; regenerate from the corrected source/binding. |
-| Package content mismatch or exact pre-publish file drift | Do not publish. Rebuild the candidate or restore the audited execution package, then generate a new plan when required. |
-| Local stage failure | Fix locally and resume with the same plan and approval hash if the receipt is determinate. |
-| Publish/deploy command fails or is interrupted | Treat the result as indeterminate, reconcile remote state, and create a reviewed recovery plan. Blind `--resume` is prohibited. |
-| Verification fails | Deployment may already exist; reconcile the route before resume. |
-| Plan/receipt hash mismatch | Restore a trusted artifact or regenerate; never hand-edit retained release evidence. |
+| Local input, CLI, profile, target, artifact, or guard mismatch | No external write; correct inputs and start a new invocation. |
+| Publish fails, times out, or is interrupted | Mark indeterminate; inspect remote package state; never blindly republish. |
+| Deploy fails, times out, or is interrupted | Mark indeterminate; reconcile exact deployment and route; never retry as a new app. |
+| Route or post-deploy metadata verification fails | Treat as deployed but unverified; inspect the exact app before any new request. |
+| Existing execution claim or receipt | Stop; do not delete it merely to unblock replay. |
 
-There is no automatic rollback, deletion, or package cleanup.
+There is no automatic rollback, deletion, route change, or package cleanup.
 
 ## Safety
 
-The plan is an authorization boundary, not a convenience log. Missing,
-implicit, mismatched, or production environments block execution. Exact
-organization/tenant bindings remain mandatory, pack receives no authentication
-flags, package content or exact-file drift stops before publication, and
-indeterminate external writes require remote reconciliation.
+- Treat governed release as the default unless the user explicitly requests a
+  synthetic internal Alpha/Staging test.
+- Never bypass exact create-versus-upgrade intent or remote identity guards.
+- Never retry an indeterminate publish/deploy, mutate the route, or
+  delete/recreate an occupied app.
+- Never put bearer tokens, secrets, environment dumps, or unredacted service
+  responses in arguments, logs, plans, or receipts.
+- Never describe a testing receipt as signed, production eligible, release
+  evidence, or customer-data approval.
 
 ## Data Classification And Retention
 
-- Never place secrets, tokens, confidential profile files, or signed URLs in a
-  plan.
-- Store plans and receipts as internal release evidence in an ignored,
-  access-controlled directory.
-- Absolute local paths, tenant/folder/client IDs, and package names are internal
-  operational metadata.
-- Remove obsolete failed artifacts after the owning release-recovery window.
-- The helper emits no telemetry of its own.
+Testing-only inputs and app data must be synthetic. Governed/recovery evidence
+may contain internal deployment metadata and must remain in ignored,
+access-controlled evidence storage. Retain claims and indeterminate receipts
+until remote reconciliation is complete; retain successful receipts according
+to the release record policy. Do not retain credentials, raw authentication
+responses, or unredacted environment state.
 
-## Known Limitations
+## Known limitations
 
-- `uipath.json` validation is structural rather than a complete product-schema
-  validation.
-- UiPath CLI 1.198.0 produces nondeterministic NuGet envelope bytes and generated
-  project GUIDs. The content-v1 digest normalizes only those known generated
-  fields while hashing every coded-app content file and the package manifest;
-  the exact execution `.nupkg` SHA-256 is still retained and rechecked before
-  publication.
-- CLI status proves the named profile's reported organization and tenant, not
-  the complete effective permission set. Release-specific RBAC checks remain
-  mandatory.
-- Anonymous HTTPS verification does not prove authenticated app startup or
-  functional acceptance.
-- One staging or alpha run is not production certification.
+- UiPath CLI 1.198.0 generates nondeterministic NuGet envelope data. Governed
+  and testing helpers retain both normalized coded-app content and exact file
+  digests.
+- CLI login status proves the reported organization and tenant, not all
+  effective permissions.
+- Route availability does not prove authenticated application behavior; that
+  remains a separate acceptance test.
+- Testing-only deployment is not production certification, even when it
+  succeeds.
 
 ## Certification Status
 
-The helper is offline-hardened against its v2.2 contracts and UiPath CLI 1.198.0
-command surface. Each live staging or alpha target still requires its own
-authenticated RBAC, route, package, and functional acceptance evidence.
-Production targets are rejected by this helper.
+Status: **Maintainer-verified deployment helper; live target acceptance remains
+per deployment.** Unit tests certify fail-closed argument, artifact, receipt,
+claim, and recovery boundaries using synthetic fixtures. They do not certify a
+UiPath tenant, effective permissions, authenticated application behavior, or
+production readiness.
+
+## Last Verified
+
+Last verified: **2026-08-05**.
 
 ## Validation
 
 ```bash
-python3.11 -m unittest discover -s uipcodedappdeploy/tests -p 'test_*.py'
+python3.12 -m unittest discover -s uipcodedappdeploy/tests -p 'test_*.py'
 python3 tools/validate_repo.py
 ```
 
-The unit suite stubs subprocess and network execution. Live certification must
-use synthetic data, an isolated nonproduction target, a dedicated
-least-privilege identity, explicit plan-hash approval, remote-state inspection,
-and retained release receipts.
+Unit tests stub subprocess and network activity. Live testing must use
+synthetic data, exact nonproduction targets, internal authentication, remote
+state reconciliation, and retained automatic receipts.
