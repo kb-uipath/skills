@@ -318,7 +318,10 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
         }
         plan["plan_hash"] = self.core._document_hash(plan, "plan_hash")
         return plan, {
-            "runtime_manifest": runtime_manifest.resolve(),
+            "runtime_manifest": {},
+            "paths": {
+                "recovery_runtime_manifest": runtime_manifest.resolve(),
+            },
             "failed_plan": {
                 "parameters": {
                     "main_file": "index.html",
@@ -400,6 +403,9 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
         args = self.args(
             cli,
             root,
+            recovery_runtime_manifest=str(
+                context["paths"]["recovery_runtime_manifest"]
+            ),
             expected_recovery_plan_hash=plan["plan_hash"],
             expected_runtime_manifest_hash=plan["candidate"][
                 "recovery_runtime_manifest_hash"
@@ -469,6 +475,30 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         claim_path = Path(receipt["execution_claim"]["path"])
         return receipt, claim_path, error, remote_guard, deploy, verify, inspect
+
+    def test_reconciled_runtime_manifest_argument_binds_evidence_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            expected = root / "runtime.manifest.json"
+            expected.write_text("{}\n", encoding="utf-8")
+            other = root / "other.manifest.json"
+            other.write_text("{}\n", encoding="utf-8")
+            context = {
+                "runtime_manifest": {},
+                "paths": {"recovery_runtime_manifest": expected.resolve()},
+            }
+            self.assertEqual(
+                self.testing._reconciled_runtime_manifest_path(
+                    str(expected), context
+                ),
+                expected.resolve(),
+            )
+            with self.assertRaisesRegex(SystemExit, "does not match recovery evidence"):
+                self.testing._reconciled_runtime_manifest_path(str(other), context)
+            with self.assertRaisesRegex(SystemExit, "lacks an exact"):
+                self.testing._reconciled_runtime_manifest_path(
+                    str(expected), {"runtime_manifest": {}}
+                )
 
     def test_main_requires_explicit_testing_and_execute_flags(self):
         base = ["--intent", "upgrade", "--candidate-mode", "reconciled"]
