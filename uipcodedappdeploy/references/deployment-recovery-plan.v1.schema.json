@@ -1,0 +1,295 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kb-uipath.github.io/skills/uipcodedappdeploy/deployment-recovery-plan.v1.schema.json",
+  "title": "UiPath Coded App Exact-Upgrade Recovery Plan v1.2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind", "schema_version", "created_at", "recovery_helper_sha256",
+    "core_helper_path", "core_helper_sha256", "evidence",
+    "evidence_binding_hash", "project_root", "target", "existing_deployment",
+    "candidate", "upgrade_guard", "failed_attempt", "stages", "execution",
+    "plan_hash"
+  ],
+  "properties": {
+    "kind": { "const": "uipcodedappdeploy.upgrade-recovery-plan" },
+    "schema_version": { "const": "1.2" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "recovery_helper_sha256": { "$ref": "#/$defs/hash" },
+    "core_helper_path": { "$ref": "#/$defs/absolutePath" },
+    "core_helper_sha256": { "$ref": "#/$defs/hash" },
+    "evidence": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "prefixItems": [
+        { "$ref": "#/$defs/priorPlan" },
+        { "$ref": "#/$defs/priorReceipt" },
+        { "$ref": "#/$defs/priorConfig" },
+        { "$ref": "#/$defs/failedPlan" },
+        { "$ref": "#/$defs/failedReceipt" },
+        { "$ref": "#/$defs/reconciliation" },
+        { "$ref": "#/$defs/runtimeManifest" }
+      ],
+      "items": false
+    },
+    "evidence_binding_hash": { "$ref": "#/$defs/hash" },
+    "project_root": { "$ref": "#/$defs/absolutePath" },
+    "target": { "$ref": "#/$defs/target" },
+    "existing_deployment": { "$ref": "#/$defs/existingDeployment" },
+    "candidate": { "$ref": "#/$defs/candidate" },
+    "upgrade_guard": { "$ref": "#/$defs/upgradeGuard" },
+    "failed_attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plan_hash", "approved_plan_hash", "deployment_binding_hash",
+        "receipt_status", "recovery"
+      ],
+      "properties": {
+        "plan_hash": { "$ref": "#/$defs/hash" },
+        "approved_plan_hash": { "$ref": "#/$defs/hash" },
+        "deployment_binding_hash": { "$ref": "#/$defs/hash" },
+        "receipt_status": { "const": "in_progress" },
+        "recovery": { "$ref": "#/$defs/nonEmpty" }
+      }
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/stage" }
+    },
+    "execution": {
+      "const": {
+        "executable": true,
+        "blockers": [],
+        "resume_supported": false,
+        "publishes_package": false,
+        "changes_route": false,
+        "environment_policy": {
+          "preserved": [
+            "HOME"
+          ],
+          "forbidden": [
+            "NODE_OPTIONS",
+            "NODE_PATH",
+            "NODE_EXTRA_CA_CERTS",
+            "NODE_TLS_REJECT_UNAUTHORIZED",
+            "NODE_DEBUG",
+            "NODE_DEBUG_NATIVE",
+            "ELECTRON_RUN_AS_NODE",
+            "PREBUILDS_ONLY",
+            "DYLD_INSERT_LIBRARIES",
+            "DYLD_LIBRARY_PATH",
+            "LD_PRELOAD",
+            "SSL_CERT_FILE",
+            "SSL_CERT_DIR",
+            "OPENSSL_CONF",
+            "OPENSSL_MODULES",
+            "SSLKEYLOGFILE",
+            "DEBUG",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "NO_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+            "no_proxy",
+            "UIPATH_ACCESS_TOKEN",
+            "UIPATH_BASE_URL",
+            "UIPATH_URL",
+            "UIPATH_ORG_ID",
+            "UIPATH_TENANT_NAME",
+            "UIPATH_FOLDER_KEY",
+            "UIPATH_PROJECT_ID",
+            "UIPATH_CLI_FEEDBACK_ENDPOINT"
+          ],
+          "overrides": {
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "LANG": "C",
+            "LC_ALL": "C",
+            "TERM": "dumb",
+            "NO_COLOR": "1",
+            "UIPATH_CLI_DISABLE_VERSION_SYNC": "1",
+            "UIPATH_TELEMETRY_DISABLED": "true"
+          }
+        }
+      }
+    },
+    "plan_hash": { "$ref": "#/$defs/hash" }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "guid": { "type": "string", "format": "uuid" },
+    "nonEmpty": { "type": "string", "minLength": 1 },
+    "absolutePath": { "type": "string", "pattern": "^/" },
+    "semver": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$" },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environment", "control_plane_url", "organization_name",
+        "organization_id", "tenant_name", "tenant_id", "folder_key", "client_id"
+      ],
+      "properties": {
+        "environment": { "enum": ["staging", "alpha"] },
+        "control_plane_url": { "type": "string", "format": "uri" },
+        "organization_name": { "$ref": "#/$defs/nonEmpty" },
+        "organization_id": { "$ref": "#/$defs/guid" },
+        "tenant_name": { "$ref": "#/$defs/nonEmpty" },
+        "tenant_id": { "$ref": "#/$defs/guid" },
+        "folder_key": { "$ref": "#/$defs/guid" },
+        "client_id": { "$ref": "#/$defs/guid" }
+      }
+    },
+    "existingDeployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app_name", "package_name", "app_type", "system_name", "deployment_id",
+        "route_name", "app_url", "deployed_version"
+      ],
+      "properties": {
+        "app_name": { "$ref": "#/$defs/nonEmpty" },
+        "package_name": { "$ref": "#/$defs/nonEmpty" },
+        "app_type": { "enum": ["Web", "Action"] },
+        "system_name": { "type": "string", "pattern": "^ID[0-9a-fA-F]{32}$" },
+        "deployment_id": { "$ref": "#/$defs/guid" },
+        "route_name": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        "app_url": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "deployed_version": { "$ref": "#/$defs/semver" }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version", "system_name", "deploy_version", "source_sha", "package_path",
+        "package_content_digest", "package_file_digest",
+        "candidate_package_file_digest", "source_cli_executable",
+        "source_cli_executable_sha256", "recovery_cli_executable",
+        "recovery_cli_executable_sha256", "recovery_node_executable",
+        "recovery_node_executable_sha256", "recovery_node_version",
+        "cli_version", "cli_profile",
+        "cli_profile_hash", "codedapp_tool_source_file",
+        "codedapp_tool_source_file_sha256", "codedapp_tool_source_manifest",
+        "codedapp_tool_source_manifest_sha256", "codedapp_tool_recovery_file",
+        "codedapp_tool_recovery_file_sha256", "codedapp_tool_recovery_manifest",
+        "codedapp_tool_recovery_manifest_sha256", "codedapp_tool_version",
+        "codedapp_tool_git_head", "recovery_runtime_root",
+        "recovery_runtime_tree_sha256", "recovery_runtime_manifest_hash",
+        "recovery_workspace", "recovery_workspace_app_config_sha256",
+        "recovery_runtime_self_test",
+        "patch_algorithm", "patch_contract_sha256", "tags"
+      ],
+      "properties": {
+        "version": { "$ref": "#/$defs/semver" },
+        "system_name": { "type": "string", "pattern": "^ID[0-9a-fA-F]{32}$" },
+        "deploy_version": { "type": "integer", "minimum": 1 },
+        "source_sha": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$" },
+        "package_path": { "$ref": "#/$defs/nonEmpty" },
+        "package_content_digest": { "$ref": "#/$defs/hash" },
+        "package_file_digest": { "$ref": "#/$defs/hash" },
+        "candidate_package_file_digest": { "$ref": "#/$defs/hash" },
+        "source_cli_executable": { "$ref": "#/$defs/absolutePath" },
+        "source_cli_executable_sha256": { "$ref": "#/$defs/hash" },
+        "recovery_cli_executable": { "$ref": "#/$defs/absolutePath" },
+        "recovery_cli_executable_sha256": { "$ref": "#/$defs/hash" },
+        "recovery_node_executable": { "$ref": "#/$defs/absolutePath" },
+        "recovery_node_executable_sha256": { "$ref": "#/$defs/hash" },
+        "recovery_node_version": { "$ref": "#/$defs/semver" },
+        "cli_version": { "$ref": "#/$defs/semver" },
+        "cli_profile": { "$ref": "#/$defs/nonEmpty" },
+        "cli_profile_hash": { "$ref": "#/$defs/hash" },
+        "codedapp_tool_source_file": { "$ref": "#/$defs/absolutePath" },
+        "codedapp_tool_source_file_sha256": { "$ref": "#/$defs/hash" },
+        "codedapp_tool_source_manifest": { "$ref": "#/$defs/absolutePath" },
+        "codedapp_tool_source_manifest_sha256": { "$ref": "#/$defs/hash" },
+        "codedapp_tool_recovery_file": { "$ref": "#/$defs/absolutePath" },
+        "codedapp_tool_recovery_file_sha256": { "$ref": "#/$defs/hash" },
+        "codedapp_tool_recovery_manifest": { "$ref": "#/$defs/absolutePath" },
+        "codedapp_tool_recovery_manifest_sha256": { "$ref": "#/$defs/hash" },
+        "codedapp_tool_version": { "$ref": "#/$defs/semver" },
+        "codedapp_tool_git_head": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "recovery_runtime_root": { "$ref": "#/$defs/absolutePath" },
+        "recovery_runtime_tree_sha256": { "$ref": "#/$defs/hash" },
+        "recovery_runtime_manifest_hash": { "$ref": "#/$defs/hash" },
+        "recovery_workspace": { "$ref": "#/$defs/absolutePath" },
+        "recovery_workspace_app_config_sha256": { "$ref": "#/$defs/hash" },
+        "recovery_runtime_self_test": { "$ref": "#/$defs/runtimeSelfTest" },
+        "patch_algorithm": { "const": "uipath-codedapp-tool-1.198.0-exact-upgrade-v2" },
+        "patch_contract_sha256": { "$ref": "#/$defs/hash" },
+        "tags": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/nonEmpty" } }
+      }
+    },
+    "upgradeGuard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode", "deployment_id", "system_name", "deploy_version",
+        "current_version", "route_name", "fresh_deploy_prohibited",
+        "routing_name_omitted_from_patch", "local_execution_claim_scope",
+        "local_execution_claim_key"
+      ],
+      "properties": {
+        "mode": { "const": "exact_deployment_fail_closed_v1" },
+        "deployment_id": { "$ref": "#/$defs/guid" },
+        "system_name": { "type": "string", "pattern": "^ID[0-9a-fA-F]{32}$" },
+        "deploy_version": { "type": "integer", "minimum": 1 },
+        "current_version": { "$ref": "#/$defs/semver" },
+        "route_name": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        "fresh_deploy_prohibited": { "const": true },
+        "routing_name_omitted_from_patch": { "const": true },
+        "local_execution_claim_scope": { "const": "home_scoped_exact_candidate_v1" },
+        "local_execution_claim_key": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "runtimeSelfTest": {
+      "const": {
+        "node_syntax": "passed",
+        "dynamic_tool_resolution": "passed",
+        "unguarded_deploy": "blocked_before_network",
+        "verify_only_without_guard": "blocked_before_network"
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "action", "effect"],
+      "properties": {
+        "name": { "$ref": "#/$defs/nonEmpty" },
+        "action": { "$ref": "#/$defs/nonEmpty" },
+        "effect": { "enum": ["local_read", "local_write", "external_read", "external_write"] },
+        "cwd": { "type": "string" },
+        "command": { "type": "array", "items": { "type": "string" } },
+        "url": { "type": "string", "format": "uri" },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 120 },
+        "attempts": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "delays_seconds": {
+          "type": "array",
+          "maxItems": 4,
+          "items": { "type": "integer", "minimum": 0, "maximum": 10 }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "path", "sha256"],
+      "properties": {
+        "label": { "type": "string" },
+        "path": { "$ref": "#/$defs/absolutePath" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "priorPlan": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "prior_successful_plan" } } }] },
+    "priorReceipt": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "prior_successful_receipt" } } }] },
+    "priorConfig": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "prior_successful_app_config" } } }] },
+    "failedPlan": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "failed_plan" } } }] },
+    "failedReceipt": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "failed_receipt" } } }] },
+    "reconciliation": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "reconciliation_evidence" } } }] },
+    "runtimeManifest": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "recovery_runtime_manifest" } } }] }
+  }
+}

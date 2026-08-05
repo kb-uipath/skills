@@ -2,15 +2,15 @@
   "_type": "beads_history_manifest",
   "artifacts": {
     ".beads/history.jsonl": {
-      "records": 134,
-      "sha256": "93feca8ead579902ed57a55d99c1e0f7a2c10b50733409b0eb3736ebbb60c38e"
+      "records": 151,
+      "sha256": "7084ab4841d994a16b7fc820954e31278320d3e43eb7f9e11b78d9cb17fbff2a"
     },
     ".beads/issues.jsonl": {
-      "records": 28,
-      "sha256": "7e1d20b3ddec792f64b43ff9dc0c17d42d5fea17ebaef3199a0ec0a69ae52344"
+      "records": 31,
+      "sha256": "f35b2899a293ce0e299b00c4790c09b8f145003431a1d82c47904b9f566fad1d"
     }
   },
-  "dolt_head": "1ekheqrklopf2n9k6svvi67cf8o8htc2",
+  "dolt_head": "jenuiqs9168g48t8ru1rdg4iuslbqijd",
   "dolt_ref": "refs/dolt/data",
   "projection": "Deduplicated issue-table snapshots for GitHub review; the Dolt ref is the complete recovery source.",
   "schema_version": 1
