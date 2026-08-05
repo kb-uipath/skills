@@ -2956,6 +2956,24 @@ def _revalidate_reconciled_immutable_runtime(
         core._fail("Reconciled immutable runtime changed after the candidate claim.")
 
 
+def _reconciled_runtime_manifest_path(
+    supplied_value: str | None,
+    context: dict[str, Any],
+) -> Path:
+    paths = context.get("paths")
+    bound = paths.get("recovery_runtime_manifest") if isinstance(paths, dict) else None
+    if not isinstance(bound, Path) or not bound.is_absolute():
+        core._fail("Recovery evidence lacks an exact runtime-manifest path binding.")
+    if bound.is_symlink() or not bound.is_file():
+        core._fail("Recovery runtime-manifest evidence must be a regular non-symlink file.")
+    canonical_bound = bound.resolve(strict=True)
+    if supplied_value:
+        supplied = Path(supplied_value).expanduser().resolve(strict=True)
+        if supplied != canonical_bound:
+            core._fail("--recovery-runtime-manifest does not match recovery evidence.")
+    return canonical_bound
+
+
 def _reconciled_upgrade(
     args: argparse.Namespace,
     target: dict[str, Any],
@@ -2977,10 +2995,9 @@ def _reconciled_upgrade(
     recovery_environment = recovery._recovery_environment(environment)
     _match_recovery_inputs(args, plan, target, cli)
     _assert_no_prior_recovery_execution(recovery_plan_path, plan, recovery_environment)
-    if args.recovery_runtime_manifest:
-        supplied = Path(args.recovery_runtime_manifest).expanduser().resolve(strict=True)
-        if supplied != context["runtime_manifest"]:
-            core._fail("--recovery-runtime-manifest does not match recovery evidence.")
+    runtime_manifest_path = _reconciled_runtime_manifest_path(
+        args.recovery_runtime_manifest, context
+    )
     project_root = Path(plan["project_root"])
     _audit_tracked_source(project_root, project_root)
     _resolve_reconciled_package(project_root, plan, context)
@@ -2995,7 +3012,7 @@ def _reconciled_upgrade(
             config_path,
             Path(plan["candidate"]["source_cli_executable"]).parents[3],
             Path(plan["candidate"]["recovery_runtime_root"]),
-            context["runtime_manifest"],
+            runtime_manifest_path,
         ],
         include_workspace=False,
     )
