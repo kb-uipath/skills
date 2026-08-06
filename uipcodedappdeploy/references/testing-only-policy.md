@@ -39,16 +39,18 @@ recorded.
 - Intent is exactly `create` or `upgrade`; automatic upsert is prohibited.
 - A create proves no matching deployment and an unused route before publish.
 - An upgrade proves the exact deployment, system, route, current version, and
-  published deploy version before and after the write.
+  published deploy version before and after the write. A dist upgrade also
+  binds those identities before publication, rejects a non-progressing version,
+  and verifies the published candidate before its single route-omitting PATCH.
 - Route changes, random routes, delete/recreate, omit-and-retry, and fresh-app
   fallback are prohibited.
 - A host-local atomic operation claim prevents same-host concurrent or blind
   replay. It is not distributed serialization; do not run the same candidate
   from another user or host. Create
   claims use stable remote coordinates rather than repack timestamps; exact
-  candidate bytes remain fingerprinted inside the claim and receipt. Reconciled
-  upgrades claim the recovery lane's exact-candidate key, preventing cross-lane
-  PATCH races.
+  candidate bytes remain fingerprinted inside the claim and receipt. Both dist
+  and reconciled upgrades claim the recovery lane's exact-candidate key,
+  preventing cross-lane PATCH races.
 - Helper, CLI, Node, package, configuration, and guarded runtime bytes are
   revalidated after the indeterminate stage receipt is durable and immediately
   before each external write. Unknown runtime versions fail closed.
@@ -77,8 +79,11 @@ authoritative.
 ## Candidate modes
 
 `dist` copies the supplied distribution into an isolated evidence workspace,
-hashes it, packs and validates it there, performs a read-only create-absence
-guard, and only then publishes and makes one guarded fresh deployment.
+hashes it, and packs and validates it there. With `create`, it performs a
+read-only absence guard before publication and one guarded fresh deployment.
+With `upgrade`, it verifies the exact existing deployment before publication,
+publishes once, verifies the exact published candidate, and performs one
+route-preserving in-place upgrade against that deployment.
 
 `reconciled` validates an existing exact recovery plan and guarded runtime,
 skips build, pack, and publish, and permits only the bound in-place upgrade.

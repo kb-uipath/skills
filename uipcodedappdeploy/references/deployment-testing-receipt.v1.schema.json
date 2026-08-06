@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://kb-uipath.github.io/skills/uipcodedappdeploy/deployment-testing-receipt.v1.schema.json",
-  "title": "UiPath Coded App Testing-only Deployment Receipt v1.0",
+  "title": "UiPath Coded App Testing-only Deployment Receipt v1.1",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "kind": { "const": "uipcodedappdeploy.testing-receipt" },
-    "schema_version": { "const": "1.0" },
+    "schema_version": { "const": "1.1" },
     "helper_sha256": { "$ref": "#/$defs/hash" },
     "attempt_phase": { "enum": ["preflight", "claimed"] },
     "preflight_error_code": {
@@ -42,7 +42,7 @@
       "additionalProperties": false,
       "required": ["policy_version", "data_classification", "internal_authenticated_required", "production_eligible", "release_evidence", "waived_gates", "nonwaivable_controls"],
       "properties": {
-        "policy_version": { "const": "1.0" },
+        "policy_version": { "const": "1.1" },
         "data_classification": { "const": "synthetic_only" },
         "internal_authenticated_required": { "const": true },
         "production_eligible": { "const": false },
@@ -105,9 +105,10 @@
     "observations": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["prewrite", "postwrite"],
+      "required": ["prewrite", "published_candidate", "postwrite"],
       "properties": {
         "prewrite": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/observation" }] },
+        "published_candidate": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/observation" }] },
         "postwrite": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/observation" }] }
       }
     },
@@ -153,6 +154,7 @@
           "observations": {
             "properties": {
               "prewrite": { "type": "null" },
+              "published_candidate": { "type": "null" },
               "postwrite": { "type": "null" }
             }
           },
@@ -179,8 +181,8 @@
         "properties": {
           "candidate": {
             "type": "object",
-            "required": ["mode"],
-            "properties": { "mode": { "const": "dist" } }
+            "required": ["mode", "intent"],
+            "properties": { "mode": { "const": "dist" }, "intent": { "const": "create" } }
           }
         }
       },
@@ -199,6 +201,33 @@
             }
           },
           "stages": { "$ref": "#/$defs/distStages" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "candidate": {
+            "type": "object",
+            "required": ["mode", "intent"],
+            "properties": { "mode": { "const": "dist" }, "intent": { "const": "upgrade" } }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "candidate": {
+            "properties": {
+              "dist_digest": { "$ref": "#/$defs/hash" },
+              "recovery_plan_hash": { "type": "null" },
+              "deployment_id": { "$ref": "#/$defs/guid" },
+              "system_name": { "type": "string", "pattern": "^ID[0-9a-fA-F]{32}$" },
+              "deploy_version": { "type": "integer", "minimum": 1 },
+              "current_version": { "$ref": "#/$defs/semver" },
+              "runtime_manifest_hash": { "$ref": "#/$defs/hash" }
+            }
+          },
+          "stages": { "$ref": "#/$defs/distUpgradeStages" }
         }
       }
     },
@@ -250,6 +279,26 @@
               "properties": { "status": { "const": "succeeded" } },
               "required": ["status"]
             }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": { "const": "succeeded_testing" },
+          "candidate": {
+            "type": "object",
+            "required": ["mode", "intent"],
+            "properties": { "mode": { "const": "dist" }, "intent": { "const": "upgrade" } }
+          }
+        },
+        "required": ["status", "candidate"]
+      },
+      "then": {
+        "properties": {
+          "observations": {
+            "properties": { "published_candidate": { "$ref": "#/$defs/observation" } }
           }
         }
       }
@@ -403,7 +452,7 @@
         "version": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/semver" }] },
         "appName": { "type": "string", "minLength": 1 },
         "appUrl": { "type": "string", "format": "uri" },
-        "operation": { "enum": ["testing_create_verify", "testing_create_post", "deploy", "recovery_verify"] }
+        "operation": { "enum": ["testing_create_verify", "testing_create_post", "testing_upgrade_pre", "testing_upgrade_candidate", "testing_upgrade_execute", "testing_upgrade_post", "deploy", "recovery_verify"] }
       }
     },
     "target": {
@@ -491,6 +540,30 @@
         { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "pre_deploy_barrier" }, "effect": { "const": "local_read" } } }] },
         { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "deploy" }, "effect": { "const": "external_write" } } }] },
         { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "post_create_guard" }, "effect": { "const": "external_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "route_verify" }, "effect": { "const": "external_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "config_verify" }, "effect": { "const": "local_read" } } }] }
+      ],
+      "items": false
+    },
+    "distUpgradeStages": {
+      "type": "array",
+      "minItems": 16,
+      "maxItems": 16,
+      "prefixItems": [
+        { "$ref": "#/$defs/localPreflightStage" },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "dist_copy" }, "effect": { "const": "local_write" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "pack" }, "effect": { "const": "local_write" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "package_audit" }, "effect": { "const": "local_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "runtime_prepare" }, "effect": { "const": "local_write" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "pre_guard_barrier" }, "effect": { "const": "local_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "upgrade_pre_guard" }, "effect": { "const": "external_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "pre_publish_barrier" }, "effect": { "const": "local_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "publish" }, "effect": { "const": "external_write" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "app_config_bind" }, "effect": { "const": "local_write" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "published_candidate_guard" }, "effect": { "const": "external_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "pre_deploy_barrier" }, "effect": { "const": "local_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "deploy" }, "effect": { "const": "external_write" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "upgrade_post_guard" }, "effect": { "const": "external_read" } } }] },
         { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "route_verify" }, "effect": { "const": "external_read" } } }] },
         { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "config_verify" }, "effect": { "const": "local_read" } } }] }
       ],

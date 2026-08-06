@@ -10,6 +10,10 @@ The supported candidate matrix is deliberately narrow:
 
 * ``dist`` + ``create`` copies and binds exact distribution bytes, proves that
   the deployment and route are absent, then packs, publishes, and deploys.
+* ``dist`` + ``upgrade`` additionally binds an exact existing deployment,
+  proves its route and current version before publication, reconciles the
+  newly published candidate, and performs one guarded in-place upgrade whose
+  PATCH cannot carry ``routingName``.
 * ``reconciled`` + ``upgrade`` validates an existing v1.2 recovery plan and
   guarded runtime, then performs only its exact in-place deploy operation.
 """
@@ -41,8 +45,8 @@ import uipcodedappdeploy_recover as recovery  # noqa: E402
 
 
 RECEIPT_KIND = "uipcodedappdeploy.testing-receipt"
-RECEIPT_SCHEMA_VERSION = "1.0"
-POLICY_VERSION = "1.0"
+RECEIPT_SCHEMA_VERSION = "1.1"
+POLICY_VERSION = "1.1"
 EXPECTED_CLI_VERSION = "1.198.0"
 EXPECTED_CLI_GIT_HEAD = "1fadf03d7a8dd102742571dff569fdac11808afb"
 EXPECTED_CLI_SHA256 = (
@@ -57,9 +61,9 @@ EXPECTED_CODEDAPP_TOOL_MANIFEST_SHA256 = (
 SUPPORTED_NODE_RUNTIMES = {
     "24.13.0": "sha256:aed3321cf1a2ad333514339e8f7fc58a01ed9b6ac0d1325cd052260004928287",
 }
-CREATE_GUARD_PATCH_ALGORITHM = "uipath-codedapp-tool-1.198.0-testing-create-guard-v1"
+CREATE_GUARD_PATCH_ALGORITHM = "uipath-codedapp-tool-1.198.0-testing-deploy-guard-v2"
 CREATE_GUARD_RUNTIME_KIND = "uipcodedappdeploy.testing-create-guard-runtime"
-CREATE_GUARD_RUNTIME_VERSION = "1.0"
+CREATE_GUARD_RUNTIME_VERSION = "1.1"
 
 WAIVED_GATES = [
     "clean_git_release_provenance",
@@ -137,6 +141,25 @@ DIST_STAGE_CONTRACT = [
     ("config_verify", "local_read"),
 ]
 
+DIST_UPGRADE_STAGE_CONTRACT = [
+    ("local_preflight", "local_read"),
+    ("dist_copy", "local_write"),
+    ("pack", "local_write"),
+    ("package_audit", "local_read"),
+    ("runtime_prepare", "local_write"),
+    ("pre_guard_barrier", "local_read"),
+    ("upgrade_pre_guard", "external_read"),
+    ("pre_publish_barrier", "local_read"),
+    ("publish", "external_write"),
+    ("app_config_bind", "local_write"),
+    ("published_candidate_guard", "external_read"),
+    ("pre_deploy_barrier", "local_read"),
+    ("deploy", "external_write"),
+    ("upgrade_post_guard", "external_read"),
+    ("route_verify", "external_read"),
+    ("config_verify", "local_read"),
+]
+
 RECONCILED_STAGE_CONTRACT = [
     ("local_preflight", "local_read"),
     ("remote_pre_guard", "external_read"),
@@ -153,14 +176,23 @@ CREATE_GUARD_PATCH_EDITS = (
   const logger3 = options.logger ?? {""",
         """async function executeDeploy(options) {
   const testingCreateMode = options.testingCreateMode;
-  if (![\"verify\", \"execute\", \"post\"].includes(testingCreateMode)) {
+  const testingUpgradeMode = testingCreateMode?.startsWith(\"upgrade-\");
+  if (![\"verify\", \"execute\", \"post\", \"upgrade-pre\", \"upgrade-candidate\", \"upgrade-execute\", \"upgrade-post\"].includes(testingCreateMode)) {
     throw new Error(\"TESTING_CREATE_GUARD_REQUIRED: this isolated runtime cannot mutate apps\");
   }
   const testingExpectedDeploymentId = options.testingExpectedDeploymentId;
   const testingExpectedSystemName = options.testingExpectedSystemName;
   const testingExpectedDeployVersion = options.testingExpectedDeployVersion;
+  const testingExpectedCurrentVersion = options.testingExpectedCurrentVersion;
+  const testingExpectedRouteName = options.testingExpectedRouteName;
   if (testingCreateMode === \"post\" && (!/^[0-9a-fA-F-]{36}$/.test(testingExpectedDeploymentId ?? \"\") || !/^ID[0-9a-fA-F]{32}$/.test(testingExpectedSystemName ?? \"\") || !/^[1-9][0-9]*$/.test(testingExpectedDeployVersion ?? \"\"))) {
     throw new Error(\"TESTING_CREATE_POST_GUARD_REQUIRED\");
+  }
+  if (testingUpgradeMode && (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(testingExpectedDeploymentId ?? \"\") || !testingExpectedCurrentVersion || !testingExpectedRouteName)) {
+    throw new Error(\"TESTING_UPGRADE_TARGET_GUARD_REQUIRED\");
+  }
+  if (testingUpgradeMode && testingCreateMode !== \"upgrade-pre\" && (!/^ID[0-9a-fA-F]{32}$/.test(testingExpectedSystemName ?? \"\") || !/^[1-9][0-9]*$/.test(testingExpectedDeployVersion ?? \"\"))) {
+    throw new Error(\"TESTING_UPGRADE_CANDIDATE_GUARD_REQUIRED\");
   }
   const logger3 = options.logger ?? {""",
     ),
@@ -168,6 +200,30 @@ CREATE_GUARD_PATCH_EDITS = (
         """    const deployedApp = await getDeployedApp(appName, displayTitle, envConfig);
     let operationResult;""",
         """    const deployedApp = await getDeployedApp(appName, displayTitle, envConfig);
+    if (testingUpgradeMode) {
+      if (!deployedApp || deployedApp.id !== testingExpectedDeploymentId) {
+        throw new Error(\"TESTING_UPGRADE_TARGET_MISMATCH: fresh deploy prohibited\");
+      }
+      if (deployedApp.title !== displayTitle) {
+        throw new Error(\"TESTING_UPGRADE_TITLE_MISMATCH\");
+      }
+      if (deployedApp.routingName !== testingExpectedRouteName || deployedApp.semVersion !== testingExpectedCurrentVersion) {
+        throw new Error(\"TESTING_UPGRADE_ROUTE_OR_VERSION_MISMATCH\");
+      }
+      if (testingCreateMode === \"upgrade-pre\") {
+        return {
+          appName: displayTitle,
+          appUrl: buildAppUrl(envConfig.baseUrl, envConfig.orgName, deployedApp.routingName),
+          version: options.version,
+          deploymentId: deployedApp.id,
+          systemName: null,
+          deployVersion: null,
+          currentVersion: deployedApp.semVersion,
+          routeName: deployedApp.routingName,
+          operation: \"testing_upgrade_pre\"
+        };
+      }
+    }
     if (testingCreateMode === \"post\") {
       if (!deployedApp || deployedApp.id !== testingExpectedDeploymentId) {
         throw new Error(\"TESTING_CREATE_POST_DEPLOYMENT_MISMATCH\");
@@ -191,10 +247,12 @@ CREATE_GUARD_PATCH_EDITS = (
         operation: \"testing_create_post\"
       };
     }
-    if (deployedApp) {
+    if (deployedApp && !testingUpgradeMode) {
       throw new Error(\"TESTING_CREATE_DEPLOYMENT_EXISTS\");
     }
-    await checkAppNameUniqueness(routingName, envConfig);
+    if (!testingUpgradeMode) {
+      await checkAppNameUniqueness(routingName, envConfig);
+    }
     if (testingCreateMode === \"verify\") {
       return {
         appName: displayTitle,
@@ -211,8 +269,44 @@ CREATE_GUARD_PATCH_EDITS = (
     let operationResult;""",
     ),
     (
+        """      if (publishedApp.deployVersion === undefined) {
+        spinner.fail(source_default.red(MESSAGES.ERRORS.DEPLOY_VERSION_NOT_FOUND));
+        throw new Error(MESSAGES.ERRORS.DEPLOY_VERSION_NOT_FOUND);
+      }
+      await upgradeApp(deployedApp.id, displayTitle, publishedApp.deployVersion, options.pathName ? routingName : undefined, envConfig, options.tags, options.clientId);""",
+        """      if (publishedApp.deployVersion === undefined) {
+        spinner.fail(source_default.red(MESSAGES.ERRORS.DEPLOY_VERSION_NOT_FOUND));
+        throw new Error(MESSAGES.ERRORS.DEPLOY_VERSION_NOT_FOUND);
+      }
+      if (testingUpgradeMode && (publishedApp.systemName !== testingExpectedSystemName || String(publishedApp.deployVersion) !== testingExpectedDeployVersion)) {
+        throw new Error(\"TESTING_UPGRADE_CANDIDATE_MISMATCH\");
+      }
+      if (testingCreateMode === \"upgrade-candidate\" || testingCreateMode === \"upgrade-post\") {
+        return {
+          appName: displayTitle,
+          appUrl: buildAppUrl(envConfig.baseUrl, envConfig.orgName, deployedApp.routingName),
+          version: publishedApp.definition?.codedAppMetadata?.packageVersion,
+          deploymentId: deployedApp.id,
+          systemName: publishedApp.systemName,
+          deployVersion: publishedApp.deployVersion,
+          currentVersion: deployedApp.semVersion,
+          routeName: deployedApp.routingName,
+          operation: testingCreateMode === \"upgrade-post\" ? \"testing_upgrade_post\" : \"testing_upgrade_candidate\"
+        };
+      }
+      await upgradeApp(deployedApp.id, displayTitle, publishedApp.deployVersion, testingUpgradeMode ? undefined : options.pathName ? routingName : undefined, envConfig, options.tags, options.clientId);""",
+    ),
+    (
+        """        deployVersion: publishedApp.deployVersion,
+        operation: \"upgrade\"""",
+        """        deployVersion: publishedApp.deployVersion,
+        currentVersion: version2,
+        routeName: deployedApp.routingName,
+        operation: testingCreateMode === \"upgrade-execute\" ? \"testing_upgrade_execute\" : \"upgrade\"""",
+    ),
+    (
         """  program2.command(\"deploy\").description(\"Deploy or upgrade app in UiPath\").option(\"-n, --name <name>\", \"App name\").option(\"--path-name <name>\", \"App pathname in the URL (https://<org>.uipath.host/<path-name>)\").option(\"--client-id <id>\", \"OAuth client ID override (non-confidential/public client)\").option(\"-v, --version <version>\", \"Target a specific published version\").option(\"--base-url <url>\", \"UiPath base URL\").option(\"--org-id <id>\", \"Organization ID\").option(\"--org-name <name>\", \"Organization name\").option(\"--tenant-id <id>\", \"Tenant ID\").option(\"--folder-key <key>\", \"Folder key\").option(\"--access-token <token>\", \"Access token\").option(\"--tags <tags>\", \"Comma-separated categorization labels for the deployed app (e.g. governance,insights)\").examples(DEPLOY_EXAMPLES).trackedAction(processContext, async (options) => {""",
-        """  program2.command(\"deploy\").description(\"Deploy or upgrade app in UiPath\").option(\"-n, --name <name>\", \"App name\").option(\"--path-name <name>\", \"App pathname in the URL (https://<org>.uipath.host/<path-name>)\").option(\"--client-id <id>\", \"OAuth client ID override (non-confidential/public client)\").option(\"-v, --version <version>\", \"Target a specific published version\").option(\"--base-url <url>\", \"UiPath base URL\").option(\"--org-id <id>\", \"Organization ID\").option(\"--org-name <name>\", \"Organization name\").option(\"--tenant-id <id>\", \"Tenant ID\").option(\"--folder-key <key>\", \"Folder key\").option(\"--access-token <token>\", \"Access token\").option(\"--tags <tags>\", \"Comma-separated categorization labels for the deployed app (e.g. governance,insights)\").option(\"--testing-create-mode <mode>\", \"Testing-only guarded create mode: verify, execute, or post\").option(\"--testing-expected-deployment-id <id>\", \"Exact post-create deployment ID\").option(\"--testing-expected-system-name <name>\", \"Exact post-create system name\").option(\"--testing-expected-deploy-version <number>\", \"Exact post-create deploy version\").examples(DEPLOY_EXAMPLES).trackedAction(processContext, async (options) => {""",
+        """  program2.command(\"deploy\").description(\"Deploy or upgrade app in UiPath\").option(\"-n, --name <name>\", \"App name\").option(\"--path-name <name>\", \"App pathname in the URL (https://<org>.uipath.host/<path-name>)\").option(\"--client-id <id>\", \"OAuth client ID override (non-confidential/public client)\").option(\"-v, --version <version>\", \"Target a specific published version\").option(\"--base-url <url>\", \"UiPath base URL\").option(\"--org-id <id>\", \"Organization ID\").option(\"--org-name <name>\", \"Organization name\").option(\"--tenant-id <id>\", \"Tenant ID\").option(\"--folder-key <key>\", \"Folder key\").option(\"--access-token <token>\", \"Access token\").option(\"--tags <tags>\", \"Comma-separated categorization labels for the deployed app (e.g. governance,insights)\").option(\"--testing-create-mode <mode>\", \"Testing-only guarded deployment mode\").option(\"--testing-expected-deployment-id <id>\", \"Exact deployment ID\").option(\"--testing-expected-system-name <name>\", \"Exact candidate system name\").option(\"--testing-expected-deploy-version <number>\", \"Exact candidate deploy version\").option(\"--testing-expected-current-version <version>\", \"Exact current deployed version\").option(\"--testing-expected-route-name <name>\", \"Exact existing route\").examples(DEPLOY_EXAMPLES).trackedAction(processContext, async (options) => {""",
     ),
     (
         """      accessToken: options.accessToken,
@@ -224,13 +318,15 @@ CREATE_GUARD_PATCH_EDITS = (
       testingExpectedDeploymentId: options.testingExpectedDeploymentId,
       testingExpectedSystemName: options.testingExpectedSystemName,
       testingExpectedDeployVersion: options.testingExpectedDeployVersion,
+      testingExpectedCurrentVersion: options.testingExpectedCurrentVersion,
+      testingExpectedRouteName: options.testingExpectedRouteName,
       logger: logger3""",
     ),
     (
         """      Data: { message: \"App deployed successfully.\" }
     });""",
-        """      Data: [\"testing_create_verify\", \"testing_create_post\"].includes(result?.operation) ? {
-        message: result.operation === \"testing_create_post\" ? \"Testing create post-state verified.\" : \"Testing create target verified absent; no mutation performed.\",
+        """      Data: [\"testing_create_verify\", \"testing_create_post\", \"testing_upgrade_pre\", \"testing_upgrade_candidate\", \"testing_upgrade_execute\", \"testing_upgrade_post\"].includes(result?.operation) ? {
+        message: result.operation === \"testing_create_post\" ? \"Testing create post-state verified.\" : result.operation === \"testing_create_verify\" ? \"Testing create target verified absent; no mutation performed.\" : result.operation === \"testing_upgrade_pre\" ? \"Testing upgrade target verified; no mutation performed.\" : result.operation === \"testing_upgrade_candidate\" ? \"Testing upgrade candidate verified; no mutation performed.\" : result.operation === \"testing_upgrade_post\" ? \"Testing upgrade post-state verified.\" : \"Testing upgrade completed.\",
         deploymentId: result.deploymentId,
         systemName: result.systemName,
         deployVersion: result.deployVersion,
@@ -256,9 +352,23 @@ CREATE_GUARD_PATCH_EDITS = (
         """    if (result) {
       trackShipSucceeded({
         ship_kind: \"deploy\",""",
-        """    if (result && ![\"testing_create_verify\", \"testing_create_post\"].includes(result.operation)) {
+        """    if (result && ![\"testing_create_verify\", \"testing_create_post\", \"testing_upgrade_pre\", \"testing_upgrade_candidate\", \"testing_upgrade_post\"].includes(result.operation)) {
       trackShipSucceeded({
         ship_kind: \"deploy\",""",
+    ),
+    (
+        """      Data: { message: \"Package published successfully.\" }
+    });""",
+        """      Data: result ? {
+        message: \"Package published successfully.\",
+        packageName: result.packageName,
+        packageVersion: result.packageVersion,
+        systemName: result.systemName,
+        deployVersion: result.deployVersion,
+        personalWorkspace: result.personalWorkspace,
+        appType: result.appType
+      } : { message: \"Package published successfully.\" }
+    });""",
     ),
 )
 
@@ -385,7 +495,7 @@ def _resolve_node(executable_value: str | None, version_value: str | None) -> di
         core._fail("--node-executable must resolve to an executable regular file.")
     expected_digest = SUPPORTED_NODE_RUNTIMES.get(version_value)
     if expected_digest is None:
-        core._fail("--node-version is not supported by testing schema 1.0.")
+        core._fail("--node-version is not supported by testing schema 1.1.")
     observed_digest = core._hash_file(executable, "testing Node.js executable")
     if observed_digest != expected_digest:
         core._fail("--node-executable bytes do not match the supported Node.js runtime.")
@@ -1298,6 +1408,153 @@ def _create_post_command(
     return command
 
 
+def _upgrade_guard_command(
+    runtime: dict[str, Any],
+    target: dict[str, Any],
+    candidate: dict[str, Any],
+    mode: str,
+    *,
+    published: dict[str, Any] | None = None,
+) -> list[str]:
+    if mode not in {"upgrade-pre", "upgrade-candidate", "upgrade-execute", "upgrade-post"}:
+        core._fail("Testing upgrade guard mode is invalid.")
+    command = _create_guard_command(runtime, target, candidate)
+    command[command.index("--testing-create-mode") + 1] = mode
+    output_index = command.index("--output")
+    expected_current = (
+        candidate["version"] if mode == "upgrade-post" else candidate["current_version"]
+    )
+    guard_values = [
+        "--testing-expected-deployment-id", candidate["deployment_id"],
+        "--testing-expected-current-version", expected_current,
+        "--testing-expected-route-name", candidate["path_name"],
+    ]
+    if mode != "upgrade-pre":
+        if not isinstance(published, dict):
+            core._fail("Testing upgrade candidate identity is required.")
+        guard_values.extend(
+            [
+                "--testing-expected-system-name", published["systemName"],
+                "--testing-expected-deploy-version", str(published["deployVersion"]),
+            ]
+        )
+    command[output_index:output_index] = guard_values
+    return command
+
+
+def _validate_published_candidate(
+    document: dict[str, Any], candidate: dict[str, Any]
+) -> dict[str, Any]:
+    if document.get("Result") != "Success" or document.get("Code") != "PublishCompleted":
+        raise TestingCommandError("PUBLISH_INDETERMINATE")
+    data = document.get("Data")
+    required = {
+        "Message", "PackageName", "PackageVersion", "SystemName",
+        "DeployVersion", "PersonalWorkspace", "AppType",
+    }
+    if not isinstance(data, dict) or set(data) != required:
+        raise TestingCommandError("PUBLISH_INDETERMINATE")
+    system_name = data.get("SystemName")
+    deploy_version = data.get("DeployVersion")
+    if (
+        data.get("Message") != "Package published successfully."
+        or data.get("PackageName") != candidate["package_name"]
+        or data.get("PackageVersion") != candidate["version"]
+        or data.get("PersonalWorkspace") is not False
+        or data.get("AppType") != "Web"
+        or not isinstance(system_name, str)
+        or core.APP_SYSTEM_NAME_RE.fullmatch(system_name) is None
+        or not isinstance(deploy_version, int)
+        or deploy_version < 1
+        or system_name != candidate["system_name"]
+        or deploy_version != candidate["deploy_version"]
+    ):
+        raise TestingCommandError("PUBLISH_INDETERMINATE")
+    return {"systemName": system_name, "deployVersion": deploy_version}
+
+
+def _dist_guard_config(
+    package_name: str,
+    app_name: str,
+    version: str,
+    target: dict[str, Any],
+    path_name: str,
+    intent: str,
+) -> dict[str, Any]:
+    document: dict[str, Any] = {
+        "appName": package_name,
+        "displayName": app_name,
+        "appVersion": version,
+        "appType": "Web",
+        "personalWorkspace": False,
+    }
+    if intent == "upgrade":
+        document["appUrl"] = _route_url(target, _require_path_name(path_name))
+    elif intent != "create":
+        core._fail("Testing dist guard config intent is invalid.")
+    return document
+
+
+def _validate_upgrade_guard_output(
+    output: str | dict[str, Any],
+    target: dict[str, Any],
+    candidate: dict[str, Any],
+    mode: str,
+    *,
+    published: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    try:
+        document = (
+            output
+            if isinstance(output, dict)
+            else _extract_json_envelope(output, "UPGRADE_GUARD_INVALID_JSON")
+        )
+    except TestingCommandError:
+        core._fail("Testing upgrade guard returned invalid JSON.")
+    if document.get("Result") != "Success" or document.get("Code") != "DeployCompleted":
+        core._fail("Testing upgrade guard did not succeed.")
+    data = document.get("Data")
+    required = {
+        "Message", "DeploymentId", "SystemName", "DeployVersion", "CurrentVersion",
+        "RouteName", "Version", "AppName", "AppUrl", "Operation",
+    }
+    messages = {
+        "upgrade-pre": "Testing upgrade target verified; no mutation performed.",
+        "upgrade-candidate": "Testing upgrade candidate verified; no mutation performed.",
+        "upgrade-execute": "Testing upgrade completed.",
+        "upgrade-post": "Testing upgrade post-state verified.",
+    }
+    operations = {key: key.replace("-", "_").replace("upgrade_", "testing_upgrade_") for key in messages}
+    expected_current = candidate["version"] if mode in {"upgrade-execute", "upgrade-post"} else candidate["current_version"]
+    expected_system = None if mode == "upgrade-pre" else published["systemName"]
+    expected_deploy = None if mode == "upgrade-pre" else published["deployVersion"]
+    expected = {
+        "Message": messages[mode],
+        "DeploymentId": candidate["deployment_id"],
+        "SystemName": expected_system,
+        "DeployVersion": expected_deploy,
+        "CurrentVersion": expected_current,
+        "RouteName": candidate["path_name"],
+        "Version": candidate["version"],
+        "AppName": candidate["app_name"],
+        "AppUrl": _route_url(target, candidate["path_name"]),
+        "Operation": operations[mode],
+    }
+    if not isinstance(data, dict) or set(data) != required or data != expected:
+        core._fail("Testing upgrade guard did not match the exact target and candidate.")
+    return {
+        "deploymentId": data["DeploymentId"],
+        "systemName": data["SystemName"],
+        "deployVersion": data["DeployVersion"],
+        "currentVersion": data["CurrentVersion"],
+        "routeName": data["RouteName"],
+        "version": data["Version"],
+        "appName": data["AppName"],
+        "appUrl": data["AppUrl"],
+        "operation": data["Operation"],
+    }
+
+
 def _validate_create_guard_output(output: str, target: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
     try:
         document = _extract_json_envelope(output, "CREATE_ABSENCE_GUARD_INVALID_JSON")
@@ -1479,7 +1736,7 @@ def _load_and_audit_uipath_config(path: Path, label: str) -> tuple[dict[str, Any
 
 
 def _claim_key(target: dict[str, Any], candidate: dict[str, Any]) -> str:
-    if candidate["mode"] == "reconciled":
+    if candidate["intent"] == "upgrade":
         return core._hash_json(
             {
                 "scope": "home_scoped_exact_candidate_v1",
@@ -1515,9 +1772,10 @@ def _create_claim(
     uipath_root = Path(environment["HOME"]) / ".uipath"
     if uipath_root.is_symlink() or not uipath_root.is_dir():
         core._fail("Testing claim requires a real HOME/.uipath directory.")
+    is_upgrade = candidate["intent"] == "upgrade"
     root_name = (
         "uipcodedappdeploy-recovery-claims"
-        if candidate["mode"] == "reconciled"
+        if is_upgrade
         else "uipcodedappdeploy-testing-claims"
     )
     root = uipath_root / root_name
@@ -1529,7 +1787,7 @@ def _create_claim(
     claim = {
         "kind": (
             "uipcodedappdeploy.testing-cross-lane-execution-claim"
-            if candidate["mode"] == "reconciled"
+            if is_upgrade
             else "uipcodedappdeploy.testing-execution-claim"
         ),
         "schema_version": "1.0",
@@ -1666,7 +1924,7 @@ def _new_receipt(
         "updated_at": now,
         "redaction": copy.deepcopy(REDACTION),
         "stages": stages,
-        "observations": {"prewrite": None, "postwrite": None},
+        "observations": {"prewrite": None, "published_candidate": None, "postwrite": None},
         "verification": {
             "route_url": _route_url(target, candidate["path_name"]),
             "route_verified": None,
@@ -1728,7 +1986,7 @@ def _new_preflight_failure_receipt(
                 "recovery": "safe_prewrite_failure; correct inputs and submit a fresh testing request",
             }
         ],
-        "observations": {"prewrite": None, "postwrite": None},
+        "observations": {"prewrite": None, "published_candidate": None, "postwrite": None},
         "verification": {
             "route_url": _route_url(target, _require_path_name(args.path_name)),
             "route_verified": None,
@@ -1800,7 +2058,9 @@ def _validate_observation(value: Any, label: str) -> None:
         if not isinstance(value[field], str) or not value[field]:
             core._fail(f"Testing receipt {label} {field} is invalid.")
     if value["operation"] not in {
-        "testing_create_verify", "testing_create_post", "deploy", "recovery_verify",
+        "testing_create_verify", "testing_create_post", "testing_upgrade_pre",
+        "testing_upgrade_candidate", "testing_upgrade_execute", "testing_upgrade_post",
+        "deploy", "recovery_verify",
     }:
         core._fail(f"Testing receipt {label} operation is invalid.")
 
@@ -1822,7 +2082,7 @@ def _validate_observation_binding(
     for field, expected_value in expected.items():
         if value[field] != expected_value:
             core._fail(f"Testing receipt {label} {field} is not candidate-bound.")
-    if candidate["mode"] == "dist":
+    if candidate["mode"] == "dist" and candidate["intent"] == "create":
         if label == "prewrite" and (
             value["operation"] != "testing_create_verify"
             or any(value[field] is not None for field in (
@@ -1834,6 +2094,34 @@ def _validate_observation_binding(
             "deploy", "testing_create_post",
         }:
             core._fail("Testing receipt create postwrite observation is invalid.")
+    elif candidate["mode"] == "dist":
+        identity = {"deploymentId": candidate["deployment_id"]}
+        for field, expected_value in identity.items():
+            if value[field] != expected_value:
+                core._fail(f"Testing receipt dist upgrade {label} {field} is not candidate-bound.")
+        if label == "prewrite":
+            if (
+                value["operation"] != "testing_upgrade_pre"
+                or value["currentVersion"] != candidate["current_version"]
+                or value["systemName"] is not None
+                or value["deployVersion"] is not None
+            ):
+                core._fail("Testing receipt dist upgrade prewrite observation is invalid.")
+        elif label == "published_candidate":
+            if (
+                value["operation"] != "testing_upgrade_candidate"
+                or value["currentVersion"] != candidate["current_version"]
+                or value["systemName"] != candidate["system_name"]
+                or value["deployVersion"] != candidate["deploy_version"]
+            ):
+                core._fail("Testing receipt published candidate observation is invalid.")
+        elif (
+            value["operation"] != "testing_upgrade_post"
+            or value["currentVersion"] != candidate["version"]
+            or value["systemName"] != candidate["system_name"]
+            or value["deployVersion"] != candidate["deploy_version"]
+        ):
+            core._fail("Testing receipt dist upgrade postwrite observation is invalid.")
     else:
         if value["operation"] != "recovery_verify":
             core._fail("Testing receipt upgrade observation is invalid.")
@@ -1917,7 +2205,7 @@ def _validate_candidate_record(candidate: Any) -> None:
         core._fail("Testing receipt candidate fields are invalid.")
     _assert_common_candidate(candidate)
     if (candidate["mode"], candidate["intent"]) not in {
-        ("dist", "create"), ("reconciled", "upgrade"),
+        ("dist", "create"), ("dist", "upgrade"), ("reconciled", "upgrade"),
     }:
         core._fail("Testing receipt candidate mode and intent are invalid.")
     if not isinstance(candidate["node_executable"], str) or not Path(
@@ -1954,7 +2242,7 @@ def _validate_receipt(receipt: dict[str, Any]) -> None:
         "verification", "receipt_reservation", "receipt_hash",
     }
     if set(receipt) != required:
-        core._fail("Testing receipt fields do not match schema 1.0.")
+        core._fail("Testing receipt fields do not match schema 1.1.")
     if receipt["kind"] != RECEIPT_KIND or receipt["schema_version"] != RECEIPT_SCHEMA_VERSION:
         core._fail("Testing receipt kind or schema version is invalid.")
     core._validate_hash(receipt["helper_sha256"], "Testing receipt helper hash")
@@ -2085,21 +2373,29 @@ def _validate_receipt(receipt: dict[str, Any]) -> None:
     if receipt["attempt_phase"] == "preflight":
         expected_stages = [("local_preflight", "local_read")]
     elif candidate["mode"] == "dist":
-        expected_stages = DIST_STAGE_CONTRACT
+        expected_stages = (
+            DIST_UPGRADE_STAGE_CONTRACT
+            if candidate["intent"] == "upgrade"
+            else DIST_STAGE_CONTRACT
+        )
     else:
         expected_stages = RECONCILED_STAGE_CONTRACT
     observed_stages = [(stage["name"], stage["effect"]) for stage in receipt["stages"]]
     if observed_stages != expected_stages:
         core._fail("Testing receipt stages do not match the exact candidate contract.")
     if not isinstance(receipt["observations"], dict) or set(receipt["observations"]) != {
-        "prewrite", "postwrite",
+        "prewrite", "published_candidate", "postwrite",
     }:
         core._fail("Testing receipt observations are invalid.")
     _validate_observation(receipt["observations"]["prewrite"], "prewrite")
+    _validate_observation(receipt["observations"]["published_candidate"], "published_candidate")
     _validate_observation(receipt["observations"]["postwrite"], "postwrite")
     if candidate is not None:
         _validate_observation_binding(
             receipt["observations"]["prewrite"], "prewrite", target, candidate
+        )
+        _validate_observation_binding(
+            receipt["observations"]["published_candidate"], "published_candidate", target, candidate
         )
         _validate_observation_binding(
             receipt["observations"]["postwrite"], "postwrite", target, candidate
@@ -2148,7 +2444,7 @@ def _validate_receipt(receipt: dict[str, Any]) -> None:
     if receipt["attempt_phase"] == "preflight" and (
         receipt["status"] != "failed_prewrite"
         or receipt["external_write_started"]
-        or receipt["observations"] != {"prewrite": None, "postwrite": None}
+        or receipt["observations"] != {"prewrite": None, "published_candidate": None, "postwrite": None}
         or any(stage["effect"] == "external_write" for stage in receipt["stages"])
     ):
         core._fail("Preflight testing receipt state is inconsistent.")
@@ -2178,6 +2474,12 @@ def _validate_receipt(receipt: dict[str, Any]) -> None:
         not external_stages
         or any(stage["status"] != "succeeded" for stage in receipt["stages"])
         or receipt["observations"]["postwrite"] is None
+        or (
+            candidate is not None
+            and candidate["mode"] == "dist"
+            and candidate["intent"] == "upgrade"
+            and receipt["observations"]["published_candidate"] is None
+        )
         or verification["route_verified"] is not True
         or verification["configuration_verified"] is not True
         or verification["post_deploy_app_config_digest"] is None
@@ -2419,11 +2721,19 @@ def _assert_common_candidate(candidate: dict[str, Any]) -> None:
         core._fail("Dist testing candidate requires an exact dist digest.")
     if candidate["mode"] == "reconciled" and candidate["recovery_plan_hash"] is None:
         core._fail("Reconciled testing candidate requires a recovery plan hash input.")
-    if candidate["mode"] == "dist" and any(
+    if candidate["mode"] == "dist" and candidate["intent"] == "create" and any(
         candidate[field] is not None
         for field in ("recovery_plan_hash", "deployment_id", "system_name", "deploy_version", "current_version")
     ):
         core._fail("Dist create candidate may not claim an existing deployment.")
+    if candidate["mode"] == "dist" and candidate["intent"] == "upgrade" and (
+        candidate["recovery_plan_hash"] is not None
+        or candidate["system_name"] is None
+        or candidate["deploy_version"] is None
+        or candidate["deployment_id"] is None
+        or candidate["current_version"] is None
+    ):
+        core._fail("Dist upgrade candidate requires the exact deployment, candidate identity, deploy version, and current version before publication.")
     if candidate["mode"] == "reconciled" and (
         candidate["dist_digest"] is not None
         or any(
@@ -2469,6 +2779,15 @@ def _assert_common_candidate(candidate: dict[str, Any]) -> None:
         if not isinstance(candidate["current_version"], str):
             core._fail("Testing candidate current version is invalid.")
         core._parse_semver(candidate["current_version"], "Testing candidate current version")
+    if candidate["intent"] == "upgrade":
+        candidate_version = core._parse_semver(
+            candidate["version"], "Testing candidate version"
+        )
+        current_version = core._parse_semver(
+            candidate["current_version"], "Testing candidate current version"
+        )
+        if candidate_version.compare(current_version) <= 0:
+            core._fail("Testing upgrade candidate version must be strictly newer than the current version.")
 
 
 def _dist_create(
@@ -2481,8 +2800,28 @@ def _dist_create(
 ) -> Path:
     preflight_started = core._utc_now()
     local_times: dict[str, tuple[str, str]] = {}
-    if args.intent != "create":
-        core._fail("candidate mode dist supports only --intent create in testing schema 1.0.")
+    if args.intent not in {"create", "upgrade"}:
+        core._fail("candidate mode dist supports only explicit create or upgrade intent.")
+    expected_deployment_id = None
+    expected_system_name = None
+    expected_deploy_version = None
+    expected_current_version = None
+    if args.intent == "upgrade":
+        expected_deployment_id = _require_guid(
+            args.expected_deployment_id, "--expected-deployment-id"
+        )
+        expected_current_version = _require_text(
+            args.expected_current_version, "--expected-current-version"
+        )
+        core._parse_semver(expected_current_version, "--expected-current-version")
+        expected_system_name = _require_text(
+            args.expected_system_name, "--expected-system-name"
+        )
+        if core.APP_SYSTEM_NAME_RE.fullmatch(expected_system_name) is None:
+            core._fail("--expected-system-name must be an exact UiPath app system name.")
+        if not isinstance(args.expected_deploy_version, int) or args.expected_deploy_version < 1:
+            core._fail("--expected-deploy-version must be a positive integer.")
+        expected_deploy_version = args.expected_deploy_version
     if not args.project_root:
         core._fail("--project-root is required for dist mode.")
     node_runtime = _resolve_node(args.node_executable, args.node_version)
@@ -2558,13 +2897,14 @@ def _dist_create(
     )
     _audit_package_archive(package_path)
     local_times["package_audit"] = (stage_started, core._utc_now())
-    guard_config = {
-        "appName": package_name,
-        "displayName": _require_text(args.app_name, "--app-name"),
-        "appVersion": version,
-        "appType": "Web",
-        "personalWorkspace": False,
-    }
+    guard_config = _dist_guard_config(
+        package_name,
+        _require_text(args.app_name, "--app-name"),
+        version,
+        target,
+        _require_path_name(args.path_name),
+        args.intent,
+    )
     stage_started = core._utc_now()
     runtime = _prepare_create_guard_runtime(
         cli, node_runtime, workspace, guard_config, environment
@@ -2580,10 +2920,10 @@ def _dist_create(
         package_content_digest=package_content_digest,
         package_file_digest=package_file_digest,
         recovery_plan_hash=None,
-        deployment_id=None,
-        system_name=None,
-        deploy_version=None,
-        current_version=None,
+        deployment_id=expected_deployment_id,
+        system_name=expected_system_name,
+        deploy_version=expected_deploy_version,
+        current_version=expected_current_version,
         runtime_manifest_hash=runtime["manifest_hash"],
         node_executable=node_runtime["executable"],
         node_executable_sha256=node_runtime["executable_sha256"],
@@ -2595,7 +2935,10 @@ def _dist_create(
     )
     _assert_common_candidate(candidate)
     claim_path, claim = _create_claim(target, candidate, environment)
-    stages = _stages(DIST_STAGE_CONTRACT, local_times)
+    stage_contract = (
+        DIST_UPGRADE_STAGE_CONTRACT if args.intent == "upgrade" else DIST_STAGE_CONTRACT
+    )
+    stages = _stages(stage_contract, local_times)
     receipt = _new_receipt(
         args, target, candidate, claim_path, claim, reservation, stages
     )
@@ -2628,25 +2971,37 @@ def _dist_create(
         _release_claim(claim_path, claim, receipt, receipt_path)
         raise
     _finish_stage(receipt, receipt_path, "pre_guard_barrier")
-    _start_stage(receipt, receipt_path, "create_absence_guard")
+    guard_stage = (
+        "upgrade_pre_guard" if candidate["intent"] == "upgrade" else "create_absence_guard"
+    )
+    _start_stage(receipt, receipt_path, guard_stage)
     try:
+        guard_command = (
+            _upgrade_guard_command(runtime, target, candidate, "upgrade-pre")
+            if candidate["intent"] == "upgrade"
+            else _create_guard_command(runtime, target, candidate)
+        )
         output = _run_read(
-            _create_guard_command(runtime, target, candidate),
+            guard_command,
             Path(runtime["runtime_workspace"]),
             environment,
-            "CREATE_ABSENCE_GUARD_FAILED",
+            "UPGRADE_PRE_GUARD_FAILED" if candidate["intent"] == "upgrade" else "CREATE_ABSENCE_GUARD_FAILED",
         )
-        receipt["observations"]["prewrite"] = _validate_create_guard_output(output, target, candidate)
+        receipt["observations"]["prewrite"] = (
+            _validate_upgrade_guard_output(output, target, candidate, "upgrade-pre")
+            if candidate["intent"] == "upgrade"
+            else _validate_create_guard_output(output, target, candidate)
+        )
     except (Exception, SystemExit, KeyboardInterrupt) as exc:
         _fail_stage(
-            receipt, receipt_path, "create_absence_guard",
+            receipt, receipt_path, guard_stage,
             status="failed_prewrite",
-            error_code="CREATE_ABSENCE_GUARD_FAILED",
+            error_code="UPGRADE_PRE_GUARD_FAILED" if candidate["intent"] == "upgrade" else "CREATE_ABSENCE_GUARD_FAILED",
             recovery_text="safe_prewrite_failure; correct target state and submit a fresh testing request",
         )
         _release_claim(claim_path, claim, receipt, receipt_path)
         raise
-    _finish_stage(receipt, receipt_path, "create_absence_guard")
+    _finish_stage(receipt, receipt_path, guard_stage)
     _start_stage(receipt, receipt_path, "pre_publish_barrier")
     try:
         _revalidate_dist_barrier(**barrier_inputs)
@@ -2660,12 +3015,15 @@ def _dist_create(
         _release_claim(claim_path, claim, receipt, receipt_path)
         raise
     _finish_stage(receipt, receipt_path, "pre_publish_barrier")
+    publish_cli = runtime["runtime_cli"] if candidate["intent"] == "upgrade" else str(cli)
+    publish_cwd = workspace
+    publish_package_dir = package_dir
     publish_command = [
-        node_runtime["executable"], str(cli), "codedapp", "publish",
+        node_runtime["executable"], publish_cli, "codedapp", "publish",
         "--name", candidate["package_name"],
         "--version", candidate["version"],
         "--type", "Web",
-        "--uipath-dir", str(package_dir),
+        "--uipath-dir", str(publish_package_dir),
         "--base-url", target["control_plane_url"],
         "--org-id", target["organization_id"],
         "--tenant-id", target["tenant_id"],
@@ -2676,7 +3034,21 @@ def _dist_create(
     _start_stage(receipt, receipt_path, "publish", external_write=True)
     try:
         _revalidate_dist_barrier(**barrier_inputs)
-        _run_write(publish_command, workspace, environment, "PUBLISH_INDETERMINATE")
+        publish_result = _run_write(
+            publish_command, publish_cwd, environment, "PUBLISH_INDETERMINATE"
+        )
+        published = (
+            _validate_published_candidate(publish_result, candidate)
+            if candidate["intent"] == "upgrade"
+            else None
+        )
+        if candidate["intent"] == "upgrade":
+            receipt["observations"]["published_candidate"] = {
+                **receipt["observations"]["prewrite"],
+                "systemName": published["systemName"],
+                "deployVersion": published["deployVersion"],
+                "operation": "testing_upgrade_candidate",
+            }
     except (Exception, SystemExit, KeyboardInterrupt):
         _fail_stage(
             receipt, receipt_path, "publish",
@@ -2719,6 +3091,38 @@ def _dist_create(
         )
         raise
     _finish_stage(receipt, receipt_path, "app_config_bind")
+    if candidate["intent"] == "upgrade":
+        _start_stage(receipt, receipt_path, "published_candidate_guard")
+        try:
+            _revalidate_dist_barrier(**barrier_inputs)
+            candidate_output = _run_read(
+                _upgrade_guard_command(
+                    runtime, target, candidate, "upgrade-candidate", published=published
+                ),
+                Path(runtime["runtime_workspace"]),
+                environment,
+                "PUBLISHED_CANDIDATE_GUARD_FAILED",
+            )
+            receipt["observations"]["published_candidate"] = (
+                _validate_upgrade_guard_output(
+                    candidate_output,
+                    target,
+                    candidate,
+                    "upgrade-candidate",
+                    published=published,
+                )
+            )
+        except (Exception, SystemExit, KeyboardInterrupt):
+            _fail_stage(
+                receipt,
+                receipt_path,
+                "published_candidate_guard",
+                status="published_not_deployed",
+                error_code="PUBLISHED_CANDIDATE_GUARD_FAILED",
+                recovery_text="package was published; reconcile exact candidate identity before a fresh request",
+            )
+            raise
+        _finish_stage(receipt, receipt_path, "published_candidate_guard")
     _start_stage(receipt, receipt_path, "pre_deploy_barrier")
     try:
         _revalidate_dist_barrier(**barrier_inputs)
@@ -2731,7 +3135,13 @@ def _dist_create(
         )
         raise
     _finish_stage(receipt, receipt_path, "pre_deploy_barrier")
-    deploy_command = _create_execute_command(runtime, target, candidate)
+    deploy_command = (
+        _upgrade_guard_command(
+            runtime, target, candidate, "upgrade-execute", published=published
+        )
+        if candidate["intent"] == "upgrade"
+        else _create_execute_command(runtime, target, candidate)
+    )
     _start_stage(receipt, receipt_path, "deploy", external_write=True)
     try:
         _revalidate_dist_barrier(**barrier_inputs)
@@ -2741,7 +3151,17 @@ def _dist_create(
             environment,
             "DEPLOY_INDETERMINATE",
         )
-        deployed = _validate_create_execute_output(deploy_result, target, candidate)
+        deployed = (
+            _validate_upgrade_guard_output(
+                deploy_result,
+                target,
+                candidate,
+                "upgrade-execute",
+                published=published,
+            )
+            if candidate["intent"] == "upgrade"
+            else _validate_create_execute_output(deploy_result, target, candidate)
+        )
     except (Exception, SystemExit, KeyboardInterrupt):
         _fail_stage(
             receipt, receipt_path, "deploy",
@@ -2750,36 +3170,60 @@ def _dist_create(
             recovery_text="reconcile exact deployment and route; blind retry and fresh-app fallback prohibited",
         )
         raise
-    receipt["observations"]["postwrite"] = deployed
+    if candidate["intent"] == "create":
+        receipt["observations"]["postwrite"] = deployed
     _finish_stage(
         receipt,
         receipt_path,
         "deploy",
         receipt_status="deployed_unverified",
     )
-    _start_stage(receipt, receipt_path, "post_create_guard")
+    post_guard_stage = (
+        "upgrade_post_guard" if candidate["intent"] == "upgrade" else "post_create_guard"
+    )
+    post_guard_error = (
+        "UPGRADE_POST_GUARD_FAILED"
+        if candidate["intent"] == "upgrade"
+        else "CREATE_POST_GUARD_FAILED"
+    )
+    _start_stage(receipt, receipt_path, post_guard_stage)
     try:
         if core._hash_file(Path(__file__), "testing helper") != candidate["helper_sha256"]:
-            core._fail("Testing helper changed before the create post-state guard.")
+            core._fail("Testing helper changed before the guarded post-state read.")
         _revalidate_create_runtime_immutable(runtime, candidate)
+        post_command = (
+            _upgrade_guard_command(
+                runtime, target, candidate, "upgrade-post", published=published
+            )
+            if candidate["intent"] == "upgrade"
+            else _create_post_command(runtime, target, candidate, deployed)
+        )
         post_output = _run_read(
-            _create_post_command(runtime, target, candidate, deployed),
+            post_command,
             Path(runtime["runtime_workspace"]),
             environment,
-            "CREATE_POST_GUARD_FAILED",
+            post_guard_error,
         )
-        receipt["observations"]["postwrite"] = _validate_create_post_output(
-            post_output, target, candidate, deployed
+        receipt["observations"]["postwrite"] = (
+            _validate_upgrade_guard_output(
+                post_output,
+                target,
+                candidate,
+                "upgrade-post",
+                published=published,
+            )
+            if candidate["intent"] == "upgrade"
+            else _validate_create_post_output(post_output, target, candidate, deployed)
         )
     except (Exception, SystemExit, KeyboardInterrupt):
         _fail_stage(
-            receipt, receipt_path, "post_create_guard",
+            receipt, receipt_path, post_guard_stage,
             status="deployed_unverified",
-            error_code="CREATE_POST_GUARD_FAILED",
+            error_code=post_guard_error,
             recovery_text="deployment may have succeeded; reconcile exact post-state before any new request",
         )
         raise
-    _finish_stage(receipt, receipt_path, "post_create_guard")
+    _finish_stage(receipt, receipt_path, post_guard_stage)
     _start_stage(receipt, receipt_path, "route_verify")
     try:
         core._verify_url(_route_url(target, candidate["path_name"]), args.verify_timeout)
@@ -2802,10 +3246,19 @@ def _dist_create(
         if document.get("appUrl") != _route_url(target, candidate["path_name"]):
             core._fail("Post-deploy app config route mismatch.")
         deployment_id = document.get("deploymentId")
-        if core.GUID_RE.fullmatch(str(deployment_id)) is None:
-            core._fail("Post-deploy app config has no exact deployment ID.")
-        if deployment_id.lower() != deployed["deploymentId"]:
-            core._fail("Post-deploy app config deployment ID mismatch.")
+        if candidate["intent"] == "create":
+            if core.GUID_RE.fullmatch(str(deployment_id)) is None:
+                core._fail("Post-deploy app config has no exact deployment ID.")
+            if deployment_id.lower() != deployed["deploymentId"]:
+                core._fail("Post-deploy app config deployment ID mismatch.")
+        elif deployment_id is not None:
+            core._fail("Guarded upgrade runtime may not fabricate deployment metadata.")
+        if document.get("appName") != candidate["package_name"]:
+            core._fail("Post-deploy app config package mismatch.")
+        if document.get("displayName") != candidate["app_name"]:
+            core._fail("Post-deploy app config display name mismatch.")
+        if document.get("appType") != "Web" or document.get("personalWorkspace") is not False:
+            core._fail("Post-deploy app config type or workspace mismatch.")
         receipt["verification"]["post_deploy_app_config_digest"] = core._hash_file(
             config_path, "post-deploy app config"
         )
