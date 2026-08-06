@@ -42,6 +42,9 @@ recorded.
   published deploy version before and after the write. A dist upgrade also
   binds those identities before publication, rejects a non-progressing version,
   and verifies the published candidate before its single route-omitting PATCH.
+- UiPath may expose the existing app title as either the package name or display
+  title. Both are exact candidate inputs; the guard accepts only those two
+  values and rejects every unrelated title.
 - Route changes, random routes, delete/recreate, omit-and-retry, and fresh-app
   fallback are prohibited.
 - A host-local atomic operation claim prevents same-host concurrent or blind

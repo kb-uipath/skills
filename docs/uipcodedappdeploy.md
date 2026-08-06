@@ -205,6 +205,10 @@ that omits `routingName`. It records separate `prewrite`,
 or deploy retains the claim and requires remote reconciliation plus a new
 explicit testing request; it is never retried automatically.
 
+UiPath can report the existing app title as either its exact package name or
+its exact display title. Both values are already bound inputs. The guard accepts
+only those two representations and fails on any unrelated title.
+
 Example reconciled test upgrade:
 
 ```bash
