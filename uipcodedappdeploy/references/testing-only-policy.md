@@ -62,6 +62,11 @@ recorded.
 - Any timeout, interruption, non-zero write result, or ambiguous response is
   indeterminate. There is no resume or automatic retry; reconcile remote state
   and obtain a new explicit testing request.
+- A `published-recovery` attempt must consume one exact schema-1.1
+  `publish_indeterminate` receipt and its still-retained original claim. It
+  creates a separate atomic transition claim, never changes the original
+  claim, and revalidates all bound bytes before invoking even the read-only
+  guarded runtime. Its execution path contains no pack or publish operation.
 
 ## Waived controls
 
@@ -92,6 +97,15 @@ route-preserving in-place upgrade against that deployment.
 skips build, pack, and publish, and permits only the bound in-place upgrade.
 The recovery plan hash is recorded as a technical input, not as a user
 approval.
+
+`published-recovery` is the sole testing path for an exact dist-upgrade receipt
+that ended `publish_indeterminate` after the package became remotely visible.
+It binds the source receipt and file hash, receipt reservation, original claim
+and file hash, package, runtime manifest, immutable runtime, target, and remote
+candidate identity. It skips build, pack, and publish, verifies the candidate
+read-only, and permits one route-omitting in-place upgrade. The original claim
+always remains retained. A failed or interrupted recovery has no resume and
+must never be retried blindly.
 
 ## Outcomes
 
