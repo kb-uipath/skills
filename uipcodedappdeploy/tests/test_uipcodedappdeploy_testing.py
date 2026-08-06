@@ -1858,11 +1858,11 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
             self.core._hash_bytes(source),
         ):
             patched = self.testing._patched_create_guard_bytes(source).decode()
-        self.assertIn("if (deployedApp.title !== displayTitle)", patched)
-        self.assertNotIn(
+        self.assertIn(
             "deployedApp.title !== appName && deployedApp.title !== displayTitle",
             patched,
         )
+        self.assertNotIn("if (deployedApp.title !== displayTitle)", patched)
         self.assertLess(
             patched.index('testingCreateMode === "upgrade-pre"'),
             patched.index("getPublishedAppWithRetry(appName, envConfig, options.version"),

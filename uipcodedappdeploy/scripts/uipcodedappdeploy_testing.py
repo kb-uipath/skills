@@ -204,7 +204,7 @@ CREATE_GUARD_PATCH_EDITS = (
       if (!deployedApp || deployedApp.id !== testingExpectedDeploymentId) {
         throw new Error(\"TESTING_UPGRADE_TARGET_MISMATCH: fresh deploy prohibited\");
       }
-      if (deployedApp.title !== displayTitle) {
+      if (deployedApp.title !== appName && deployedApp.title !== displayTitle) {
         throw new Error(\"TESTING_UPGRADE_TITLE_MISMATCH\");
       }
       if (deployedApp.routingName !== testingExpectedRouteName || deployedApp.semVersion !== testingExpectedCurrentVersion) {
