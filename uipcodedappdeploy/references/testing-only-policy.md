@@ -62,11 +62,12 @@ recorded.
 - Any timeout, interruption, non-zero write result, or ambiguous response is
   indeterminate. There is no resume or automatic retry; reconcile remote state
   and obtain a new explicit testing request.
-- A `published-recovery` attempt must consume one exact schema-1.1
-  `publish_indeterminate` receipt and its still-retained original claim. It
-  creates a separate atomic transition claim, never changes the original
-  claim, and revalidates all bound bytes before invoking even the read-only
-  guarded runtime. Its execution path contains no pack or publish operation.
+- A `published-recovery` attempt must consume one exact schema-1.1 or
+  schema-1.2 `publish_indeterminate` receipt and its still-retained original
+  claim. It creates a separate atomic transition claim, never changes the
+  original claim, and revalidates all bound bytes before invoking even the
+  read-only guarded runtime. Its execution path contains no pack or publish
+  operation.
 
 ## Waived controls
 

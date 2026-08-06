@@ -288,7 +288,7 @@ be certified separately before the rollout is reported complete.
 - `uipcodedappdeploy/references/deployment-recovery-plan.v1.schema.json`
 - `uipcodedappdeploy/references/deployment-recovery-receipt.v1.schema.json`
 - `uipcodedappdeploy/references/deployment-testing-receipt.v1.schema.json`
-  (testing contract 1.1)
+  (testing contract 1.2; exact retained schema-1.1 sources remain recoverable)
 - `uipcodedappdeploy/references/testing-only-policy.md`
 
 Hashes detect change; they are not signatures or proof of approver identity.

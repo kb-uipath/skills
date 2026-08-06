@@ -477,7 +477,12 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
         claim_path = Path(receipt["execution_claim"]["path"])
         return receipt, claim_path, error, remote_guard, deploy, verify, inspect
 
-    def publish_recovery_fixture(self, root: Path):
+    def publish_recovery_fixture(
+        self,
+        root: Path,
+        *,
+        source_schema_version: str = "1.1",
+    ):
         cli = self.executable(root)
         target = self.target(cli)
         home = root / "home"
@@ -530,7 +535,7 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
         )
         candidate = self.candidate(mode="dist", intent="upgrade")
         source_helper_sha256 = self.core._hash_bytes(
-            b"distinct-schema-1.1-source-helper"
+            f"distinct-schema-{source_schema_version}-source-helper".encode()
         )
         candidate["helper_sha256"] = source_helper_sha256
         candidate["runtime_app_config_digest"] = self.core._hash_file(
@@ -602,10 +607,13 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
             source_reservation,
             self.testing._stages(self.testing.DIST_UPGRADE_STAGE_CONTRACT, set()),
         )
-        source_receipt.pop("recovery_source")
-        source_receipt["schema_version"] = "1.1"
+        if source_schema_version == "1.1":
+            source_receipt.pop("recovery_source")
+        elif source_schema_version != "1.2":
+            raise AssertionError("unsupported publish recovery fixture schema")
+        source_receipt["schema_version"] = source_schema_version
         source_receipt["helper_sha256"] = source_helper_sha256
-        source_receipt["policy"]["policy_version"] = "1.1"
+        source_receipt["policy"]["policy_version"] = source_schema_version
         now = "2026-08-06T03:26:00Z"
         for stage in source_receipt["stages"][:8]:
             stage.update(status="succeeded", started_at=now, finished_at=now)
@@ -2118,7 +2126,10 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
     def test_publish_recovery_reuses_exact_candidate_without_publish(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            fixture = self.publish_recovery_fixture(root)
+            fixture = self.publish_recovery_fixture(
+                root,
+                source_schema_version="1.2",
+            )
             candidate = fixture["source_receipt"]["candidate"]
 
             def observation(operation, current):
@@ -2216,6 +2227,46 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
                 format_checker=FormatChecker(),
             )
             self.assertEqual(list(validator.iter_errors(receipt)), [])
+
+    def test_publish_recovery_rejects_malformed_schema_1_2_sources(self):
+        mutations = {
+            "legacy policy": lambda document: document["policy"].update(
+                policy_version="1.1"
+            ),
+            "missing recovery source": lambda document: document.pop(
+                "recovery_source"
+            ),
+            "chained recovery source": lambda document: document.update(
+                recovery_source={}
+            ),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                fixture = self.publish_recovery_fixture(
+                    root,
+                    source_schema_version="1.2",
+                )
+                source = copy.deepcopy(fixture["source_receipt"])
+                mutate(source)
+                source["receipt_hash"] = self.core._document_hash(
+                    source,
+                    "receipt_hash",
+                )
+                self.core._atomic_write_json(fixture["source_path"], source)
+                with mock.patch.object(
+                    self.testing,
+                    "EXPECTED_CLI_SHA256",
+                    fixture["target"]["cli_executable_sha256"],
+                ), self.assertRaises(SystemExit):
+                    self.testing._load_publish_recovery_receipt(
+                        fixture["source_path"],
+                        expected_receipt_hash=source["receipt_hash"],
+                        expected_file_sha256=self.core._hash_file(
+                            fixture["source_path"],
+                            "malformed current source",
+                        ),
+                    )
 
     def test_publish_recovery_indeterminate_deploy_retains_both_claims(self):
         with tempfile.TemporaryDirectory() as tmp:

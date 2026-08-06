@@ -83,10 +83,10 @@ Schema 1.2 supports only these combinations:
   recovery plan/runtime; skip build, pack, and publish; guard and upgrade only
   its bound deployment while preserving its route.
 - `--candidate-mode published-recovery --intent upgrade`: consume one exact
-  retained schema-1.1 testing receipt whose publication was indeterminate,
-  reconcile its already-published candidate, and perform one guarded deploy.
-  This mode cannot build, pack, or publish and never modifies the original
-  retained claim.
+  retained schema-1.1 or schema-1.2 testing receipt whose publication was
+  indeterminate, reconcile its already-published candidate, and perform one
+  guarded deploy. This mode cannot build, pack, or publish and never modifies
+  the original retained claim.
 
 Run only after the direct user request is in the current task:
 
@@ -543,7 +543,8 @@ authentication and application behavior remain separate acceptance gates.
 - `references/deployment-receipt.v2.schema.json`
 - `references/deployment-recovery-plan.v1.schema.json`
 - `references/deployment-recovery-receipt.v1.schema.json`
-- `references/deployment-testing-receipt.v1.schema.json` (testing contract 1.1)
+- `references/deployment-testing-receipt.v1.schema.json` (testing contract 1.2;
+  exact retained schema-1.1 sources remain recoverable)
 - `references/testing-only-policy.md`
 
 The governed and recovery schemas are integrity contracts, not signatures.
