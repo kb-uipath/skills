@@ -6,7 +6,7 @@ Deploy UiPath Coded Apps through one of three deliberately separate lanes.
 | --- | --- | --- | --- |
 | Governed release | Plan/receipt v2.3 | Exact reviewed `plan_hash` | Reviewable Alpha/Staging release candidate |
 | Exact upgrade recovery | Plan/receipt v1.2 | Exact reviewed recovery hash | Reconciled route-collision repair |
-| Testing-only | Automatic receipt v1.0 | Explicit request plus `--testing-only --execute` | Internal synthetic Alpha/Staging testing |
+| Testing-only | Automatic receipt v1.1 | Explicit request plus `--testing-only --execute` | Internal synthetic Alpha/Staging testing |
 
 Production targets are rejected in every current lane. Testing receipts are
 explicitly ineligible as production release evidence.
@@ -33,7 +33,7 @@ plain-language synthetic testing purpose plus either exact built distribution
 bytes or an exact recovery plan.
 
 The versioned input/output contracts are plan/receipt v2.3 for governed release,
-plan/receipt v1.2 for recovery, and automatic receipt v1.0 for testing-only.
+plan/receipt v1.2 for recovery, and automatic receipt v1.1 for testing-only.
 
 ## Prompt
 
@@ -125,7 +125,7 @@ Recovery requires its own reviewed v1.2 plan and exact approval hash. It has no
 resume. The complete preparation, evidence, plan, and execution commands are in
 `uipcodedappdeploy/SKILL.md`.
 
-## Testing-only v1.0
+## Testing-only v1.1
 
 The testing helper restores one-step deployment for a narrow class of work
 without weakening either governed lane. Read
@@ -145,6 +145,10 @@ Supported matrices:
 - `dist/create` copies and hashes a built dist, produces an isolated package,
   proves that both the deployment and route are absent before publish, then
   performs one fresh deployment.
+- `dist/upgrade` copies and hashes a built dist, packs and publishes the exact
+  candidate once, verifies its system/deploy identity, and performs one guarded
+  in-place upgrade of the pre-reconciled deployment without sending the route
+  in the PATCH.
 - `reconciled/upgrade` consumes an exact v1.2 recovery plan/runtime, skips pack
   and publish, and upgrades only the named deployment in place.
 
@@ -181,6 +185,25 @@ python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_testing.py \
   --testing-purpose 'Synthetic coded app acceptance' \
   --receipt-output /absolute/ignored/testing-receipt.json
 ```
+
+For a test upgrade from exact built distribution bytes, use the same command
+with `--intent upgrade` and add the pre-reconciled target and candidate identity:
+
+```bash
+  --expected-deployment-id '<exact-deployment-guid>' \
+  --expected-current-version '<currently-deployed-version>' \
+  --expected-system-name 'ID<32-hex-characters>' \
+  --expected-deploy-version '<new-published-candidate-number>'
+```
+
+The candidate version must be semantically newer than the current version. The
+helper uses the same exact-candidate claim namespace as recovery, checks the
+deployment and route before publication, publishes once, independently reads
+back the expected system/deploy identity, then issues one guarded upgrade PATCH
+that omits `routingName`. It records separate `prewrite`,
+`published_candidate`, and `postwrite` observations. Any indeterminate publish
+or deploy retains the claim and requires remote reconciliation plus a new
+explicit testing request; it is never retried automatically.
 
 Example reconciled test upgrade:
 
@@ -221,10 +244,12 @@ python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_testing.py \
 There is no plan or second approval hash. Before external writes, the helper
 exclusively reserves the receipt and creates a durable host-local, home-scoped
 operation claim. It is not cross-host serialization, so the same candidate must
-not be run concurrently by another user or machine. Dist/create uses stable remote coordinates so repacking cannot evade a
-retained indeterminate claim; reconciled/upgrade atomically uses the recovery
-lane's exact-candidate claim key so the two lanes cannot race one PATCH. The
-receipt records exact artifact/configuration hashes, informational Git state,
+not be run concurrently by another user or machine. Dist/create uses stable
+remote coordinates so repacking cannot evade a retained indeterminate claim.
+Both dist/upgrade and reconciled/upgrade atomically use the recovery lane's
+exact-candidate claim key so the lanes cannot race the same deployment and
+candidate PATCH. The receipt records exact artifact/configuration hashes,
+informational Git state,
 policy waivers, and these possible outcomes:
 
 Malformed or secret-bearing arguments, an invalid receipt path, an unsupported
@@ -259,6 +284,7 @@ be certified separately before the rollout is reported complete.
 - `uipcodedappdeploy/references/deployment-recovery-plan.v1.schema.json`
 - `uipcodedappdeploy/references/deployment-recovery-receipt.v1.schema.json`
 - `uipcodedappdeploy/references/deployment-testing-receipt.v1.schema.json`
+  (testing contract 1.1)
 - `uipcodedappdeploy/references/testing-only-policy.md`
 
 Hashes detect change; they are not signatures or proof of approver identity.

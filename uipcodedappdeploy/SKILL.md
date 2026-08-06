@@ -53,7 +53,7 @@ Use exactly one lane:
 2. **Exact route-collision recovery** — use `uipcodedappdeploy_recover.py` v1.2
    only for an already-published candidate and an exactly reconciled existing
    deployment.
-3. **Testing-only** — use `uipcodedappdeploy_testing.py` v1.0 only when the user
+3. **Testing-only** — use `uipcodedappdeploy_testing.py` v1.1 only when the user
    explicitly requests an internal, synthetic test deployment to Alpha or
    Staging and accepts that it is not release evidence.
 
@@ -71,11 +71,14 @@ atomic claims, redacted receipts, or post-deploy verification. The testing lane
 does not provide distributed serialization, so never execute the same candidate
 concurrently from another user or host.
 
-Schema 1.0 supports only these combinations:
+Schema 1.1 supports only these combinations:
 
 - `--candidate-mode dist --intent create`: copy and hash an exact built dist in
   an isolated workspace; prepare a read-only exact-version absence guard; prove
   no matching deployment and an unused route; then pack, publish, and deploy.
+- `--candidate-mode dist --intent upgrade`: copy and hash an exact built dist,
+  pack and publish it once, verify the newly published system/deploy identity,
+  and upgrade only the pre-reconciled deployment while preserving its route.
 - `--candidate-mode reconciled --intent upgrade`: validate an exact v1.2
   recovery plan/runtime; skip build, pack, and publish; guard and upgrade only
   its bound deployment while preserving its route.
@@ -113,6 +116,21 @@ python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_testing.py \
   --testing-purpose 'Synthetic coded app acceptance' \
   --receipt-output /absolute/ignored/evidence/testing-receipt.json
 ```
+
+For an exact in-place upgrade that packs and publishes a new dist candidate,
+use the first command and change the intent to `upgrade`, then also provide:
+
+```bash
+  --expected-deployment-id '<exact-deployment-guid>' \
+  --expected-system-name 'ID<32-hex-characters>' \
+  --expected-current-version '<currently-deployed-version>' \
+  --expected-deploy-version '<new-published-candidate-number>'
+```
+
+The expected system name and deploy version must be known before execution and
+must match both the publish response and a fresh remote candidate read. The
+helper rejects non-progressing semantic versions, performs one route-omitting
+PATCH, and verifies the same deployment, route, and new version afterward.
 
 For an exact in-place upgrade of an already-published candidate:
 
@@ -161,7 +179,7 @@ home-scoped operation claim before any external write. Reconciled testing uses
 the same exact-candidate claim namespace as recovery, so the two lanes cannot
 race one PATCH. Dist/create claims remain stable across repacks for the same
 target, package version, and route, preventing a changed ZIP timestamp from
-bypassing an indeterminate write. The schema-1.0 receipt records Git state only
+bypassing an indeterminate write. The schema-1.1 receipt records Git state only
 as informational metadata and binds the exact dist/package/runtime/target
 bytes. A recovery-plan hash is a required technical input, not approval.
 
@@ -467,7 +485,7 @@ authentication and application behavior remain separate acceptance gates.
 - `references/deployment-receipt.v2.schema.json`
 - `references/deployment-recovery-plan.v1.schema.json`
 - `references/deployment-recovery-receipt.v1.schema.json`
-- `references/deployment-testing-receipt.v1.schema.json`
+- `references/deployment-testing-receipt.v1.schema.json` (testing contract 1.1)
 - `references/testing-only-policy.md`
 
 The governed and recovery schemas are integrity contracts, not signatures.

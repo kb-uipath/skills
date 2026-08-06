@@ -130,6 +130,7 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
         }
 
     def candidate(self, *, mode: str = "reconciled", intent: str = "upgrade") -> dict:
+        is_upgrade = intent == "upgrade"
         return {
             "mode": mode,
             "intent": intent,
@@ -148,10 +149,10 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
             "recovery_plan_hash": self.core._hash_bytes(b"recovery-plan")
             if mode == "reconciled"
             else None,
-            "deployment_id": DEPLOYMENT_ID if mode == "reconciled" else None,
-            "system_name": SYSTEM_NAME if mode == "reconciled" else None,
-            "deploy_version": 3 if mode == "reconciled" else None,
-            "current_version": "0.1.1" if mode == "reconciled" else None,
+            "deployment_id": DEPLOYMENT_ID if is_upgrade else None,
+            "system_name": SYSTEM_NAME if is_upgrade else None,
+            "deploy_version": (3 if mode == "reconciled" else 4) if is_upgrade else None,
+            "current_version": "0.1.1" if is_upgrade else None,
             "runtime_manifest_hash": self.core._hash_bytes(b"runtime"),
             "node_executable": "/usr/local/bin/node",
             "node_executable_sha256": self.testing.SUPPORTED_NODE_RUNTIMES["24.13.0"],
@@ -642,9 +643,15 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
                 "file_sha256": self.core._hash_bytes(b"reservation"),
                 "reservation_hash": self.core._hash_bytes(b"reservation-document"),
             }
-            with self.assertRaisesRegex(SystemExit, "dist supports only --intent create"):
+            with self.assertRaisesRegex(SystemExit, "expected-current-version"):
                 self.testing._dist_create(
-                    self.args(cli, root, candidate_mode="dist", intent="upgrade"),
+                    self.args(
+                        cli,
+                        root,
+                        candidate_mode="dist",
+                        intent="upgrade",
+                        expected_current_version=None,
+                    ),
                     target,
                     cli,
                     environment,
@@ -1551,6 +1558,201 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
             self.assertTrue(Path(receipt["execution_claim"]["path"]).exists())
             self.assertEqual([code for _, code in calls], ["PACK_FAILED", "PUBLISH_INDETERMINATE"])
 
+    def test_dist_upgrade_full_mocked_orchestration_succeeds_exactly_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli = self.executable(root)
+            source = root / "source"
+            dist = source / "dist"
+            dist.mkdir(parents=True)
+            (dist / "index.html").write_text("<!doctype html>", encoding="utf-8")
+            (source / "uipath.json").write_text(
+                json.dumps(
+                    {
+                        "clientId": CLIENT_ID,
+                        "scope": "openid profile",
+                        "baseUrl": "https://alpha.api.uipath.com",
+                        "redirectUri": "https://agenticgtm.alpha.uipath.host/aura-vdp-mockup",
+                        "public": False,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            home = root / "home"
+            (home / ".uipath").mkdir(parents=True)
+            environment = {"HOME": str(home), "PATH": "/usr/bin:/bin"}
+            target = self.target(cli)
+            args = self.args(
+                cli,
+                root,
+                intent="upgrade",
+                candidate_mode="dist",
+                version="0.1.3",
+                expected_current_version="0.1.2",
+                expected_system_name=SYSTEM_NAME,
+                expected_deploy_version=4,
+                recovery_plan=None,
+            )
+            reservation = self.testing._reserve_receipt(root / "testing-receipt.json")
+            runtime_workspace = root / "guard-workspace"
+            runtime_config = runtime_workspace / self.core.APP_CONFIG_RELATIVE_PATH
+            runtime_config.parent.mkdir(parents=True)
+            runtime_config.write_text(
+                json.dumps(
+                    {
+                        "appName": "aura-vdp-template-mockup",
+                        "displayName": "Aura VDP Template Mockup",
+                        "appVersion": "0.1.3",
+                        "appType": "Web",
+                        "personalWorkspace": False,
+                        "appUrl": "https://agenticgtm.alpha.uipath.host/aura-vdp-mockup",
+                        "deployedAt": "2026-08-06T03:00:00Z",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            runtime = {
+                "manifest_hash": self.core._hash_bytes(b"runtime"),
+                "runtime_workspace": str(runtime_workspace),
+                "node_executable": "/exact/node",
+                "runtime_cli": "/exact/runtime/uip",
+                "runtime_app_config_sha256": self.core._hash_bytes(b"runtime-app-config"),
+                "runtime_immutable_sha256": self.core._hash_bytes(b"runtime-immutable"),
+            }
+
+            def observation(operation, current, system=SYSTEM_NAME, deploy=4):
+                messages = {
+                    "testing_upgrade_pre": "Testing upgrade target verified; no mutation performed.",
+                    "testing_upgrade_candidate": "Testing upgrade candidate verified; no mutation performed.",
+                    "testing_upgrade_post": "Testing upgrade post-state verified.",
+                }
+                return json.dumps(
+                    {
+                        "Result": "Success",
+                        "Code": "DeployCompleted",
+                        "Data": {
+                            "Message": messages[operation],
+                            "DeploymentId": DEPLOYMENT_ID,
+                            "SystemName": None if operation == "testing_upgrade_pre" else system,
+                            "DeployVersion": None if operation == "testing_upgrade_pre" else deploy,
+                            "CurrentVersion": current,
+                            "RouteName": "aura-vdp-mockup",
+                            "Version": "0.1.3",
+                            "AppName": "Aura VDP Template Mockup",
+                            "AppUrl": "https://agenticgtm.alpha.uipath.host/aura-vdp-mockup",
+                            "Operation": operation,
+                        },
+                    }
+                )
+
+            read_results = [
+                observation("testing_upgrade_pre", "0.1.2"),
+                observation("testing_upgrade_candidate", "0.1.2"),
+                observation("testing_upgrade_post", "0.1.3"),
+            ]
+            writes = []
+
+            def fake_write(command, cwd, env, code):
+                writes.append((command, code))
+                if code == "PUBLISH_INDETERMINATE":
+                    return {
+                        "Result": "Success",
+                        "Code": "PublishCompleted",
+                        "Data": {
+                            "Message": "Package published successfully.",
+                            "PackageName": "aura-vdp-template-mockup",
+                            "PackageVersion": "0.1.3",
+                            "SystemName": SYSTEM_NAME,
+                            "DeployVersion": 4,
+                            "PersonalWorkspace": False,
+                            "AppType": "Web",
+                        },
+                    }
+                if code == "DEPLOY_INDETERMINATE":
+                    return json.loads(
+                        observation("testing_upgrade_post", "0.1.3")
+                        .replace("testing_upgrade_post", "testing_upgrade_execute")
+                        .replace("Testing upgrade post-state verified.", "Testing upgrade completed.")
+                    )
+                return {"Result": "Success"}
+
+            with mock.patch.object(
+                self.testing, "EXPECTED_CLI_SHA256", target["cli_executable_sha256"]
+            ), mock.patch.object(
+                self.testing,
+                "_resolve_node",
+                return_value={
+                    "executable": "/usr/local/bin/node",
+                    "executable_sha256": self.testing.SUPPORTED_NODE_RUNTIMES["24.13.0"],
+                    "version": "24.13.0",
+                },
+            ), mock.patch.object(
+                self.testing, "_audit_tracked_source"
+            ), mock.patch.object(
+                self.testing,
+                "_git_state",
+                return_value=(SOURCE_SHA, self.core._hash_bytes(b"dirty"), SOURCE_SHA),
+            ), mock.patch.object(
+                self.testing, "_validate_cli"
+            ), mock.patch.object(
+                self.testing.core,
+                "_package_evidence",
+                return_value=(
+                    self.core._hash_bytes(b"package-content"),
+                    self.core._hash_bytes(b"package-file"),
+                ),
+            ), mock.patch.object(
+                self.testing, "_audit_package_archive"
+            ), mock.patch.object(
+                self.testing, "_prepare_create_guard_runtime", return_value=runtime
+            ), mock.patch.object(
+                self.testing, "_revalidate_dist_barrier"
+            ), mock.patch.object(
+                self.testing, "_revalidate_create_runtime_immutable"
+            ), mock.patch.object(
+                self.testing, "_run_read", side_effect=read_results
+            ), mock.patch.object(
+                self.testing, "_run_write", side_effect=fake_write
+            ), mock.patch.object(
+                self.testing.core, "_bind_app_config"
+            ), mock.patch.object(
+                self.testing.core, "_verify_url"
+            ):
+                receipt_path = self.testing._dist_create(
+                    args,
+                    target,
+                    cli,
+                    environment,
+                    root / "testing-receipt.json",
+                    reservation,
+                )
+
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(receipt["status"], "succeeded_testing")
+            self.assertEqual(
+                [stage["name"] for stage in receipt["stages"]],
+                [name for name, _ in self.testing.DIST_UPGRADE_STAGE_CONTRACT],
+            )
+            self.assertTrue(all(stage["status"] == "succeeded" for stage in receipt["stages"]))
+            self.assertEqual(receipt["observations"]["prewrite"]["operation"], "testing_upgrade_pre")
+            self.assertEqual(
+                receipt["observations"]["published_candidate"]["operation"],
+                "testing_upgrade_candidate",
+            )
+            self.assertEqual(receipt["observations"]["postwrite"]["operation"], "testing_upgrade_post")
+            self.assertEqual(
+                [code for _, code in writes],
+                ["PACK_FAILED", "PUBLISH_INDETERMINATE", "DEPLOY_INDETERMINATE"],
+            )
+            deploy_commands = [command for command, code in writes if code == "DEPLOY_INDETERMINATE"]
+            self.assertEqual(len(deploy_commands), 1)
+            self.assertEqual(
+                deploy_commands[0][deploy_commands[0].index("--testing-create-mode") + 1],
+                "upgrade-execute",
+            )
+
     def test_create_execute_rechecks_occupied_route_and_cannot_stock_upgrade(self):
         source = "\n".join(old for old, _ in self.testing.CREATE_GUARD_PATCH_EDITS).encode()
         with mock.patch.object(
@@ -1559,7 +1761,7 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
             self.core._hash_bytes(source),
         ):
             patched = self.testing._patched_create_guard_bytes(source).decode()
-        occupied = patched.index('if (deployedApp) {\n      throw new Error("TESTING_CREATE_DEPLOYMENT_EXISTS")')
+            occupied = patched.index('if (deployedApp && !testingUpgradeMode) {\n      throw new Error("TESTING_CREATE_DEPLOYMENT_EXISTS")')
         verify_only = patched.index('if (testingCreateMode === "verify")')
         mutation = patched.index("let operationResult", occupied)
         self.assertLess(occupied, verify_only)
@@ -1577,6 +1779,98 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
         self.assertEqual(command[command.index("--testing-create-mode") + 1], "execute")
         self.assertEqual(command.count("--path-name"), 1)
         self.assertNotIn("--upgrade", command)
+
+    def test_dist_upgrade_guard_is_exact_and_omits_route_from_patch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli = self.executable(root)
+            target = self.target(cli)
+            candidate = self.candidate(mode="dist", intent="upgrade")
+            self.testing._validate_candidate_record(candidate)
+            guard_config = self.testing._dist_guard_config(
+                candidate["package_name"],
+                candidate["app_name"],
+                candidate["version"],
+                target,
+                candidate["path_name"],
+                candidate["intent"],
+            )
+            self.assertEqual(
+                guard_config["appUrl"],
+                "https://agenticgtm.alpha.uipath.host/aura-vdp-mockup",
+            )
+            self.assertNotIn("deploymentId", guard_config)
+            for invalid_version in (
+                "0.1.1",
+                "0.1.1+build.1",
+                "0.1.1-rc.1",
+                "0.1.0",
+            ):
+                stale = copy.deepcopy(candidate)
+                stale["version"] = invalid_version
+                with self.subTest(invalid_version=invalid_version), self.assertRaisesRegex(
+                    SystemExit, "strictly newer"
+                ):
+                    self.testing._validate_candidate_record(stale)
+            promoted = copy.deepcopy(candidate)
+            promoted["current_version"] = "0.1.2-rc.1"
+            promoted["version"] = "0.1.2"
+            self.testing._validate_candidate_record(promoted)
+            runtime = {
+                "node_executable": "/usr/local/bin/node",
+                "runtime_cli": "/evidence/runtime/node_modules/@uipath/cli/dist/index.js",
+            }
+            pre = self.testing._upgrade_guard_command(
+                runtime, target, candidate, "upgrade-pre"
+            )
+            self.assertIn("--testing-expected-deployment-id", pre)
+            self.assertIn("--testing-expected-current-version", pre)
+            self.assertIn("--testing-expected-route-name", pre)
+            self.assertNotIn("--testing-expected-system-name", pre)
+            published = {"systemName": SYSTEM_NAME, "deployVersion": 4}
+            execute = self.testing._upgrade_guard_command(
+                runtime,
+                target,
+                candidate,
+                "upgrade-execute",
+                published=published,
+            )
+            self.assertEqual(
+                execute[execute.index("--testing-create-mode") + 1],
+                "upgrade-execute",
+            )
+            self.assertEqual(
+                execute[execute.index("--testing-expected-system-name") + 1],
+                SYSTEM_NAME,
+            )
+            reconciled = copy.deepcopy(candidate)
+            reconciled["mode"] = "reconciled"
+            reconciled["dist_digest"] = None
+            reconciled["recovery_plan_hash"] = self.core._hash_bytes(b"recovery-plan")
+            self.assertEqual(
+                self.testing._claim_key(target, candidate),
+                self.testing._claim_key(target, reconciled),
+            )
+        source = "\n".join(old for old, _ in self.testing.CREATE_GUARD_PATCH_EDITS).encode()
+        with mock.patch.object(
+            self.testing.recovery,
+            "EXPECTED_CODEDAPP_TOOL_SHA256",
+            self.core._hash_bytes(source),
+        ):
+            patched = self.testing._patched_create_guard_bytes(source).decode()
+        self.assertIn("if (deployedApp.title !== displayTitle)", patched)
+        self.assertNotIn(
+            "deployedApp.title !== appName && deployedApp.title !== displayTitle",
+            patched,
+        )
+        self.assertLess(
+            patched.index('testingCreateMode === "upgrade-pre"'),
+            patched.index("getPublishedAppWithRetry(appName, envConfig, options.version"),
+        )
+        self.assertIn(
+            "publishedApp.deployVersion, testingUpgradeMode ? undefined : options.pathName ? routingName : undefined",
+            patched,
+        )
 
     def test_dist_external_writes_have_last_moment_barriers_and_post_guard_recheck(self):
         helper = TESTING_SCRIPT.read_text(encoding="utf-8")
@@ -1601,9 +1895,7 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
             deploy_segment.index("_revalidate_dist_barrier"),
             deploy_segment.index("_run_write"),
         )
-        post_start = dist_body.index(
-            '_start_stage(receipt, receipt_path, "post_create_guard")'
-        )
+        post_start = dist_body.index("post_guard_stage = (")
         post_finish = dist_body.index("_finish_stage(", post_start)
         post_segment = dist_body[post_start:post_finish]
         self.assertLess(
