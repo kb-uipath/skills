@@ -477,6 +477,190 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
         claim_path = Path(receipt["execution_claim"]["path"])
         return receipt, claim_path, error, remote_guard, deploy, verify, inspect
 
+    def publish_recovery_fixture(self, root: Path):
+        cli = self.executable(root)
+        target = self.target(cli)
+        home = root / "home"
+        (home / ".uipath").mkdir(parents=True)
+        environment = {"HOME": str(home), "PATH": "/usr/bin:/bin"}
+        failed_path = root / "failed-testing-receipt.json"
+        workspace = self.testing._workspace_for(failed_path)
+        dist = workspace / "dist"
+        dist.mkdir(parents=True)
+        (dist / "index.html").write_text("<!doctype html>", encoding="utf-8")
+        config = workspace / "uipath.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "clientId": CLIENT_ID,
+                    "scope": "openid profile",
+                    "baseUrl": "https://alpha.api.uipath.com",
+                    "redirectUri": "https://agenticgtm.alpha.uipath.host/aura-vdp-mockup",
+                    "public": False,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        package = workspace / ".uipath" / "aura-vdp-template-mockup.0.1.2.nupkg"
+        package.parent.mkdir()
+        with zipfile.ZipFile(package, "w") as archive:
+            archive.writestr("content/index.html", "<!doctype html>")
+            archive.writestr(
+                "aura-vdp-template-mockup.nuspec",
+                "<package><metadata><id>aura-vdp-template-mockup</id><version>0.1.2</version></metadata></package>",
+            )
+        runtime_root = workspace / "create-guard-runtime"
+        runtime_workspace = runtime_root / "workspace"
+        runtime_config = runtime_workspace / self.core.APP_CONFIG_RELATIVE_PATH
+        runtime_config.parent.mkdir(parents=True)
+        runtime_config.write_text(
+            json.dumps(
+                {
+                    "appName": "aura-vdp-template-mockup",
+                    "displayName": "Aura VDP Template Mockup",
+                    "appVersion": "0.1.2",
+                    "appUrl": "https://agenticgtm.alpha.uipath.host/aura-vdp-mockup",
+                    "appType": "Web",
+                    "personalWorkspace": False,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        candidate = self.candidate(mode="dist", intent="upgrade")
+        source_helper_sha256 = self.core._hash_bytes(
+            b"distinct-schema-1.1-source-helper"
+        )
+        candidate["helper_sha256"] = source_helper_sha256
+        candidate["runtime_app_config_digest"] = self.core._hash_file(
+            runtime_config,
+            "retained guard config",
+        )
+        candidate["dist_digest"] = self.testing._directory_digest(dist)
+        candidate["uipath_config_digest"] = self.core._hash_file(config, "config")
+        candidate["package_content_digest"] = self.core._hash_bytes(
+            b"fixture-package-content"
+        )
+        candidate["package_file_digest"] = self.core._hash_file(
+            package, "fixture package"
+        )
+        manifest = {
+            "kind": self.testing.CREATE_GUARD_RUNTIME_KIND,
+            "schema_version": self.testing.CREATE_GUARD_RUNTIME_VERSION,
+            "created_at": "2026-08-06T03:26:00Z",
+            "helper_sha256": candidate["helper_sha256"],
+            "patch_algorithm": self.testing.CREATE_GUARD_PATCH_ALGORITHM,
+            "patch_contract_sha256": self.testing._create_guard_patch_hash(),
+            "source_cli": str(cli),
+            "source_cli_sha256": target["cli_executable_sha256"],
+            "source_cli_manifest": str(cli.parents[1] / "package.json"),
+            "source_cli_manifest_sha256": self.core._hash_file(cli.parents[1] / "package.json", "manifest"),
+            "source_tool": str(root / "source-tool.js"),
+            "source_tool_sha256": self.core._hash_bytes(b"source-tool"),
+            "source_tool_manifest": str(root / "source-tool-package.json"),
+            "source_tool_manifest_sha256": self.core._hash_bytes(b"source-tool-package"),
+            "runtime_cli": str(cli),
+            "runtime_root": str(runtime_root),
+            "runtime_cli_sha256": target["cli_executable_sha256"],
+            "runtime_cli_manifest": str(cli.parents[1] / "package.json"),
+            "runtime_cli_manifest_sha256": self.core._hash_file(cli.parents[1] / "package.json", "manifest"),
+            "runtime_tool": str(root / "runtime-tool.js"),
+            "runtime_tool_sha256": self.core._hash_bytes(b"runtime-tool"),
+            "runtime_tool_manifest": str(root / "runtime-tool-package.json"),
+            "runtime_tool_manifest_sha256": self.core._hash_bytes(b"runtime-tool-package"),
+            "runtime_workspace": str(runtime_workspace),
+            "runtime_app_config_sha256": self.core._hash_bytes(b"pre-publish-config"),
+            "node_executable": candidate["node_executable"],
+            "node_executable_sha256": candidate["node_executable_sha256"],
+            "node_version": candidate["node_version"],
+            "runtime_tree_sha256": self.core._hash_bytes(b"runtime-tree"),
+            "runtime_immutable_sha256": candidate["runtime_immutable_digest"],
+            "self_test": {"node_syntax": "passed", "ordinary_deploy": "blocked_before_network"},
+        }
+        manifest["manifest_hash"] = self.core._document_hash(manifest, "manifest_hash")
+        candidate["runtime_manifest_hash"] = manifest["manifest_hash"]
+        manifest_path = workspace / "create-guard-runtime.manifest.json"
+        self.core._atomic_write_json(manifest_path, manifest)
+        claim_path, claim = self.testing._create_claim(target, candidate, environment)
+        source_reservation = self.testing._reserve_receipt(failed_path)
+        source_args = self.args(
+            cli,
+            root,
+            candidate_mode="dist",
+            intent="upgrade",
+            recovery_plan=None,
+            expected_current_version=candidate["current_version"],
+            expected_deploy_version=candidate["deploy_version"],
+        )
+        source_receipt = self.testing._new_receipt(
+            source_args,
+            target,
+            candidate,
+            claim_path,
+            claim,
+            source_reservation,
+            self.testing._stages(self.testing.DIST_UPGRADE_STAGE_CONTRACT, set()),
+        )
+        source_receipt.pop("recovery_source")
+        source_receipt["schema_version"] = "1.1"
+        source_receipt["helper_sha256"] = source_helper_sha256
+        source_receipt["policy"]["policy_version"] = "1.1"
+        now = "2026-08-06T03:26:00Z"
+        for stage in source_receipt["stages"][:8]:
+            stage.update(status="succeeded", started_at=now, finished_at=now)
+        source_receipt["stages"][8].update(
+            status="failed",
+            started_at=now,
+            finished_at=now,
+            error_code="PUBLISH_INDETERMINATE",
+            recovery="reconcile remote package state; blind retry and republish prohibited",
+        )
+        source_receipt["status"] = "publish_indeterminate"
+        source_receipt["external_write_started"] = True
+        source_receipt["observations"]["prewrite"] = {
+            "deploymentId": DEPLOYMENT_ID,
+            "systemName": None,
+            "deployVersion": None,
+            "currentVersion": candidate["current_version"],
+            "routeName": candidate["path_name"],
+            "version": candidate["version"],
+            "appName": candidate["app_name"],
+            "appUrl": "https://agenticgtm.alpha.uipath.host/aura-vdp-mockup",
+            "operation": "testing_upgrade_pre",
+        }
+        source_receipt["receipt_hash"] = self.core._document_hash(source_receipt, "receipt_hash")
+        self.core._atomic_write_json(failed_path, source_receipt)
+        recovery_args = self.args(
+            cli,
+            root,
+            candidate_mode="published-recovery",
+            intent="upgrade",
+            version=candidate["version"],
+            recovery_plan=None,
+            recovery_runtime_manifest=str(manifest_path),
+            expected_current_version=candidate["current_version"],
+            expected_deploy_version=candidate["deploy_version"],
+            failed_testing_receipt=str(failed_path),
+            expected_failed_receipt_hash=source_receipt["receipt_hash"],
+            expected_failed_receipt_file_sha256=self.core._hash_file(failed_path, "failed"),
+            expected_retained_claim_hash=claim["claim_hash"],
+            expected_retained_claim_file_sha256=self.core._hash_file(claim_path, "claim"),
+            expected_package_file_sha256=candidate["package_file_digest"],
+            expected_source_helper_sha256=candidate["helper_sha256"],
+            expected_runtime_manifest_hash=candidate["runtime_manifest_hash"],
+        )
+        return {
+            "cli": cli,
+            "target": target,
+            "environment": environment,
+            "source_receipt": source_receipt,
+            "source_path": failed_path,
+            "original_claim_path": claim_path,
+            "runtime_config": runtime_config,
+            "args": recovery_args,
+        }
+
     def test_reconciled_runtime_manifest_argument_binds_evidence_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1654,6 +1838,17 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
             ]
             writes = []
 
+            def fake_read(command, cwd, env, code):
+                mode = command[command.index("--testing-create-mode") + 1]
+                if mode == "upgrade-candidate":
+                    checkpoint = json.loads(
+                        (root / "testing-receipt.json").read_text(encoding="utf-8")
+                    )
+                    self.assertIsNone(
+                        checkpoint["observations"]["published_candidate"]
+                    )
+                return read_results.pop(0)
+
             def fake_write(command, cwd, env, code):
                 writes.append((command, code))
                 if code == "PUBLISH_INDETERMINATE":
@@ -1665,7 +1860,6 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
                             "PackageName": "aura-vdp-template-mockup",
                             "PackageVersion": "0.1.3",
                             "SystemName": SYSTEM_NAME,
-                            "DeployVersion": 4,
                             "PersonalWorkspace": False,
                             "AppType": "Web",
                         },
@@ -1712,7 +1906,7 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
             ), mock.patch.object(
                 self.testing, "_revalidate_create_runtime_immutable"
             ), mock.patch.object(
-                self.testing, "_run_read", side_effect=read_results
+                self.testing, "_run_read", side_effect=fake_read
             ), mock.patch.object(
                 self.testing, "_run_write", side_effect=fake_write
             ), mock.patch.object(
@@ -1752,6 +1946,530 @@ class UiPathCodedAppDeployTestingTests(unittest.TestCase):
                 deploy_commands[0][deploy_commands[0].index("--testing-create-mode") + 1],
                 "upgrade-execute",
             )
+
+    def test_publish_ack_may_omit_deploy_version_but_rejects_mismatch(self):
+        candidate = self.candidate(mode="dist", intent="upgrade")
+        base = {
+            "Message": "Package published successfully.",
+            "PackageName": candidate["package_name"],
+            "PackageVersion": candidate["version"],
+            "SystemName": candidate["system_name"],
+            "PersonalWorkspace": False,
+            "AppType": "Web",
+        }
+        omitted = {
+            "Result": "Success",
+            "Code": "PublishCompleted",
+            "Data": copy.deepcopy(base),
+        }
+        self.assertEqual(
+            self.testing._validate_published_candidate(omitted, candidate),
+            {"systemName": candidate["system_name"], "deployVersion": candidate["deploy_version"]},
+        )
+        exact = copy.deepcopy(omitted)
+        exact["Data"]["DeployVersion"] = candidate["deploy_version"]
+        self.assertEqual(
+            self.testing._validate_published_candidate(exact, candidate),
+            {"systemName": candidate["system_name"], "deployVersion": candidate["deploy_version"]},
+        )
+        wrong = copy.deepcopy(exact)
+        wrong["Data"]["DeployVersion"] += 1
+        with self.assertRaises(self.testing.TestingCommandError):
+            self.testing._validate_published_candidate(wrong, candidate)
+
+    def test_dist_upgrade_candidate_guard_mismatch_stops_before_deploy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli = self.executable(root)
+            source = root / "source"
+            dist = source / "dist"
+            dist.mkdir(parents=True)
+            (dist / "index.html").write_text("<!doctype html>", encoding="utf-8")
+            (source / "uipath.json").write_text(
+                json.dumps(
+                    {
+                        "clientId": CLIENT_ID,
+                        "scope": "openid profile",
+                        "baseUrl": "https://alpha.api.uipath.com",
+                        "redirectUri": "https://agenticgtm.alpha.uipath.host/aura-vdp-mockup",
+                        "public": False,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            home = root / "home"
+            (home / ".uipath").mkdir(parents=True)
+            environment = {"HOME": str(home), "PATH": "/usr/bin:/bin"}
+            target = self.target(cli)
+            args = self.args(
+                cli,
+                root,
+                intent="upgrade",
+                candidate_mode="dist",
+                version="0.1.3",
+                expected_current_version="0.1.2",
+                expected_system_name=SYSTEM_NAME,
+                expected_deploy_version=4,
+                recovery_plan=None,
+            )
+            receipt_path = root / "testing-receipt.json"
+            reservation = self.testing._reserve_receipt(receipt_path)
+            runtime_workspace = root / "guard-workspace"
+            runtime_config = runtime_workspace / self.core.APP_CONFIG_RELATIVE_PATH
+            runtime_config.parent.mkdir(parents=True)
+            runtime_config.write_text("{}\n", encoding="utf-8")
+            runtime = {
+                "manifest_hash": self.core._hash_bytes(b"runtime"),
+                "runtime_workspace": str(runtime_workspace),
+                "node_executable": "/exact/node",
+                "runtime_cli": "/exact/runtime/uip",
+                "runtime_app_config_sha256": self.core._hash_bytes(b"runtime-app-config"),
+                "runtime_immutable_sha256": self.core._hash_bytes(b"runtime-immutable"),
+            }
+            prewrite = {
+                "deploymentId": DEPLOYMENT_ID,
+                "systemName": None,
+                "deployVersion": None,
+                "currentVersion": "0.1.2",
+                "routeName": "aura-vdp-mockup",
+                "version": "0.1.3",
+                "appName": "Aura VDP Template Mockup",
+                "appUrl": "https://agenticgtm.alpha.uipath.host/aura-vdp-mockup",
+                "operation": "testing_upgrade_pre",
+            }
+            writes = []
+
+            def fake_write(command, cwd, env, code):
+                writes.append(code)
+                if code == "PUBLISH_INDETERMINATE":
+                    return {
+                        "Result": "Success",
+                        "Code": "PublishCompleted",
+                        "Data": {
+                            "Message": "Package published successfully.",
+                            "PackageName": "aura-vdp-template-mockup",
+                            "PackageVersion": "0.1.3",
+                            "SystemName": SYSTEM_NAME,
+                            "PersonalWorkspace": False,
+                            "AppType": "Web",
+                        },
+                    }
+                if code == "DEPLOY_INDETERMINATE":
+                    self.fail("candidate mismatch must stop before deploy")
+                return {"Result": "Success"}
+
+            with mock.patch.object(
+                self.testing, "EXPECTED_CLI_SHA256", target["cli_executable_sha256"]
+            ), mock.patch.object(
+                self.testing,
+                "_resolve_node",
+                return_value={
+                    "executable": "/usr/local/bin/node",
+                    "executable_sha256": self.testing.SUPPORTED_NODE_RUNTIMES["24.13.0"],
+                    "version": "24.13.0",
+                },
+            ), mock.patch.object(
+                self.testing, "_audit_tracked_source"
+            ), mock.patch.object(
+                self.testing,
+                "_git_state",
+                return_value=(SOURCE_SHA, self.core._hash_bytes(b"dirty"), SOURCE_SHA),
+            ), mock.patch.object(
+                self.testing, "_validate_cli"
+            ), mock.patch.object(
+                self.testing.core,
+                "_package_evidence",
+                return_value=(
+                    self.core._hash_bytes(b"package-content"),
+                    self.core._hash_bytes(b"package-file"),
+                ),
+            ), mock.patch.object(
+                self.testing, "_audit_package_archive"
+            ), mock.patch.object(
+                self.testing, "_prepare_create_guard_runtime", return_value=runtime
+            ), mock.patch.object(
+                self.testing, "_revalidate_dist_barrier"
+            ), mock.patch.object(
+                self.testing, "_run_read", return_value="{}"
+            ), mock.patch.object(
+                self.testing,
+                "_validate_upgrade_guard_output",
+                side_effect=[prewrite, self.testing.TestingCommandError("candidate mismatch")],
+            ), mock.patch.object(
+                self.testing, "_run_write", side_effect=fake_write
+            ), mock.patch.object(
+                self.testing.core, "_bind_app_config"
+            ):
+                with self.assertRaises(self.testing.TestingCommandError):
+                    self.testing._dist_create(
+                        args,
+                        target,
+                        cli,
+                        environment,
+                        receipt_path,
+                        reservation,
+                    )
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(receipt["status"], "published_not_deployed")
+            self.assertIsNone(receipt["observations"]["published_candidate"])
+            self.assertEqual(writes, ["PACK_FAILED", "PUBLISH_INDETERMINATE"])
+
+    def test_publish_recovery_reuses_exact_candidate_without_publish(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture = self.publish_recovery_fixture(root)
+            candidate = fixture["source_receipt"]["candidate"]
+
+            def observation(operation, current):
+                message = {
+                    "testing_upgrade_candidate": "Testing upgrade candidate verified; no mutation performed.",
+                    "testing_upgrade_execute": "Testing upgrade completed.",
+                    "testing_upgrade_post": "Testing upgrade post-state verified.",
+                }[operation]
+                return {
+                    "Result": "Success",
+                    "Code": "DeployCompleted",
+                    "Data": {
+                        "Message": message,
+                        "DeploymentId": candidate["deployment_id"],
+                        "SystemName": candidate["system_name"],
+                        "DeployVersion": candidate["deploy_version"],
+                        "CurrentVersion": current,
+                        "RouteName": candidate["path_name"],
+                        "Version": candidate["version"],
+                        "AppName": candidate["app_name"],
+                        "AppUrl": "https://agenticgtm.alpha.uipath.host/aura-vdp-mockup",
+                        "Operation": operation,
+                    },
+                }
+
+            reads = [
+                json.dumps(observation("testing_upgrade_candidate", candidate["current_version"])),
+                json.dumps(observation("testing_upgrade_post", candidate["version"])),
+            ]
+            writes = []
+
+            def deploy(command, cwd, env, code):
+                writes.append((copy.deepcopy(command), code))
+                document = json.loads(fixture["runtime_config"].read_text(encoding="utf-8"))
+                document["appUrl"] = "https://agenticgtm.alpha.uipath.host/aura-vdp-mockup"
+                document["deployedAt"] = "2026-08-06T03:40:00Z"
+                self.core._atomic_write_json(fixture["runtime_config"], document)
+                return observation("testing_upgrade_execute", candidate["version"])
+
+            receipt_path = root / "publish-recovery-receipt.json"
+            reservation = self.testing._reserve_receipt(receipt_path)
+            with mock.patch.object(
+                self.testing, "EXPECTED_CLI_SHA256", fixture["target"]["cli_executable_sha256"]
+            ), mock.patch.object(
+                self.testing, "_validate_cli"
+            ), mock.patch.object(
+                self.testing, "_revalidate_create_runtime_immutable"
+            ), mock.patch.object(
+                self.testing, "_revalidate_publish_recovery_barrier"
+            ), mock.patch.object(
+                self.testing, "_run_read", side_effect=reads
+            ), mock.patch.object(
+                self.testing, "_run_write", side_effect=deploy
+            ), mock.patch.object(
+                self.testing.core, "_verify_url"
+            ):
+                result = self.testing._published_recovery_upgrade(
+                    fixture["args"],
+                    fixture["target"],
+                    fixture["cli"],
+                    fixture["environment"],
+                    receipt_path,
+                    reservation,
+                )
+            receipt = json.loads(result.read_text(encoding="utf-8"))
+            self.assertEqual(receipt["status"], "succeeded_testing")
+            self.assertEqual(receipt["candidate"]["mode"], "published-recovery")
+            self.assertEqual(receipt["helper_sha256"], receipt["candidate"]["helper_sha256"])
+            self.assertNotEqual(
+                receipt["helper_sha256"],
+                fixture["source_receipt"]["helper_sha256"],
+            )
+            self.assertEqual(
+                receipt["recovery_source"]["failed_helper_sha256"],
+                fixture["source_receipt"]["helper_sha256"],
+            )
+            self.assertEqual(len(writes), 1)
+            self.assertEqual(writes[0][1], "DEPLOY_INDETERMINATE")
+            self.assertNotIn("publish", writes[0][0])
+            self.assertEqual(
+                writes[0][0][writes[0][0].index("--testing-create-mode") + 1],
+                "upgrade-execute",
+            )
+            self.assertFalse(any(item == "--path-name" for item in writes[0][0][writes[0][0].index("--testing-create-mode") + 2 :]))
+            self.assertTrue(fixture["original_claim_path"].is_file())
+            self.assertTrue(Path(receipt["execution_claim"]["path"]).is_file())
+            self.assertFalse(receipt["execution_claim"]["released"])
+            self.assertEqual(
+                receipt["observations"]["published_candidate"]["operation"],
+                "testing_upgrade_candidate",
+            )
+            schema = json.loads(RECEIPT_SCHEMA.read_text(encoding="utf-8"))
+            validator = Draft202012Validator(
+                schema,
+                format_checker=FormatChecker(),
+            )
+            self.assertEqual(list(validator.iter_errors(receipt)), [])
+
+    def test_publish_recovery_indeterminate_deploy_retains_both_claims(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture = self.publish_recovery_fixture(root)
+            candidate = fixture["source_receipt"]["candidate"]
+            candidate_guard = json.dumps(
+                {
+                    "Result": "Success",
+                    "Code": "DeployCompleted",
+                    "Data": {
+                        "Message": "Testing upgrade candidate verified; no mutation performed.",
+                        "DeploymentId": candidate["deployment_id"],
+                        "SystemName": candidate["system_name"],
+                        "DeployVersion": candidate["deploy_version"],
+                        "CurrentVersion": candidate["current_version"],
+                        "RouteName": candidate["path_name"],
+                        "Version": candidate["version"],
+                        "AppName": candidate["app_name"],
+                        "AppUrl": "https://agenticgtm.alpha.uipath.host/aura-vdp-mockup",
+                        "Operation": "testing_upgrade_candidate",
+                    },
+                }
+            )
+            receipt_path = root / "publish-recovery-indeterminate-receipt.json"
+            reservation = self.testing._reserve_receipt(receipt_path)
+            with mock.patch.object(
+                self.testing,
+                "EXPECTED_CLI_SHA256",
+                fixture["target"]["cli_executable_sha256"],
+            ), mock.patch.object(
+                self.testing,
+                "_validate_cli",
+            ), mock.patch.object(
+                self.testing,
+                "_revalidate_create_runtime_immutable",
+            ), mock.patch.object(
+                self.testing,
+                "_revalidate_publish_recovery_barrier",
+            ), mock.patch.object(
+                self.testing,
+                "_run_read",
+                return_value=candidate_guard,
+            ) as read, mock.patch.object(
+                self.testing,
+                "_run_write",
+                side_effect=KeyboardInterrupt(),
+            ) as write:
+                with self.assertRaises(KeyboardInterrupt):
+                    self.testing._published_recovery_upgrade(
+                        fixture["args"],
+                        fixture["target"],
+                        fixture["cli"],
+                        fixture["environment"],
+                        receipt_path,
+                        reservation,
+                    )
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(receipt["status"], "deploy_indeterminate")
+            self.assertTrue(receipt["external_write_started"])
+            self.assertTrue(fixture["original_claim_path"].is_file())
+            self.assertTrue(Path(receipt["execution_claim"]["path"]).is_file())
+            self.assertFalse(receipt["execution_claim"]["released"])
+            read.assert_called_once()
+            write.assert_called_once()
+
+    def test_publish_recovery_tampered_runtime_never_invokes_remote_code(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture = self.publish_recovery_fixture(root)
+            receipt_path = root / "publish-recovery-tamper-receipt.json"
+            reservation = self.testing._reserve_receipt(receipt_path)
+            with mock.patch.object(
+                self.testing,
+                "EXPECTED_CLI_SHA256",
+                fixture["target"]["cli_executable_sha256"],
+            ), mock.patch.object(
+                self.testing,
+                "_validate_cli",
+            ), mock.patch.object(
+                self.testing,
+                "_revalidate_create_runtime_immutable",
+            ), mock.patch.object(
+                self.testing,
+                "_revalidate_publish_recovery_barrier",
+                side_effect=SystemExit("runtime changed"),
+            ) as barrier, mock.patch.object(
+                self.testing,
+                "_run_read",
+            ) as read, mock.patch.object(
+                self.testing,
+                "_run_write",
+            ) as write:
+                with self.assertRaisesRegex(SystemExit, "runtime changed"):
+                    self.testing._published_recovery_upgrade(
+                        fixture["args"],
+                        fixture["target"],
+                        fixture["cli"],
+                        fixture["environment"],
+                        receipt_path,
+                        reservation,
+                    )
+            barrier.assert_called_once()
+            read.assert_not_called()
+            write.assert_not_called()
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(receipt["status"], "failed_prewrite")
+            self.assertTrue(receipt["execution_claim"]["released"])
+            self.assertTrue(fixture["original_claim_path"].is_file())
+
+    def test_publish_recovery_rejects_symlinked_runtime_workspace_before_claim(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture = self.publish_recovery_fixture(root)
+            runtime_workspace = fixture["runtime_config"].parents[1]
+            displaced = root / "displaced-runtime-workspace"
+            runtime_workspace.rename(displaced)
+            runtime_workspace.symlink_to(displaced, target_is_directory=True)
+            receipt_path = root / "publish-recovery-symlink-receipt.json"
+            reservation = self.testing._reserve_receipt(receipt_path)
+            with mock.patch.object(
+                self.testing,
+                "EXPECTED_CLI_SHA256",
+                fixture["target"]["cli_executable_sha256"],
+            ), mock.patch.object(
+                self.testing,
+                "_revalidate_create_runtime_immutable",
+            ), mock.patch.object(
+                self.testing,
+                "_run_read",
+            ) as read, mock.patch.object(
+                self.testing,
+                "_run_write",
+            ) as write:
+                with self.assertRaisesRegex(SystemExit, "real directory"):
+                    self.testing._published_recovery_upgrade(
+                        fixture["args"],
+                        fixture["target"],
+                        fixture["cli"],
+                        fixture["environment"],
+                        receipt_path,
+                        reservation,
+                    )
+            read.assert_not_called()
+            write.assert_not_called()
+            self.assertFalse(receipt_path.exists())
+            self.assertTrue(fixture["original_claim_path"].is_file())
+
+    def test_publish_recovery_candidate_mismatch_never_deploys_and_releases_transition(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture = self.publish_recovery_fixture(root)
+            receipt_path = root / "publish-recovery-receipt.json"
+            reservation = self.testing._reserve_receipt(receipt_path)
+            with mock.patch.object(
+                self.testing, "EXPECTED_CLI_SHA256", fixture["target"]["cli_executable_sha256"]
+            ), mock.patch.object(
+                self.testing, "_validate_cli"
+            ), mock.patch.object(
+                self.testing, "_revalidate_create_runtime_immutable"
+            ), mock.patch.object(
+                self.testing, "_revalidate_publish_recovery_barrier"
+            ), mock.patch.object(
+                self.testing, "_run_read", side_effect=self.testing.TestingCommandError("mismatch")
+            ), mock.patch.object(
+                self.testing, "_run_write"
+            ) as write:
+                with self.assertRaises(self.testing.TestingCommandError):
+                    self.testing._published_recovery_upgrade(
+                        fixture["args"], fixture["target"], fixture["cli"],
+                        fixture["environment"], receipt_path, reservation,
+                    )
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(receipt["status"], "failed_prewrite")
+            self.assertTrue(receipt["execution_claim"]["released"])
+            self.assertTrue(fixture["original_claim_path"].is_file())
+            write.assert_not_called()
+
+    def test_publish_recovery_transition_is_atomic_and_non_replayable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture = self.publish_recovery_fixture(root)
+            candidate = copy.deepcopy(fixture["source_receipt"]["candidate"])
+            candidate["mode"] = "published-recovery"
+            reservation = self.testing._reserve_receipt(root / "recovery.json")
+            first_path, _ = self.testing._create_publish_recovery_transition_claim(
+                fixture["source_path"], fixture["source_receipt"], candidate, reservation
+            )
+            self.assertEqual(
+                first_path.name,
+                f"{fixture['source_receipt']['execution_claim']['key'].removeprefix('sha256:')}.publish-recovery.json",
+            )
+            with self.assertRaisesRegex(SystemExit, "already exists"):
+                self.testing._create_publish_recovery_transition_claim(
+                    fixture["source_path"], fixture["source_receipt"], candidate, reservation
+                )
+            self.assertTrue(first_path.is_file())
+            self.assertTrue(fixture["original_claim_path"].is_file())
+
+    def test_publish_recovery_requires_exact_retained_six_field_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture = self.publish_recovery_fixture(root)
+            candidate = fixture["source_receipt"]["candidate"]
+            before, document, bound = self.testing._publish_recovery_bound_config(
+                fixture["runtime_config"],
+                candidate,
+                fixture["target"],
+            )
+            self.assertEqual(before, candidate["runtime_app_config_digest"])
+            self.assertEqual(bound, before)
+            self.assertEqual(
+                set(document),
+                {
+                    "appName", "displayName", "appVersion", "appUrl",
+                    "appType", "personalWorkspace",
+                },
+            )
+            mutated = copy.deepcopy(document)
+            mutated["systemName"] = candidate["system_name"]
+            self.core._atomic_write_json(fixture["runtime_config"], mutated)
+            with self.assertRaisesRegex(SystemExit, "exact retained guard state"):
+                self.testing._publish_recovery_bound_config(
+                    fixture["runtime_config"],
+                    candidate,
+                    fixture["target"],
+                )
+
+    def test_publish_recovery_accepts_exact_crash_receipt_with_running_publish(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixture = self.publish_recovery_fixture(root)
+            source = copy.deepcopy(fixture["source_receipt"])
+            publish = source["stages"][8]
+            publish["status"] = "running"
+            publish.pop("finished_at")
+            publish.pop("error_code")
+            publish.pop("recovery")
+            source["receipt_hash"] = self.core._document_hash(source, "receipt_hash")
+            self.core._atomic_write_json(fixture["source_path"], source)
+            with mock.patch.object(
+                self.testing,
+                "EXPECTED_CLI_SHA256",
+                fixture["target"]["cli_executable_sha256"],
+            ):
+                loaded = self.testing._load_publish_recovery_receipt(
+                    fixture["source_path"],
+                    expected_receipt_hash=source["receipt_hash"],
+                    expected_file_sha256=self.core._hash_file(
+                        fixture["source_path"],
+                        "running publish receipt",
+                    ),
+                )
+            self.assertEqual(loaded["stages"][8]["status"], "running")
 
     def test_create_execute_rechecks_occupied_route_and_cannot_stock_upgrade(self):
         source = "\n".join(old for old, _ in self.testing.CREATE_GUARD_PATCH_EDITS).encode()

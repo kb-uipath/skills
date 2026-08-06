@@ -1,19 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://kb-uipath.github.io/skills/uipcodedappdeploy/deployment-testing-receipt.v1.schema.json",
-  "title": "UiPath Coded App Testing-only Deployment Receipt v1.1",
+  "title": "UiPath Coded App Testing-only Deployment Receipt v1.2",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "kind", "schema_version", "helper_sha256", "attempt_phase",
     "preflight_error_code", "authorization", "target",
-    "candidate", "policy", "execution_claim", "status", "external_write_started",
+    "candidate", "policy", "execution_claim", "recovery_source", "status", "external_write_started",
     "started_at", "updated_at", "redaction", "stages", "observations",
     "verification", "receipt_reservation", "receipt_hash"
   ],
   "properties": {
     "kind": { "const": "uipcodedappdeploy.testing-receipt" },
-    "schema_version": { "const": "1.1" },
+    "schema_version": { "const": "1.2" },
     "helper_sha256": { "$ref": "#/$defs/hash" },
     "attempt_phase": { "enum": ["preflight", "claimed"] },
     "preflight_error_code": {
@@ -42,7 +42,7 @@
       "additionalProperties": false,
       "required": ["policy_version", "data_classification", "internal_authenticated_required", "production_eligible", "release_evidence", "waived_gates", "nonwaivable_controls"],
       "properties": {
-        "policy_version": { "const": "1.1" },
+        "policy_version": { "const": "1.2" },
         "data_classification": { "const": "synthetic_only" },
         "internal_authenticated_required": { "const": true },
         "production_eligible": { "const": false },
@@ -76,6 +76,9 @@
     },
     "execution_claim": {
       "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/executionClaim" }]
+    },
+    "recovery_source": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/publishRecoverySource" }]
     },
     "receipt_reservation": { "$ref": "#/$defs/receiptReservation" },
     "status": {
@@ -134,6 +137,7 @@
         "properties": {
           "candidate": { "type": "null" },
           "execution_claim": { "type": "null" },
+          "recovery_source": { "type": "null" },
           "status": { "const": "failed_prewrite" },
           "external_write_started": { "const": false },
           "preflight_error_code": { "type": "string" },
@@ -202,6 +206,37 @@
           },
           "stages": { "$ref": "#/$defs/distStages" }
         }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "candidate": {
+            "type": "object",
+            "required": ["mode", "intent"],
+            "properties": { "mode": { "const": "published-recovery" }, "intent": { "const": "upgrade" } }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "candidate": {
+            "properties": {
+              "dist_digest": { "$ref": "#/$defs/hash" },
+              "recovery_plan_hash": { "type": "null" },
+              "deployment_id": { "$ref": "#/$defs/guid" },
+              "system_name": { "type": "string", "pattern": "^ID[0-9a-fA-F]{32}$" },
+              "deploy_version": { "type": "integer", "minimum": 1 },
+              "current_version": { "$ref": "#/$defs/semver" },
+              "runtime_manifest_hash": { "$ref": "#/$defs/hash" }
+            }
+          },
+          "recovery_source": { "$ref": "#/$defs/publishRecoverySource" },
+          "stages": { "$ref": "#/$defs/publishedRecoveryStages" }
+        }
+      },
+      "else": {
+        "properties": { "recovery_source": { "type": "null" } }
       }
     },
     {
@@ -290,7 +325,7 @@
           "candidate": {
             "type": "object",
             "required": ["mode", "intent"],
-            "properties": { "mode": { "const": "dist" }, "intent": { "const": "upgrade" } }
+            "properties": { "mode": { "enum": ["dist", "published-recovery"] }, "intent": { "const": "upgrade" } }
           }
         },
         "required": ["status", "candidate"]
@@ -439,6 +474,29 @@
         "reservation_hash": { "$ref": "#/$defs/hash" }
       }
     },
+    "publishRecoverySource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "failed_receipt_path", "failed_receipt_file_sha256", "failed_receipt_hash",
+        "failed_candidate_hash", "failed_helper_sha256", "retained_execution_claim",
+        "workspace_path", "package_path", "runtime_manifest_path",
+        "runtime_manifest_file_sha256", "pre_recovery_app_config_digest"
+      ],
+      "properties": {
+        "failed_receipt_path": { "$ref": "#/$defs/absolutePath" },
+        "failed_receipt_file_sha256": { "$ref": "#/$defs/hash" },
+        "failed_receipt_hash": { "$ref": "#/$defs/hash" },
+        "failed_candidate_hash": { "$ref": "#/$defs/hash" },
+        "failed_helper_sha256": { "$ref": "#/$defs/hash" },
+        "retained_execution_claim": { "$ref": "#/$defs/executionClaim" },
+        "workspace_path": { "$ref": "#/$defs/absolutePath" },
+        "package_path": { "$ref": "#/$defs/absolutePath" },
+        "runtime_manifest_path": { "$ref": "#/$defs/absolutePath" },
+        "runtime_manifest_file_sha256": { "$ref": "#/$defs/hash" },
+        "pre_recovery_app_config_digest": { "$ref": "#/$defs/hash" }
+      }
+    },
     "observation": {
       "type": "object",
       "additionalProperties": false,
@@ -492,7 +550,7 @@
         "main_file", "content_type"
       ],
       "properties": {
-        "mode": { "enum": ["dist", "reconciled"] },
+        "mode": { "enum": ["dist", "reconciled", "published-recovery"] },
         "intent": { "enum": ["create", "upgrade"] },
         "package_name": { "type": "string", "minLength": 1 },
         "app_name": { "type": "string", "minLength": 1 },
@@ -577,6 +635,23 @@
         { "$ref": "#/$defs/localPreflightStage" },
         { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "remote_pre_guard" }, "effect": { "const": "external_read" } } }] },
         { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "runtime_barrier" }, "effect": { "const": "local_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "deploy" }, "effect": { "const": "external_write" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "remote_post_guard" }, "effect": { "const": "external_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "route_verify" }, "effect": { "const": "external_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "config_verify" }, "effect": { "const": "local_read" } } }] }
+      ],
+      "items": false
+    },
+    "publishedRecoveryStages": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "prefixItems": [
+        { "$ref": "#/$defs/localPreflightStage" },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "claim_transition" }, "effect": { "const": "local_write" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "profile_guard" }, "effect": { "const": "external_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "remote_candidate_guard" }, "effect": { "const": "external_read" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "pre_deploy_barrier" }, "effect": { "const": "local_read" } } }] },
         { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "deploy" }, "effect": { "const": "external_write" } } }] },
         { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "remote_post_guard" }, "effect": { "const": "external_read" } } }] },
         { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "name": { "const": "route_verify" }, "effect": { "const": "external_read" } } }] },

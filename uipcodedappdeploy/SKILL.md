@@ -53,7 +53,7 @@ Use exactly one lane:
 2. **Exact route-collision recovery** — use `uipcodedappdeploy_recover.py` v1.2
    only for an already-published candidate and an exactly reconciled existing
    deployment.
-3. **Testing-only** — use `uipcodedappdeploy_testing.py` v1.1 only when the user
+3. **Testing-only** — use `uipcodedappdeploy_testing.py` v1.2 only when the user
    explicitly requests an internal, synthetic test deployment to Alpha or
    Staging and accepts that it is not release evidence.
 
@@ -71,7 +71,7 @@ atomic claims, redacted receipts, or post-deploy verification. The testing lane
 does not provide distributed serialization, so never execute the same candidate
 concurrently from another user or host.
 
-Schema 1.1 supports only these combinations:
+Schema 1.2 supports only these combinations:
 
 - `--candidate-mode dist --intent create`: copy and hash an exact built dist in
   an isolated workspace; prepare a read-only exact-version absence guard; prove
@@ -82,6 +82,11 @@ Schema 1.1 supports only these combinations:
 - `--candidate-mode reconciled --intent upgrade`: validate an exact v1.2
   recovery plan/runtime; skip build, pack, and publish; guard and upgrade only
   its bound deployment while preserving its route.
+- `--candidate-mode published-recovery --intent upgrade`: consume one exact
+  retained schema-1.1 testing receipt whose publication was indeterminate,
+  reconcile its already-published candidate, and perform one guarded deploy.
+  This mode cannot build, pack, or publish and never modifies the original
+  retained claim.
 
 Run only after the direct user request is in the current task:
 
@@ -168,6 +173,59 @@ python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_testing.py \
   --receipt-output /absolute/ignored/evidence/testing-receipt.json
 ```
 
+For a dist-upgrade receipt that stopped at `publish_indeterminate` even though
+the exact package later became remotely queryable, use the dedicated
+deploy-only recovery mode. Every hash is explicit technical authority from the
+retained source evidence; the receipt output must be new:
+
+```bash
+python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_testing.py \
+  --testing-only \
+  --execute \
+  --intent upgrade \
+  --candidate-mode published-recovery \
+  --environment alpha \
+  --control-plane-url https://alpha.uipath.com \
+  --org-id '<exact-org-guid>' \
+  --org-name '<organization>' \
+  --tenant-id '<exact-tenant-guid>' \
+  --tenant-name '<tenant>' \
+  --folder-key '<exact-folder-guid>' \
+  --package-name '<package-name>' \
+  --app-name '<display-title>' \
+  --path-name '<existing-route>' \
+  --client-id '<public-client-guid>' \
+  --version '<published-candidate-version>' \
+  --tags internal,synthetic-testing \
+  --cli-executable /absolute/pinned/node_modules/@uipath/cli/dist/index.js \
+  --cli-version 1.198.0 \
+  --cli-profile '<named-profile>' \
+  --failed-testing-receipt /absolute/ignored/evidence/failed-testing-receipt.json \
+  --expected-failed-receipt-hash 'sha256:<receipt-document-hash>' \
+  --expected-failed-receipt-file-sha256 'sha256:<receipt-file-hash>' \
+  --expected-retained-claim-hash 'sha256:<claim-document-hash>' \
+  --expected-retained-claim-file-sha256 'sha256:<claim-file-hash>' \
+  --expected-package-file-sha256 'sha256:<package-file-hash>' \
+  --expected-source-helper-sha256 'sha256:<failed-run-helper-hash>' \
+  --recovery-runtime-manifest /absolute/ignored/evidence/create-guard-runtime.manifest.json \
+  --expected-runtime-manifest-hash 'sha256:<runtime-manifest-document-hash>' \
+  --expected-deployment-id '<exact-deployment-guid>' \
+  --expected-system-name 'ID<32-hex-characters>' \
+  --expected-current-version '<currently-deployed-version>' \
+  --expected-deploy-version '<published-candidate-number>' \
+  --testing-purpose 'Recover exact synthetic Alpha publication' \
+  --receipt-output /absolute/ignored/evidence/new-testing-receipt.json
+```
+
+The helper derives the failed workspace from the receipt path, rehashes the
+receipt, original claim, package, configuration, runtime manifest, immutable
+runtime tree, CLI, and Node runtime, and creates a second atomic transition
+claim. It then performs a read-only candidate guard and exactly one
+route-omitting `upgrade-execute`. It never republishes and never deletes,
+moves, or rewrites the original retained claim. If this recovery becomes
+indeterminate, reconcile remote state and obtain another explicit design; do
+not retry it.
+
 There is no plan file, approval hash, or resume. The output path must be new.
 Malformed or secret-bearing arguments, an invalid receipt path, an unknown CLI
 build, or an incomplete/mismatched target are rejected before an execution
@@ -179,7 +237,7 @@ home-scoped operation claim before any external write. Reconciled testing uses
 the same exact-candidate claim namespace as recovery, so the two lanes cannot
 race one PATCH. Dist/create claims remain stable across repacks for the same
 target, package version, and route, preventing a changed ZIP timestamp from
-bypassing an indeterminate write. The schema-1.1 receipt records Git state only
+bypassing an indeterminate write. The schema-1.2 receipt records Git state only
 as informational metadata and binds the exact dist/package/runtime/target
 bytes. A recovery-plan hash is a required technical input, not approval.
 

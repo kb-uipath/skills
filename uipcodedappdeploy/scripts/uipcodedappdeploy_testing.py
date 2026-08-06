@@ -16,6 +16,10 @@ The supported candidate matrix is deliberately narrow:
   PATCH cannot carry ``routingName``.
 * ``reconciled`` + ``upgrade`` validates an existing v1.2 recovery plan and
   guarded runtime, then performs only its exact in-place deploy operation.
+* ``published-recovery`` + ``upgrade`` consumes one exact retained testing
+  receipt whose publish outcome was indeterminate, proves the already-
+  published candidate without publishing again, then performs one guarded
+  in-place upgrade.
 """
 
 from __future__ import annotations
@@ -45,8 +49,9 @@ import uipcodedappdeploy_recover as recovery  # noqa: E402
 
 
 RECEIPT_KIND = "uipcodedappdeploy.testing-receipt"
-RECEIPT_SCHEMA_VERSION = "1.1"
-POLICY_VERSION = "1.1"
+RECEIPT_SCHEMA_VERSION = "1.2"
+POLICY_VERSION = "1.2"
+PUBLISH_RECOVERY_SOURCE_SCHEMA_VERSION = "1.1"
 EXPECTED_CLI_VERSION = "1.198.0"
 EXPECTED_CLI_GIT_HEAD = "1fadf03d7a8dd102742571dff569fdac11808afb"
 EXPECTED_CLI_SHA256 = (
@@ -164,6 +169,18 @@ RECONCILED_STAGE_CONTRACT = [
     ("local_preflight", "local_read"),
     ("remote_pre_guard", "external_read"),
     ("runtime_barrier", "local_read"),
+    ("deploy", "external_write"),
+    ("remote_post_guard", "external_read"),
+    ("route_verify", "external_read"),
+    ("config_verify", "local_read"),
+]
+
+PUBLISHED_RECOVERY_STAGE_CONTRACT = [
+    ("local_preflight", "local_read"),
+    ("claim_transition", "local_write"),
+    ("profile_guard", "external_read"),
+    ("remote_candidate_guard", "external_read"),
+    ("pre_deploy_barrier", "local_read"),
     ("deploy", "external_write"),
     ("remote_post_guard", "external_read"),
     ("route_verify", "external_read"),
@@ -495,7 +512,7 @@ def _resolve_node(executable_value: str | None, version_value: str | None) -> di
         core._fail("--node-executable must resolve to an executable regular file.")
     expected_digest = SUPPORTED_NODE_RUNTIMES.get(version_value)
     if expected_digest is None:
-        core._fail("--node-version is not supported by testing schema 1.1.")
+        core._fail("--node-version is not supported by testing schema 1.2.")
     observed_digest = core._hash_file(executable, "testing Node.js executable")
     if observed_digest != expected_digest:
         core._fail("--node-executable bytes do not match the supported Node.js runtime.")
@@ -1450,12 +1467,18 @@ def _validate_published_candidate(
     data = document.get("Data")
     required = {
         "Message", "PackageName", "PackageVersion", "SystemName",
-        "DeployVersion", "PersonalWorkspace", "AppType",
+        "PersonalWorkspace", "AppType",
     }
-    if not isinstance(data, dict) or set(data) != required:
+    if (
+        not isinstance(data, dict)
+        or frozenset(data) not in {
+            frozenset(required),
+            frozenset((*required, "DeployVersion")),
+        }
+    ):
         raise TestingCommandError("PUBLISH_INDETERMINATE")
     system_name = data.get("SystemName")
-    deploy_version = data.get("DeployVersion")
+    acknowledged_deploy_version = data.get("DeployVersion")
     if (
         data.get("Message") != "Package published successfully."
         or data.get("PackageName") != candidate["package_name"]
@@ -1464,13 +1487,25 @@ def _validate_published_candidate(
         or data.get("AppType") != "Web"
         or not isinstance(system_name, str)
         or core.APP_SYSTEM_NAME_RE.fullmatch(system_name) is None
-        or not isinstance(deploy_version, int)
-        or deploy_version < 1
         or system_name != candidate["system_name"]
-        or deploy_version != candidate["deploy_version"]
+        or (
+            "DeployVersion" in data
+            and (
+                not isinstance(acknowledged_deploy_version, int)
+                or acknowledged_deploy_version < 1
+                or acknowledged_deploy_version != candidate["deploy_version"]
+            )
+        )
     ):
         raise TestingCommandError("PUBLISH_INDETERMINATE")
-    return {"systemName": system_name, "deployVersion": deploy_version}
+    # UiPath registration acknowledgement can omit DeployVersion while the
+    # candidate becomes query-visible. The expected deploy version is already
+    # bound into the claimed candidate; the subsequent read-only candidate
+    # guard remains authoritative and must pass before deploy.
+    return {
+        "systemName": system_name,
+        "deployVersion": candidate["deploy_version"],
+    }
 
 
 def _dist_guard_config(
@@ -1885,6 +1920,7 @@ def _new_receipt(
     claim: dict[str, Any],
     reservation: dict[str, Any],
     stages: list[dict[str, Any]],
+    recovery_source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     now = core._utc_now()
     receipt = {
@@ -1917,6 +1953,7 @@ def _new_receipt(
             "claim_hash": claim["claim_hash"],
             "released": False,
         },
+        "recovery_source": copy.deepcopy(recovery_source),
         "receipt_reservation": copy.deepcopy(reservation),
         "status": "in_progress",
         "external_write_started": False,
@@ -1969,6 +2006,7 @@ def _new_preflight_failure_receipt(
             "nonwaivable_controls": copy.deepcopy(NONWAIVABLE_CONTROLS),
         },
         "execution_claim": None,
+        "recovery_source": None,
         "receipt_reservation": copy.deepcopy(reservation),
         "status": "failed_prewrite",
         "external_write_started": False,
@@ -2122,7 +2160,7 @@ def _validate_observation_binding(
             or value["deployVersion"] != candidate["deploy_version"]
         ):
             core._fail("Testing receipt dist upgrade postwrite observation is invalid.")
-    else:
+    elif candidate["mode"] == "reconciled":
         if value["operation"] != "recovery_verify":
             core._fail("Testing receipt upgrade observation is invalid.")
         identity = {
@@ -2140,6 +2178,30 @@ def _validate_observation_binding(
             core._fail(
                 f"Testing receipt upgrade {label} currentVersion is not candidate-bound."
             )
+    else:
+        identity = {
+            "deploymentId": candidate["deployment_id"],
+            "systemName": candidate["system_name"],
+            "deployVersion": candidate["deploy_version"],
+        }
+        for field, expected_value in identity.items():
+            if value[field] != expected_value:
+                core._fail(
+                    f"Testing receipt publish recovery {label} {field} is not candidate-bound."
+                )
+        if label in {"prewrite", "published_candidate"}:
+            if (
+                value["operation"] != "testing_upgrade_candidate"
+                or value["currentVersion"] != candidate["current_version"]
+            ):
+                core._fail(
+                    "Testing receipt publish recovery candidate observation is invalid."
+                )
+        elif (
+            value["operation"] != "testing_upgrade_post"
+            or value["currentVersion"] != candidate["version"]
+        ):
+            core._fail("Testing receipt publish recovery postwrite observation is invalid.")
 
 
 def _validate_stage(stage: Any) -> None:
@@ -2205,7 +2267,10 @@ def _validate_candidate_record(candidate: Any) -> None:
         core._fail("Testing receipt candidate fields are invalid.")
     _assert_common_candidate(candidate)
     if (candidate["mode"], candidate["intent"]) not in {
-        ("dist", "create"), ("dist", "upgrade"), ("reconciled", "upgrade"),
+        ("dist", "create"),
+        ("dist", "upgrade"),
+        ("reconciled", "upgrade"),
+        ("published-recovery", "upgrade"),
     }:
         core._fail("Testing receipt candidate mode and intent are invalid.")
     if not isinstance(candidate["node_executable"], str) or not Path(
@@ -2232,6 +2297,136 @@ def _validate_claim_record(claim: Any) -> None:
         core._fail("Testing receipt claim release state is invalid.")
 
 
+def _validate_publish_recovery_source_record(
+    source: Any,
+    target: dict[str, Any],
+    candidate: dict[str, Any],
+) -> None:
+    fields = {
+        "failed_receipt_path",
+        "failed_receipt_file_sha256",
+        "failed_receipt_hash",
+        "failed_candidate_hash",
+        "failed_helper_sha256",
+        "retained_execution_claim",
+        "workspace_path",
+        "package_path",
+        "runtime_manifest_path",
+        "runtime_manifest_file_sha256",
+        "pre_recovery_app_config_digest",
+    }
+    if not isinstance(source, dict) or set(source) != fields:
+        core._fail("Testing publish recovery source evidence is invalid.")
+    for field in (
+        "failed_receipt_file_sha256",
+        "failed_receipt_hash",
+        "failed_candidate_hash",
+        "failed_helper_sha256",
+        "runtime_manifest_file_sha256",
+        "pre_recovery_app_config_digest",
+    ):
+        core._validate_hash(source[field], f"Testing publish recovery {field}")
+    for field in (
+        "failed_receipt_path",
+        "workspace_path",
+        "package_path",
+        "runtime_manifest_path",
+    ):
+        path = Path(source[field])
+        if not path.is_absolute():
+            core._fail(f"Testing publish recovery {field} must be absolute.")
+    receipt_path = Path(source["failed_receipt_path"])
+    if receipt_path.is_symlink() or not receipt_path.is_file():
+        core._fail("Testing publish recovery source receipt is missing.")
+    if core._hash_file(receipt_path, "publish recovery source receipt") != source[
+        "failed_receipt_file_sha256"
+    ]:
+        core._fail("Testing publish recovery source receipt bytes changed.")
+    try:
+        failed_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        core._fail("Testing publish recovery source receipt is unreadable.")
+    if (
+        not isinstance(failed_receipt, dict)
+        or failed_receipt.get("receipt_hash") != source["failed_receipt_hash"]
+        or core._document_hash(failed_receipt, "receipt_hash")
+        != source["failed_receipt_hash"]
+        or core._hash_json(failed_receipt.get("candidate"))
+        != source["failed_candidate_hash"]
+        or failed_receipt.get("helper_sha256") != source["failed_helper_sha256"]
+        or failed_receipt.get("target") != target
+    ):
+        core._fail("Testing publish recovery source receipt binding is invalid.")
+    failed_candidate = failed_receipt.get("candidate")
+    invariant_fields = {
+        "intent",
+        "package_name",
+        "app_name",
+        "version",
+        "path_name",
+        "tags",
+        "git_head",
+        "git_status_digest",
+        "source_sha",
+        "dist_digest",
+        "uipath_config_digest",
+        "package_content_digest",
+        "package_file_digest",
+        "recovery_plan_hash",
+        "deployment_id",
+        "system_name",
+        "deploy_version",
+        "current_version",
+        "runtime_manifest_hash",
+        "node_executable",
+        "node_executable_sha256",
+        "node_version",
+        "runtime_immutable_digest",
+        "main_file",
+        "content_type",
+    }
+    if not isinstance(failed_candidate, dict) or any(
+        failed_candidate.get(field) != candidate.get(field)
+        for field in invariant_fields
+    ):
+        core._fail("Testing publish recovery candidate diverges from its failed receipt.")
+    retained = source["retained_execution_claim"]
+    _validate_claim_record(retained)
+    if retained["released"]:
+        core._fail("Testing publish recovery requires the original retained claim.")
+    retained_path = Path(retained["path"])
+    if retained_path.is_symlink() or not retained_path.is_file():
+        core._fail("Testing publish recovery original retained claim is missing.")
+    if core._hash_file(retained_path, "publish recovery original claim") != retained[
+        "file_sha256"
+    ]:
+        core._fail("Testing publish recovery original claim bytes changed.")
+    if retained != failed_receipt.get("execution_claim"):
+        core._fail("Testing publish recovery original claim is not receipt-bound.")
+    workspace = Path(source["workspace_path"])
+    if workspace.is_symlink() or not workspace.is_dir():
+        core._fail("Testing publish recovery workspace is missing.")
+    for field in ("package_path", "runtime_manifest_path"):
+        try:
+            Path(source[field]).resolve(strict=True).relative_to(workspace.resolve(strict=True))
+        except (OSError, ValueError):
+            core._fail(f"Testing publish recovery {field} escapes its workspace.")
+    package_path = Path(source["package_path"])
+    if package_path.is_symlink() or not package_path.is_file():
+        core._fail("Testing publish recovery package is missing.")
+    if core._hash_file(package_path, "publish recovery package") != candidate[
+        "package_file_digest"
+    ]:
+        core._fail("Testing publish recovery package bytes changed.")
+    runtime_manifest_path = Path(source["runtime_manifest_path"])
+    if runtime_manifest_path.is_symlink() or not runtime_manifest_path.is_file():
+        core._fail("Testing publish recovery runtime manifest is missing.")
+    if core._hash_file(runtime_manifest_path, "publish recovery runtime manifest") != source[
+        "runtime_manifest_file_sha256"
+    ]:
+        core._fail("Testing publish recovery runtime manifest bytes changed.")
+
+
 def _validate_receipt(receipt: dict[str, Any]) -> None:
     _assert_receipt_redacted(receipt)
     required = {
@@ -2239,10 +2434,10 @@ def _validate_receipt(receipt: dict[str, Any]) -> None:
         "preflight_error_code", "authorization", "target",
         "candidate", "policy", "execution_claim", "status", "external_write_started",
         "started_at", "updated_at", "redaction", "stages", "observations",
-        "verification", "receipt_reservation", "receipt_hash",
+        "verification", "receipt_reservation", "recovery_source", "receipt_hash",
     }
     if set(receipt) != required:
-        core._fail("Testing receipt fields do not match schema 1.1.")
+        core._fail("Testing receipt fields do not match schema 1.2.")
     if receipt["kind"] != RECEIPT_KIND or receipt["schema_version"] != RECEIPT_SCHEMA_VERSION:
         core._fail("Testing receipt kind or schema version is invalid.")
     core._validate_hash(receipt["helper_sha256"], "Testing receipt helper hash")
@@ -2343,6 +2538,11 @@ def _validate_receipt(receipt: dict[str, Any]) -> None:
                 "file_sha256"
             ]:
                 core._fail("Testing receipt retained claim bytes changed.")
+    recovery_source = receipt["recovery_source"]
+    if candidate is not None and candidate["mode"] == "published-recovery":
+        _validate_publish_recovery_source_record(recovery_source, target, candidate)
+    elif recovery_source is not None:
+        core._fail("Only published-recovery receipts may contain recovery source evidence.")
     reservation = receipt["receipt_reservation"]
     if not isinstance(reservation, dict) or set(reservation) != {
         "path", "file_sha256", "reservation_hash",
@@ -2378,6 +2578,8 @@ def _validate_receipt(receipt: dict[str, Any]) -> None:
             if candidate["intent"] == "upgrade"
             else DIST_STAGE_CONTRACT
         )
+    elif candidate["mode"] == "published-recovery":
+        expected_stages = PUBLISHED_RECOVERY_STAGE_CONTRACT
     else:
         expected_stages = RECONCILED_STAGE_CONTRACT
     observed_stages = [(stage["name"], stage["effect"]) for stage in receipt["stages"]]
@@ -2476,7 +2678,7 @@ def _validate_receipt(receipt: dict[str, Any]) -> None:
         or receipt["observations"]["postwrite"] is None
         or (
             candidate is not None
-            and candidate["mode"] == "dist"
+            and candidate["mode"] in {"dist", "published-recovery"}
             and candidate["intent"] == "upgrade"
             and receipt["observations"]["published_candidate"] is None
         )
@@ -2717,8 +2919,8 @@ def _assert_common_candidate(candidate: dict[str, Any]) -> None:
         "helper_sha256",
     ):
         core._validate_hash(candidate[digest_field], f"Testing candidate {digest_field}")
-    if candidate["mode"] == "dist" and candidate["dist_digest"] is None:
-        core._fail("Dist testing candidate requires an exact dist digest.")
+    if candidate["mode"] in {"dist", "published-recovery"} and candidate["dist_digest"] is None:
+        core._fail("Dist-derived testing candidate requires an exact dist digest.")
     if candidate["mode"] == "reconciled" and candidate["recovery_plan_hash"] is None:
         core._fail("Reconciled testing candidate requires a recovery plan hash input.")
     if candidate["mode"] == "dist" and candidate["intent"] == "create" and any(
@@ -2742,6 +2944,14 @@ def _assert_common_candidate(candidate: dict[str, Any]) -> None:
         )
     ):
         core._fail("Reconciled candidate deployment identity is incomplete.")
+    if candidate["mode"] == "published-recovery" and (
+        candidate["recovery_plan_hash"] is not None
+        or any(
+            candidate[field] is None
+            for field in ("deployment_id", "system_name", "deploy_version", "current_version")
+        )
+    ):
+        core._fail("Publish recovery candidate identity is incomplete.")
     if not isinstance(candidate["main_file"], str) or not candidate["main_file"]:
         core._fail("Testing candidate main file is invalid.")
     if Path(candidate["main_file"]).is_absolute() or ".." in Path(candidate["main_file"]).parts:
@@ -3042,13 +3252,10 @@ def _dist_create(
             if candidate["intent"] == "upgrade"
             else None
         )
-        if candidate["intent"] == "upgrade":
-            receipt["observations"]["published_candidate"] = {
-                **receipt["observations"]["prewrite"],
-                "systemName": published["systemName"],
-                "deployVersion": published["deployVersion"],
-                "operation": "testing_upgrade_candidate",
-            }
+        # The publish acknowledgement is not authoritative candidate evidence:
+        # DeployVersion can be absent while registration becomes visible. Keep
+        # the receipt observation empty until the read-only candidate guard
+        # resolves and proves the exact system/deploy identity.
     except (Exception, SystemExit, KeyboardInterrupt):
         _fail_stage(
             receipt, receipt_path, "publish",
@@ -3275,6 +3482,430 @@ def _dist_create(
     receipt["status"] = "succeeded_testing"
     _write_receipt(receipt_path, receipt)
     return receipt_path
+
+
+def _load_publish_recovery_receipt(
+    path: Path,
+    *,
+    expected_receipt_hash: str,
+    expected_file_sha256: str,
+) -> dict[str, Any]:
+    if path.is_symlink() or not path.is_file():
+        core._fail("Publish recovery requires a regular failed testing receipt.")
+    if core._hash_file(path, "failed testing receipt") != expected_file_sha256:
+        core._fail("Failed testing receipt file hash does not match explicit authority.")
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        core._fail("Failed testing receipt is not valid UTF-8 JSON.")
+    legacy_fields = {
+        "kind", "schema_version", "helper_sha256", "attempt_phase",
+        "preflight_error_code", "authorization", "target", "candidate", "policy",
+        "execution_claim", "receipt_reservation", "status", "external_write_started",
+        "started_at", "updated_at", "redaction", "stages", "observations",
+        "verification", "receipt_hash",
+    }
+    if not isinstance(receipt, dict) or set(receipt) != legacy_fields:
+        core._fail("Failed testing receipt is not the exact schema 1.1 shape.")
+    if (
+        receipt.get("kind") != RECEIPT_KIND
+        or receipt.get("schema_version") != PUBLISH_RECOVERY_SOURCE_SCHEMA_VERSION
+        or receipt.get("receipt_hash") != expected_receipt_hash
+        or core._document_hash(receipt, "receipt_hash") != expected_receipt_hash
+        or receipt.get("status") != "publish_indeterminate"
+        or receipt.get("attempt_phase") != "claimed"
+        or receipt.get("external_write_started") is not True
+    ):
+        core._fail("Failed testing receipt is not an exact publish-indeterminate source.")
+    _assert_receipt_redacted(receipt)
+    candidate = receipt.get("candidate")
+    _validate_candidate_record(candidate)
+    if (
+        candidate["mode"] != "dist"
+        or candidate["intent"] != "upgrade"
+        or candidate["helper_sha256"] != receipt.get("helper_sha256")
+        or receipt.get("policy")
+        != {
+            "policy_version": "1.1",
+            "data_classification": "synthetic_only",
+            "internal_authenticated_required": True,
+            "production_eligible": False,
+            "release_evidence": False,
+            "waived_gates": WAIVED_GATES,
+            "nonwaivable_controls": NONWAIVABLE_CONTROLS,
+        }
+    ):
+        core._fail("Failed testing receipt candidate or policy is not recoverable.")
+    target = receipt.get("target")
+    if not isinstance(target, dict) or target.get("cli_executable_sha256") != EXPECTED_CLI_SHA256:
+        core._fail("Failed testing receipt target is not supported.")
+    claim = receipt.get("execution_claim")
+    _validate_claim_record(claim)
+    if claim["released"] or claim["key"] != _claim_key(target, candidate):
+        core._fail("Failed testing receipt does not retain its exact candidate claim.")
+    claim_path = Path(claim["path"])
+    expected_claim_name = f"{claim['key'].removeprefix('sha256:')}.json"
+    if (
+        claim_path.name != expected_claim_name
+        or claim_path.parent.name != "uipcodedappdeploy-recovery-claims"
+    ):
+        core._fail("Failed testing receipt retained claim path is not key-derived.")
+    if claim_path.is_symlink() or not claim_path.is_file() or core._hash_file(
+        claim_path, "failed testing retained claim"
+    ) != claim["file_sha256"]:
+        core._fail("Failed testing receipt retained claim is missing or changed.")
+    try:
+        claim_document = json.loads(claim_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        core._fail("Failed testing receipt retained claim is unreadable.")
+    if (
+        claim_document.get("claim_hash") != claim["claim_hash"]
+        or core._document_hash(claim_document, "claim_hash") != claim["claim_hash"]
+        or claim_document.get("key") != claim["key"]
+        or claim_document.get("target_fingerprint") != core._hash_json(target)
+        or claim_document.get("candidate_fingerprint") != core._hash_json(candidate)
+    ):
+        core._fail("Failed testing receipt retained claim binding is invalid.")
+    reservation = receipt.get("receipt_reservation")
+    if not isinstance(reservation, dict) or set(reservation) != {
+        "path", "file_sha256", "reservation_hash",
+    }:
+        core._fail("Failed testing receipt reservation is invalid.")
+    reservation_path = Path(reservation["path"])
+    if reservation_path.is_symlink() or not reservation_path.is_file() or core._hash_file(
+        reservation_path, "failed testing receipt reservation"
+    ) != reservation["file_sha256"]:
+        core._fail("Failed testing receipt reservation is missing or changed.")
+    try:
+        reservation_document = json.loads(
+            reservation_path.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        core._fail("Failed testing receipt reservation is unreadable.")
+    reservation_name = reservation_path.name
+    if not reservation_name.startswith(".") or not reservation_name.endswith(
+        ".reservation.json"
+    ):
+        core._fail("Failed testing receipt reservation name is invalid.")
+    reserved_receipt_path = reservation_path.with_name(
+        reservation_name[1 : -len(".reservation.json")]
+    )
+    if reserved_receipt_path.resolve(strict=True) != path.resolve(strict=True):
+        core._fail("Failed testing receipt reservation path does not identify the source receipt.")
+    if (
+        not isinstance(reservation_document, dict)
+        or reservation_document.get("kind")
+        != "uipcodedappdeploy.testing-receipt-reservation"
+        or reservation_document.get("schema_version") != "1.0"
+        or reservation_document.get("reservation_hash")
+        != reservation["reservation_hash"]
+        or core._document_hash(reservation_document, "reservation_hash")
+        != reservation["reservation_hash"]
+        or reservation_document.get("receipt_path_sha256")
+        != core._hash_json({"receipt_path": str(reserved_receipt_path)})
+    ):
+        core._fail("Failed testing receipt reservation binding is invalid.")
+    authorization = receipt.get("authorization")
+    verification = receipt.get("verification")
+    if (
+        not isinstance(authorization, dict)
+        or authorization.get("mode") != "explicit_testing_request"
+        or authorization.get("testing_only") is not True
+        or authorization.get("execute") is not True
+        or not isinstance(authorization.get("purpose"), str)
+        or not authorization["purpose"]
+        or receipt.get("redaction") != REDACTION
+        or not isinstance(verification, dict)
+        or verification.get("route_url")
+        != _route_url(target, candidate["path_name"])
+        or verification.get("route_verified") is not None
+        or verification.get("configuration_verified") is not None
+        or verification.get("pre_deploy_app_config_digest")
+        != candidate["runtime_app_config_digest"]
+        or verification.get("post_deploy_app_config_digest") is not None
+        or verification.get("authentication_certification")
+        != "pending_external_acceptance"
+    ):
+        core._fail("Failed testing receipt authorization or verification is invalid.")
+    stages = receipt.get("stages")
+    if (
+        not isinstance(stages, list)
+        or [(stage.get("name"), stage.get("effect")) for stage in stages]
+        != DIST_UPGRADE_STAGE_CONTRACT
+        or any(stage.get("status") != "succeeded" for stage in stages[:8])
+        or not (
+            (
+                stages[8].get("status") == "failed"
+                and stages[8].get("error_code") == "PUBLISH_INDETERMINATE"
+            )
+            or stages[8].get("status") == "running"
+        )
+        or any(stage.get("status") != "pending" for stage in stages[9:])
+    ):
+        core._fail("Failed testing receipt stage history is not recoverable.")
+    for stage in stages:
+        _validate_stage(stage)
+    observations = receipt.get("observations")
+    if (
+        not isinstance(observations, dict)
+        or observations.get("published_candidate") is not None
+        or observations.get("postwrite") is not None
+    ):
+        core._fail("Failed testing receipt contains unsupported later observations.")
+    _validate_observation(observations.get("prewrite"), "prewrite")
+    _validate_observation_binding(observations.get("prewrite"), "prewrite", target, candidate)
+    return receipt
+
+
+def _publish_recovery_paths(
+    receipt_path: Path,
+    candidate: dict[str, Any],
+) -> dict[str, Path]:
+    workspace = _workspace_for(receipt_path)
+    paths = {
+        "workspace": workspace,
+        "dist": workspace / "dist",
+        "config": workspace / "uipath.json",
+        "package": workspace / ".uipath" / f"{candidate['package_name']}.{candidate['version']}.nupkg",
+        "runtime_manifest": workspace / "create-guard-runtime.manifest.json",
+    }
+    if workspace.is_symlink() or not workspace.is_dir():
+        core._fail("Publish recovery workspace is missing.")
+    return paths
+
+
+def _load_publish_recovery_runtime(
+    manifest_path: Path,
+    source_receipt: dict[str, Any],
+) -> dict[str, Any]:
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        core._fail("Publish recovery runtime manifest is missing.")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        core._fail("Publish recovery runtime manifest is unreadable.")
+    candidate = source_receipt["candidate"]
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("manifest_hash") != candidate["runtime_manifest_hash"]
+        or core._document_hash(manifest, "manifest_hash") != candidate["runtime_manifest_hash"]
+        or manifest.get("helper_sha256") != source_receipt["helper_sha256"]
+        or manifest.get("node_executable") != candidate["node_executable"]
+        or manifest.get("node_executable_sha256") != candidate["node_executable_sha256"]
+        or manifest.get("node_version") != candidate["node_version"]
+        or manifest.get("runtime_immutable_sha256") != candidate["runtime_immutable_digest"]
+    ):
+        core._fail("Publish recovery runtime manifest is not source-receipt-bound.")
+    return {
+        **manifest,
+        "manifest_path": str(manifest_path),
+        "runtime_root": manifest["runtime_root"],
+    }
+
+
+def _publish_recovery_runtime_workspace(
+    paths: dict[str, Path],
+    runtime: dict[str, Any],
+) -> Path:
+    expected_root = paths["workspace"] / "create-guard-runtime"
+    expected_workspace = expected_root / "workspace"
+    runtime_root = Path(runtime["runtime_root"])
+    runtime_workspace = Path(runtime["runtime_workspace"])
+    if (
+        runtime_root.resolve(strict=True) != expected_root.resolve(strict=True)
+        or runtime_workspace.resolve(strict=True) != expected_workspace.resolve(strict=True)
+    ):
+        core._fail("Publish recovery runtime is not deterministically located.")
+    for path, label in (
+        (runtime_root, "runtime root"),
+        (runtime_workspace, "runtime workspace"),
+    ):
+        if path.is_symlink() or not path.is_dir():
+            core._fail(f"Publish recovery {label} must be a real directory.")
+    return runtime_workspace
+
+
+def _publish_recovery_bound_config(
+    config_path: Path,
+    candidate: dict[str, Any],
+    target: dict[str, Any],
+) -> tuple[str, dict[str, Any], str]:
+    if config_path.is_symlink() or not config_path.is_file():
+        core._fail("Publish recovery app config is missing.")
+    try:
+        document = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        core._fail("Publish recovery app config is unreadable.")
+    expected_fields = {
+        "appName", "displayName", "appVersion", "appUrl", "appType",
+        "personalWorkspace",
+    }
+    before = core._hash_file(config_path, "publish recovery pre-deploy app config")
+    if (
+        not isinstance(document, dict)
+        or set(document) != expected_fields
+        or before != candidate["runtime_app_config_digest"]
+        or document.get("appName") != candidate["package_name"]
+        or document.get("displayName") != candidate["app_name"]
+        or document.get("appVersion") != candidate["version"]
+        or document.get("appUrl") != _route_url(target, candidate["path_name"])
+        or document.get("appType") != "Web"
+        or document.get("personalWorkspace") is not False
+    ):
+        core._fail("Publish recovery app config is not the exact retained guard state.")
+    return before, copy.deepcopy(document), before
+
+
+def _create_publish_recovery_transition_claim(
+    source_path: Path,
+    source_receipt: dict[str, Any],
+    candidate: dict[str, Any],
+    reservation: dict[str, Any],
+) -> tuple[Path, dict[str, Any]]:
+    predecessor = source_receipt["execution_claim"]
+    predecessor_path = Path(predecessor["path"])
+    expected_predecessor_name = f"{predecessor['key'].removeprefix('sha256:')}.json"
+    if predecessor_path.name != expected_predecessor_name:
+        core._fail("Publish recovery predecessor claim path is not key-derived.")
+    path = predecessor_path.with_name(
+        f"{predecessor['key'].removeprefix('sha256:')}.publish-recovery.json"
+    )
+    claim = {
+        "kind": "uipcodedappdeploy.testing-publish-recovery-transition-claim",
+        "schema_version": "1.0",
+        "created_at": core._utc_now(),
+        "key": predecessor["key"],
+        "predecessor_claim_hash": predecessor["claim_hash"],
+        "predecessor_claim_file_sha256": predecessor["file_sha256"],
+        "failed_receipt_hash": source_receipt["receipt_hash"],
+        "failed_receipt_file_sha256": core._hash_file(
+            source_path, "failed testing receipt"
+        ),
+        "receipt_reservation_hash": reservation["reservation_hash"],
+        "target_fingerprint": core._hash_json(source_receipt["target"]),
+        "candidate_fingerprint": core._hash_json(candidate),
+    }
+    claim["claim_hash"] = core._document_hash(claim, "claim_hash")
+    payload = json.dumps(claim, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        core._fail(
+            "A publish recovery transition already exists for this exact candidate; do not retry."
+        )
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    directory_descriptor = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+    return path, claim
+
+
+def _publish_recovery_source_record(
+    source_path: Path,
+    source_receipt: dict[str, Any],
+    paths: dict[str, Path],
+    pre_config_digest: str,
+) -> dict[str, Any]:
+    return {
+        "failed_receipt_path": str(source_path),
+        "failed_receipt_file_sha256": core._hash_file(source_path, "failed testing receipt"),
+        "failed_receipt_hash": source_receipt["receipt_hash"],
+        "failed_candidate_hash": core._hash_json(source_receipt["candidate"]),
+        "failed_helper_sha256": source_receipt["helper_sha256"],
+        "retained_execution_claim": copy.deepcopy(source_receipt["execution_claim"]),
+        "workspace_path": str(paths["workspace"]),
+        "package_path": str(paths["package"]),
+        "runtime_manifest_path": str(paths["runtime_manifest"]),
+        "runtime_manifest_file_sha256": core._hash_file(
+            paths["runtime_manifest"], "publish recovery runtime manifest"
+        ),
+        "pre_recovery_app_config_digest": pre_config_digest,
+    }
+
+
+def _match_publish_recovery_inputs(
+    args: argparse.Namespace,
+    target: dict[str, Any],
+    source_receipt: dict[str, Any],
+) -> None:
+    if source_receipt["target"] != target:
+        core._fail("Publish recovery target differs from the failed testing receipt.")
+    candidate = source_receipt["candidate"]
+    comparisons = {
+        "package_name": args.package_name,
+        "app_name": args.app_name,
+        "path_name": args.path_name,
+        "version": args.version,
+        "deployment_id": args.expected_deployment_id,
+        "system_name": args.expected_system_name,
+        "current_version": args.expected_current_version,
+        "deploy_version": args.expected_deploy_version,
+    }
+    for field, observed in comparisons.items():
+        if observed != candidate[field]:
+            core._fail(f"Publish recovery {field} does not match the failed receipt.")
+    if core._normalize_tags(args.tags, "--tags") != candidate["tags"]:
+        core._fail("Publish recovery tags do not match the failed receipt.")
+    expected_hashes = {
+        "helper_sha256": args.expected_source_helper_sha256,
+        "package_file_digest": args.expected_package_file_sha256,
+        "runtime_manifest_hash": args.expected_runtime_manifest_hash,
+    }
+    for field, observed in expected_hashes.items():
+        if _require_hash(observed, f"--expected-{field.replace('_', '-')}") != candidate[field]:
+            core._fail(f"Publish recovery {field} does not match the failed receipt.")
+
+
+def _revalidate_publish_recovery_barrier(
+    source_record: dict[str, Any],
+    target: dict[str, Any],
+    candidate: dict[str, Any],
+    runtime: dict[str, Any],
+    transition_path: Path,
+    transition_claim: dict[str, Any],
+    *,
+    require_bound_config: bool,
+) -> None:
+    if core._hash_file(Path(__file__), "testing helper") != candidate["helper_sha256"]:
+        core._fail("Testing helper changed after publish recovery claim transition.")
+    _validate_publish_recovery_source_record(source_record, target, candidate)
+    if transition_path.is_symlink() or not transition_path.is_file() or core._hash_file(
+        transition_path, "publish recovery transition claim"
+    ) != core._hash_bytes(
+        json.dumps(transition_claim, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    ):
+        core._fail("Publish recovery transition claim changed.")
+    workspace = Path(source_record["workspace_path"])
+    if _directory_digest(workspace / "dist") != candidate["dist_digest"]:
+        core._fail("Publish recovery dist changed.")
+    config_copy = workspace / "uipath.json"
+    if core._hash_file(config_copy, "publish recovery uipath.json") != candidate[
+        "uipath_config_digest"
+    ]:
+        core._fail("Publish recovery uipath.json changed.")
+    content_digest, file_digest = core._package_evidence(
+        Path(source_record["package_path"]),
+        package_name=candidate["package_name"],
+        main_file=candidate["main_file"],
+    )
+    if (
+        content_digest != candidate["package_content_digest"]
+        or file_digest != candidate["package_file_digest"]
+    ):
+        core._fail("Publish recovery package changed.")
+    _audit_package_archive(Path(source_record["package_path"]))
+    _revalidate_create_runtime_immutable(runtime, candidate)
+    if require_bound_config:
+        config_path = Path(runtime["runtime_workspace"]) / core.APP_CONFIG_RELATIVE_PATH
+        if core._hash_file(config_path, "publish recovery bound app config") != candidate[
+            "runtime_app_config_digest"
+        ]:
+            core._fail("Publish recovery bound app config changed.")
 
 
 def _match_recovery_inputs(
@@ -3683,6 +4314,367 @@ def _reconciled_upgrade(
     return receipt_path
 
 
+def _published_recovery_upgrade(
+    args: argparse.Namespace,
+    target: dict[str, Any],
+    cli: Path,
+    environment: dict[str, str],
+    receipt_path: Path,
+    reservation: dict[str, Any],
+) -> Path:
+    preflight_started = core._utc_now()
+    if args.intent != "upgrade" or args.candidate_mode != "published-recovery":
+        core._fail("Published recovery supports only --intent upgrade.")
+    if not args.failed_testing_receipt:
+        core._fail("--failed-testing-receipt is required for published recovery.")
+    source_path = Path(args.failed_testing_receipt).expanduser().resolve(strict=True)
+    expected_receipt_hash = _require_hash(
+        args.expected_failed_receipt_hash,
+        "--expected-failed-receipt-hash",
+    )
+    expected_receipt_file = _require_hash(
+        args.expected_failed_receipt_file_sha256,
+        "--expected-failed-receipt-file-sha256",
+    )
+    source_receipt = _load_publish_recovery_receipt(
+        source_path,
+        expected_receipt_hash=expected_receipt_hash,
+        expected_file_sha256=expected_receipt_file,
+    )
+    _match_publish_recovery_inputs(args, target, source_receipt)
+    retained = source_receipt["execution_claim"]
+    if _require_hash(
+        args.expected_retained_claim_hash,
+        "--expected-retained-claim-hash",
+    ) != retained["claim_hash"]:
+        core._fail("Retained claim hash does not match explicit recovery authority.")
+    if _require_hash(
+        args.expected_retained_claim_file_sha256,
+        "--expected-retained-claim-file-sha256",
+    ) != retained["file_sha256"]:
+        core._fail("Retained claim file hash does not match explicit recovery authority.")
+    paths = _publish_recovery_paths(source_path, source_receipt["candidate"])
+    if args.recovery_runtime_manifest and Path(
+        args.recovery_runtime_manifest
+    ).expanduser().resolve(strict=True) != paths["runtime_manifest"].resolve(strict=True):
+        core._fail("--recovery-runtime-manifest does not match the failed receipt workspace.")
+    runtime = _load_publish_recovery_runtime(
+        paths["runtime_manifest"], source_receipt
+    )
+    source_candidate = source_receipt["candidate"]
+    runtime_workspace = _publish_recovery_runtime_workspace(paths, runtime)
+    # Validate the immutable runtime before creating the transition claim. The
+    # retained app config is the sole declared mutable runtime file and must
+    # already have the exact six-field guarded-upgrade shape; recovery never
+    # rewrites it before the remote candidate proof.
+    _revalidate_create_runtime_immutable(runtime, source_candidate)
+    pre_config_digest, bound_config, bound_config_digest = _publish_recovery_bound_config(
+        runtime_workspace / core.APP_CONFIG_RELATIVE_PATH,
+        source_candidate,
+        target,
+    )
+    candidate = copy.deepcopy(source_candidate)
+    candidate["mode"] = "published-recovery"
+    candidate["helper_sha256"] = core._hash_file(Path(__file__), "testing helper")
+    candidate["runtime_app_config_digest"] = bound_config_digest
+    _validate_candidate_record(candidate)
+    source_record = _publish_recovery_source_record(
+        source_path,
+        source_receipt,
+        paths,
+        pre_config_digest,
+    )
+    local_times = {"local_preflight": (preflight_started, core._utc_now())}
+    transition_path, transition_claim = _create_publish_recovery_transition_claim(
+        source_path,
+        source_receipt,
+        candidate,
+        reservation,
+    )
+    stages = _stages(PUBLISHED_RECOVERY_STAGE_CONTRACT, local_times)
+    try:
+        receipt = _new_receipt(
+            args,
+            target,
+            candidate,
+            transition_path,
+            transition_claim,
+            reservation,
+            stages,
+            recovery_source=source_record,
+        )
+        _write_receipt(receipt_path, receipt)
+    except (Exception, SystemExit, KeyboardInterrupt):
+        _release_unstarted_claim(transition_path, transition_claim)
+        raise
+
+    _start_stage(receipt, receipt_path, "claim_transition")
+    try:
+        _publish_recovery_runtime_workspace(paths, runtime)
+        observed_digest, observed_config, _ = _publish_recovery_bound_config(
+            runtime_workspace / core.APP_CONFIG_RELATIVE_PATH,
+            source_candidate,
+            target,
+        )
+        if observed_digest != bound_config_digest or observed_config != bound_config:
+            core._fail("Publish recovery app config binding changed.")
+    except (Exception, SystemExit, KeyboardInterrupt):
+        _fail_stage(
+            receipt,
+            receipt_path,
+            "claim_transition",
+            status="failed_prewrite",
+            error_code="RECOVERY_CLAIM_TRANSITION_FAILED",
+            recovery_text="safe_prewrite_failure; original claim retained; reconcile local config and submit a fresh testing request",
+        )
+        _release_claim(transition_path, transition_claim, receipt, receipt_path)
+        raise
+    _finish_stage(receipt, receipt_path, "claim_transition")
+
+    node_runtime = {
+        "executable": candidate["node_executable"],
+        "executable_sha256": candidate["node_executable_sha256"],
+        "version": candidate["node_version"],
+    }
+    _start_stage(receipt, receipt_path, "profile_guard")
+    try:
+        _validate_cli(target, runtime_workspace, environment, node_runtime)
+    except (Exception, SystemExit, KeyboardInterrupt):
+        _fail_stage(
+            receipt,
+            receipt_path,
+            "profile_guard",
+            status="failed_prewrite",
+            error_code="RECOVERY_PROFILE_GUARD_FAILED",
+            recovery_text="safe_prewrite_failure; authenticate the exact profile and submit a fresh testing request",
+        )
+        _release_claim(transition_path, transition_claim, receipt, receipt_path)
+        raise
+    _finish_stage(receipt, receipt_path, "profile_guard")
+
+    published = {
+        "systemName": candidate["system_name"],
+        "deployVersion": candidate["deploy_version"],
+    }
+    _start_stage(receipt, receipt_path, "remote_candidate_guard")
+    try:
+        # The patched runtime performs a nominally read-only candidate lookup,
+        # but it is still executable code. Prove every source/runtime/package
+        # byte before the first invocation; a manifest-only check is not a
+        # sufficient trust boundary for recovery.
+        _revalidate_publish_recovery_barrier(
+            source_record,
+            target,
+            candidate,
+            runtime,
+            transition_path,
+            transition_claim,
+            require_bound_config=True,
+        )
+        output = _run_read(
+            _upgrade_guard_command(
+                runtime,
+                target,
+                candidate,
+                "upgrade-candidate",
+                published=published,
+            ),
+            runtime_workspace,
+            environment,
+            "RECOVERY_CANDIDATE_GUARD_FAILED",
+        )
+        observation = _validate_upgrade_guard_output(
+            output,
+            target,
+            candidate,
+            "upgrade-candidate",
+            published=published,
+        )
+        receipt["observations"]["prewrite"] = copy.deepcopy(observation)
+        receipt["observations"]["published_candidate"] = copy.deepcopy(observation)
+    except (Exception, SystemExit, KeyboardInterrupt):
+        _fail_stage(
+            receipt,
+            receipt_path,
+            "remote_candidate_guard",
+            status="failed_prewrite",
+            error_code="RECOVERY_CANDIDATE_GUARD_FAILED",
+            recovery_text="safe_prewrite_failure; reconcile exact remote candidate and submit a fresh testing request",
+        )
+        _release_claim(transition_path, transition_claim, receipt, receipt_path)
+        raise
+    _finish_stage(receipt, receipt_path, "remote_candidate_guard")
+
+    _start_stage(receipt, receipt_path, "pre_deploy_barrier")
+    try:
+        _revalidate_publish_recovery_barrier(
+            source_record,
+            target,
+            candidate,
+            runtime,
+            transition_path,
+            transition_claim,
+            require_bound_config=True,
+        )
+    except (Exception, SystemExit, KeyboardInterrupt):
+        _fail_stage(
+            receipt,
+            receipt_path,
+            "pre_deploy_barrier",
+            status="failed_prewrite",
+            error_code="RECOVERY_PRE_DEPLOY_BARRIER_FAILED",
+            recovery_text="safe_prewrite_failure; exact recovery evidence changed; submit a fresh testing request",
+        )
+        _release_claim(transition_path, transition_claim, receipt, receipt_path)
+        raise
+    _finish_stage(receipt, receipt_path, "pre_deploy_barrier")
+
+    _start_stage(receipt, receipt_path, "deploy", external_write=True)
+    try:
+        _revalidate_publish_recovery_barrier(
+            source_record,
+            target,
+            candidate,
+            runtime,
+            transition_path,
+            transition_claim,
+            require_bound_config=True,
+        )
+        deploy_result = _run_write(
+            _upgrade_guard_command(
+                runtime,
+                target,
+                candidate,
+                "upgrade-execute",
+                published=published,
+            ),
+            runtime_workspace,
+            environment,
+            "DEPLOY_INDETERMINATE",
+        )
+        _validate_upgrade_guard_output(
+            deploy_result,
+            target,
+            candidate,
+            "upgrade-execute",
+            published=published,
+        )
+    except (Exception, SystemExit, KeyboardInterrupt):
+        _fail_stage(
+            receipt,
+            receipt_path,
+            "deploy",
+            status="deploy_indeterminate",
+            error_code="DEPLOY_INDETERMINATE",
+            recovery_text="reconcile exact deployment; both claims remain retained and blind retry is prohibited",
+        )
+        raise
+    _finish_stage(
+        receipt,
+        receipt_path,
+        "deploy",
+        receipt_status="deployed_unverified",
+    )
+
+    _start_stage(receipt, receipt_path, "remote_post_guard")
+    try:
+        _revalidate_publish_recovery_barrier(
+            source_record,
+            target,
+            candidate,
+            runtime,
+            transition_path,
+            transition_claim,
+            require_bound_config=False,
+        )
+        output = _run_read(
+            _upgrade_guard_command(
+                runtime,
+                target,
+                candidate,
+                "upgrade-post",
+                published=published,
+            ),
+            runtime_workspace,
+            environment,
+            "RECOVERY_POST_GUARD_FAILED",
+        )
+        receipt["observations"]["postwrite"] = _validate_upgrade_guard_output(
+            output,
+            target,
+            candidate,
+            "upgrade-post",
+            published=published,
+        )
+    except (Exception, SystemExit, KeyboardInterrupt):
+        _fail_stage(
+            receipt,
+            receipt_path,
+            "remote_post_guard",
+            status="deployed_unverified",
+            error_code="RECOVERY_POST_GUARD_FAILED",
+            recovery_text="deployment may have succeeded; reconcile exact post-state before any new request",
+        )
+        raise
+    _finish_stage(receipt, receipt_path, "remote_post_guard")
+
+    _start_stage(receipt, receipt_path, "route_verify")
+    try:
+        core._verify_url(_route_url(target, candidate["path_name"]), args.verify_timeout)
+        receipt["verification"]["route_verified"] = True
+    except (Exception, SystemExit, KeyboardInterrupt):
+        _fail_stage(
+            receipt,
+            receipt_path,
+            "route_verify",
+            status="deployed_unverified",
+            error_code="ROUTE_VERIFY_FAILED",
+            recovery_text="deployment may have succeeded; inspect exact route and assets",
+        )
+        raise
+    _finish_stage(receipt, receipt_path, "route_verify")
+
+    _start_stage(receipt, receipt_path, "config_verify")
+    try:
+        config_path = runtime_workspace / core.APP_CONFIG_RELATIVE_PATH
+        document = json.loads(config_path.read_text(encoding="utf-8"))
+        expected_fields = {
+            "appName", "displayName", "appVersion", "appUrl", "deployedAt",
+            "appType", "personalWorkspace",
+        }
+        if (
+            not isinstance(document, dict)
+            or set(document) != expected_fields
+            or document.get("appName") != candidate["package_name"]
+            or document.get("displayName") != candidate["app_name"]
+            or document.get("appVersion") != candidate["version"]
+            or document.get("appUrl") != _route_url(target, candidate["path_name"])
+            or document.get("appType") != "Web"
+            or document.get("personalWorkspace") is not False
+        ):
+            core._fail("Publish recovery post-deploy app config is invalid.")
+        recovery._require_iso8601(document["deployedAt"], "Publish recovery deployedAt")
+        receipt["verification"]["post_deploy_app_config_digest"] = core._hash_file(
+            config_path,
+            "publish recovery post-deploy app config",
+        )
+        receipt["verification"]["configuration_verified"] = True
+    except (Exception, SystemExit, KeyboardInterrupt):
+        _fail_stage(
+            receipt,
+            receipt_path,
+            "config_verify",
+            status="deployed_unverified",
+            error_code="CONFIG_VERIFY_FAILED",
+            recovery_text="deployment may have succeeded; reconcile exact app configuration",
+        )
+        raise
+    _finish_stage(receipt, receipt_path, "config_verify")
+    receipt["status"] = "succeeded_testing"
+    _write_receipt(receipt_path, receipt)
+    return receipt_path
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Execute one explicit synthetic-only Alpha or Staging Coded App test deployment."
@@ -3690,7 +4682,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--testing-only", action="store_true")
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--intent", choices=("create", "upgrade"))
-    parser.add_argument("--candidate-mode", choices=("dist", "reconciled"))
+    parser.add_argument(
+        "--candidate-mode",
+        choices=("dist", "reconciled", "published-recovery"),
+    )
     parser.add_argument("--environment", choices=("alpha", "staging"))
     parser.add_argument("--control-plane-url")
     parser.add_argument("--org-id")
@@ -3724,6 +4719,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-current-version")
     parser.add_argument("--expected-deploy-version", type=int)
     parser.add_argument("--expected-runtime-manifest-hash")
+    parser.add_argument("--failed-testing-receipt")
+    parser.add_argument("--expected-failed-receipt-hash")
+    parser.add_argument("--expected-failed-receipt-file-sha256")
+    parser.add_argument("--expected-retained-claim-hash")
+    parser.add_argument("--expected-retained-claim-file-sha256")
+    parser.add_argument("--expected-package-file-sha256")
+    parser.add_argument("--expected-source-helper-sha256")
     parser.add_argument("--verify-timeout", type=int, default=15)
     return parser
 
@@ -3751,8 +4753,12 @@ def main(argv: list[str] | None = None) -> int:
             result = _dist_create(
                 args, target, cli, environment, receipt_path, reservation
             )
-        else:
+        elif args.candidate_mode == "reconciled":
             result = _reconciled_upgrade(
+                args, target, cli, environment, receipt_path, reservation
+            )
+        else:
+            result = _published_recovery_upgrade(
                 args, target, cli, environment, receipt_path, reservation
             )
     except (Exception, SystemExit, KeyboardInterrupt) as exc:
