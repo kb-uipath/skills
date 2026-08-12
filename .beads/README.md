@@ -20,6 +20,11 @@ The projection is intentionally not described as full Beads history:
 unrelated commits. The generator collapses those duplicates. Use the native
 Dolt ref whenever fidelity or recovery matters.
 
+One known legacy note containing a machine-local locator is redacted from the
+public projection by issue ID and exact note digest. Native Dolt history remains
+unchanged. This is not a general scrubber: every unrecognized local path still
+fails repository validation.
+
 Everything entered into Beads, including prior values, names, work email
 addresses, notes, comments, labels, and dependency metadata, is public in this
 repository. Never enter secrets, credentials, customer-confidential material,

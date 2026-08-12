@@ -4,6 +4,7 @@ import importlib.util
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -67,6 +68,36 @@ class BeadsHistoryTests(unittest.TestCase):
             ["open", "in_progress", "open"],
             [record["issue"]["status"] for record in normalized],
         )
+
+    def test_normalize_redacts_only_an_allowlisted_legacy_note(self) -> None:
+        legacy_note = "machine-specific legacy locator"
+        safe_note = "installed skill"
+        snapshot = issue("open", "2026-07-24T12:00:00Z")
+        snapshot["notes"] = legacy_note
+        key = (
+            "skills-test",
+            beads_history.hashlib.sha256(legacy_note.encode("utf-8")).hexdigest(),
+        )
+
+        with mock.patch.dict(
+            beads_history.LEGACY_NOTE_REDACTIONS,
+            {key: safe_note},
+            clear=True,
+        ):
+            normalized = beads_history.normalize_issue_history(
+                "skills-test",
+                [raw_history("aaaa", "2026-07-24T12:00:01Z", snapshot)],
+            )
+
+        self.assertEqual(safe_note, normalized[0]["issue"]["notes"])
+        self.assertEqual(legacy_note, snapshot["notes"])
+
+        unknown = dict(snapshot, notes="unknown future locator")
+        normalized = beads_history.normalize_issue_history(
+            "skills-test",
+            [raw_history("bbbb", "2026-07-24T12:00:02Z", unknown)],
+        )
+        self.assertEqual("unknown future locator", normalized[0]["issue"]["notes"])
 
     def test_validate_accepts_terminal_subset_of_current_issue(self) -> None:
         current = issue("in_progress", "2026-07-24T12:02:00Z")

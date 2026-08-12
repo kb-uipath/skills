@@ -30,6 +30,17 @@ REQUIRED_ISSUE_FIELDS = {
     "created_at",
     "updated_at",
 }
+LEGACY_NOTE_REDACTIONS = {
+    (
+        "skills-37t",
+        "26cb18f6df2ae07312016ec6a30fd8a19980ca041f5380dbea37afac32c7eee4",
+    ): (
+        "PR #20 merged Green at dce51183d16dcac87c37138ce007238176d47998. "
+        "The installed uipcodedappdeploy skill was replaced from the exact "
+        "merged tree and byte-verified; installed helper sha256:"
+        "55f2d756b19cd9a2dff7bea4ee20a8a424216608d10728b409dcff6806cbca8f."
+    ),
+}
 
 
 class HistoryValidationError(ValueError):
@@ -105,6 +116,20 @@ def issue_fingerprint(issue: dict[str, Any]) -> str:
     return json.dumps(issue, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+def redact_known_legacy_issue(issue: dict[str, Any]) -> dict[str, Any]:
+    """Redact only explicitly reviewed legacy notes from the public projection."""
+    notes = issue.get("notes")
+    if not isinstance(notes, str):
+        return issue
+    digest = hashlib.sha256(notes.encode("utf-8")).hexdigest()
+    replacement = LEGACY_NOTE_REDACTIONS.get((str(issue.get("id", "")), digest))
+    if replacement is None:
+        return issue
+    redacted = dict(issue)
+    redacted["notes"] = replacement
+    return redacted
+
+
 def history_sort_key(record: dict[str, Any]) -> tuple[datetime, str, str]:
     """Sort history globally by instant, issue ID, then Dolt commit hash."""
     return (
@@ -131,6 +156,7 @@ def normalize_issue_history(
             raise HistoryValidationError(
                 f"{issue_id} history entry {index}: issue snapshot ID mismatch"
             )
+        issue = redact_known_legacy_issue(issue)
         if not isinstance(commit_hash, str) or not COMMIT_HASH_RE.fullmatch(commit_hash):
             raise HistoryValidationError(
                 f"{issue_id} history entry {index}: invalid Dolt commit hash"
