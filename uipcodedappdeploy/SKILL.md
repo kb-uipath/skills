@@ -1,6 +1,6 @@
 ---
 name: uipcodedappdeploy
-description: Plan, pack, publish, deploy, or recover UiPath Coded Apps through governed releases, exact upgrades, or explicitly requested synthetic-only Alpha/Staging testing with exact target and artifact binding.
+description: Plan, pack, publish, deploy, or recover UiPath Coded Web and Action Apps through governed releases, exact upgrades, explicitly requested Alpha/Staging testing, or fast non-release POC deployments including Production.
 ---
 
 # UiPath Coded App Deploy
@@ -10,6 +10,8 @@ planning is local and non-mutating except for an explicitly requested plan file,
 and publishing/deployment require approval of its exact hash. A separate
 testing-only entrypoint exists for an explicit internal, synthetic Alpha or
 Staging test request. Testing receipts are never production release evidence.
+An additive fast POC lane supports configured Web or Action App targets in
+Alpha, Staging, or Production; POC receipts are also never release evidence.
 
 ## Hard Boundaries
 
@@ -46,6 +48,10 @@ Staging test request. Testing receipts are never production release evidence.
   hash. The only exception is the separate testing-only lane below, where an
   explicit user testing request plus `--testing-only --execute` is the
   authorization and the helper creates an automatic redacted receipt.
+- A fast POC request must use `uipcodedappdeploy_poc.py`; never reinterpret it
+  as governed approval or testing-only authorization. Production requires the
+  current command's `--production-execute`, and customer data always requires
+  the current command's `--customer-data-approved`.
 
 ## Choose The Deployment Lane
 
@@ -59,9 +65,39 @@ Use exactly one lane:
 3. **Testing-only** — use `uipcodedappdeploy_testing.py` v1.2 only when the user
    explicitly requests an internal, synthetic test deployment to Alpha or
    Staging and accepts that it is not release evidence.
+4. **Fast POC** — use `uipcodedappdeploy_poc.py` v1.0 only when the user
+   explicitly requests a quick POC deployment. It supports Web and Action Apps
+   in Alpha, Staging, and Production, requires explicit `create` or `upgrade`,
+   and always records non-release evidence.
 
 Never add `--force`, weaken the governed helper, or translate an ordinary
 deployment request into testing intent.
+
+## Fast POC Deployment
+
+Read [`references/poc-operations.md`](references/poc-operations.md) before
+configuring or invoking this lane. The helper provides:
+
+- `configure`: provision and verify the private pinned UiPath CLI/coded-app
+  runtime, resolve the named profile and exactly one folder, and save a
+  non-secret mode-`0600` target binding under `~/.uipath/poc-deploy/`;
+- `deploy`: always build, derive the next unused SemVer, prove exact create or
+  upgrade state, publish once, and perform one guarded deployment; and
+- `recover-published`: deploy one exactly reconciled candidate from a retained
+  `publish_indeterminate` or `published_not_deployed` POC receipt without
+  rebuilding, packing, or publishing.
+
+The POC runtime is pinned to UiPath CLI and coded-app tooling `1.199.0`, sets
+`UIPATH_CLI_DISABLE_VERSION_SYNC=1`, blocks unguarded use, rejects the stock
+upgrade-to-create fallback, and omits `routingName` from exact upgrade PATCHes.
+Do not use the machine's installed `uip` as a substitute.
+
+Production requires `--execute --production-execute`. Customer data requires
+`--customer-data-approved` in the same invocation; Production customer data
+requires all three. These flags may not come from saved configuration or the
+environment. `succeeded_poc_deploy` proves only exact remote metadata plus Web
+route/configuration checks or Action metadata/configuration checks. Action
+Center rendering, submission, outcomes, and write-back remain pending.
 
 ## Explicit Testing-only Deployment
 

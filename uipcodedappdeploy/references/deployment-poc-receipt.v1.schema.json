@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uipath.example/schemas/uipcodedappdeploy-poc-receipt-v1.json",
+  "title": "UiPath Coded App POC Deployment Receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "helper_sha256",
+    "policy_version",
+    "authorization",
+    "target",
+    "candidate",
+    "runtime",
+    "evidence",
+    "reservation",
+    "claim",
+    "recovery_source",
+    "status",
+    "external_write_started",
+    "started_at",
+    "updated_at",
+    "stages",
+    "observations",
+    "verification",
+    "policy",
+    "redaction",
+    "receipt_hash"
+  ],
+  "properties": {
+    "kind": { "const": "uipcodedappdeploy.poc-receipt" },
+    "schema_version": { "const": "1.0" },
+    "helper_sha256": { "$ref": "#/$defs/hash" },
+    "policy_version": { "const": "1.0" },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["execute", "production_execute", "customer_data_approved", "data_classification", "current_request_only"],
+      "properties": {
+        "execute": { "const": true },
+        "production_execute": { "type": "boolean" },
+        "customer_data_approved": { "type": "boolean" },
+        "data_classification": { "enum": ["synthetic", "internal", "customer"] },
+        "current_request_only": { "const": true }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environment", "control_plane_url", "api_url", "organization_id",
+        "organization_name", "tenant_id", "tenant_name", "folder_key",
+        "folder_name", "folder_path", "folder_type", "cli_profile",
+        "cli_profile_hash", "app_type", "package_name", "app_name",
+        "path_name", "client_id", "tags", "config_hash"
+      ],
+      "properties": {
+        "environment": { "enum": ["alpha", "staging", "production"] },
+        "control_plane_url": { "type": "string", "format": "uri" },
+        "api_url": { "type": "string", "format": "uri" },
+        "organization_id": { "$ref": "#/$defs/guid" },
+        "organization_name": { "type": "string", "minLength": 1 },
+        "tenant_id": { "$ref": "#/$defs/guid" },
+        "tenant_name": { "type": "string", "minLength": 1 },
+        "folder_key": { "$ref": "#/$defs/guid" },
+        "folder_name": { "type": "string", "minLength": 1 },
+        "folder_path": { "type": "string", "minLength": 1 },
+        "folder_type": { "type": "string", "minLength": 1 },
+        "cli_profile": { "type": "string", "minLength": 1 },
+        "cli_profile_hash": { "$ref": "#/$defs/hash" },
+        "app_type": { "enum": ["web", "action"] },
+        "package_name": { "type": "string", "minLength": 1 },
+        "app_name": { "type": "string", "minLength": 1 },
+        "path_name": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 32 },
+        "client_id": { "oneOf": [{ "$ref": "#/$defs/guid" }, { "type": "null" }] },
+        "tags": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" } },
+        "config_hash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intent", "version", "local_version", "deployment_id", "current_version", "system_name", "deploy_version", "evidence", "package_path"],
+      "properties": {
+        "intent": { "enum": ["create", "upgrade"] },
+        "version": { "$ref": "#/$defs/semver" },
+        "local_version": { "$ref": "#/$defs/semver" },
+        "deployment_id": { "oneOf": [{ "$ref": "#/$defs/guid" }, { "type": "null" }] },
+        "current_version": { "oneOf": [{ "$ref": "#/$defs/semver" }, { "type": "null" }] },
+        "system_name": { "oneOf": [{ "type": "string", "pattern": "^ID[0-9a-fA-F]{32}$" }, { "type": "null" }] },
+        "deploy_version": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }] },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dist_sha256", "app_config_sha256", "package_content_sha256", "package_file_sha256"],
+          "properties": {
+            "dist_sha256": { "$ref": "#/$defs/hash" },
+            "app_config_sha256": { "$ref": "#/$defs/hash" },
+            "package_content_sha256": { "$ref": "#/$defs/hash" },
+            "package_file_sha256": { "$ref": "#/$defs/hash" }
+          }
+        },
+        "package_path": { "type": "string", "minLength": 1 }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest", "manifest_sha256", "cli", "cli_sha256", "codedapp_guarded_sha256", "orchestrator_sha256", "patch_contract_sha256"],
+      "properties": {
+        "manifest": { "type": "string", "minLength": 1 },
+        "manifest_sha256": { "$ref": "#/$defs/hash" },
+        "cli": { "type": "string", "minLength": 1 },
+        "cli_sha256": { "$ref": "#/$defs/hash" },
+        "codedapp_guarded_sha256": { "$ref": "#/$defs/hash" },
+        "orchestrator_sha256": { "$ref": "#/$defs/hash" },
+        "patch_contract_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_root", "workspace", "receipt"],
+      "properties": {
+        "project_root": { "type": "string", "minLength": 1 },
+        "workspace": { "type": "string", "minLength": 1 },
+        "receipt": { "type": "string", "minLength": 1 }
+      }
+    },
+    "reservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": { "path": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "retained"],
+      "properties": { "path": { "type": "string", "minLength": 1 }, "retained": { "type": "boolean" } }
+    },
+    "recovery_source": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "receipt_hash", "file_sha256"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "receipt_hash": { "$ref": "#/$defs/hash" },
+            "file_sha256": { "$ref": "#/$defs/hash" }
+          }
+        }
+      ]
+    },
+    "status": { "enum": ["in_progress", "failed_prewrite", "publish_indeterminate", "published_not_deployed", "deploy_indeterminate", "deployed_unverified", "succeeded_poc_deploy"] },
+    "external_write_started": { "type": "boolean" },
+    "started_at": { "$ref": "#/$defs/timestamp" },
+    "updated_at": { "$ref": "#/$defs/timestamp" },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "operation", "status", "started_at", "finished_at", "error_code"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "operation": { "enum": ["local_read", "local_write", "external_read", "external_write"] },
+          "status": { "enum": ["running", "succeeded", "failed", "indeterminate"] },
+          "started_at": { "$ref": "#/$defs/timestamp" },
+          "finished_at": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+          "error_code": { "oneOf": [{ "type": "string", "pattern": "^[A-Z0-9_]+$" }, { "type": "null" }] }
+        }
+      }
+    },
+    "observations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prewrite", "published_candidate", "postwrite"],
+      "properties": {
+        "prewrite": {},
+        "published_candidate": {},
+        "postwrite": {}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["route_verified", "configuration_verified", "action_center_rendering", "action_center_submission", "action_center_write_back"],
+      "properties": {
+        "route_verified": { "type": ["boolean", "null"] },
+        "configuration_verified": { "type": "boolean" },
+        "action_center_rendering": { "type": ["string", "null"] },
+        "action_center_submission": { "type": ["string", "null"] },
+        "action_center_write_back": { "type": ["string", "null"] },
+        "post_deploy_app_config_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["production_eligible", "release_evidence"],
+      "properties": { "production_eligible": { "const": false }, "release_evidence": { "const": false } }
+    },
+    "redaction": {
+      "const": {
+        "commands": "omitted",
+        "environment": "omitted",
+        "subprocess_output": "omitted",
+        "errors": "stable_code_only",
+        "secrets": "prohibited"
+      }
+    },
+    "receipt_hash": { "$ref": "#/$defs/hash" }
+  },
+  "$defs": {
+    "guid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "semver": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$" },
+    "timestamp": { "type": "string", "format": "date-time" }
+  }
+}
