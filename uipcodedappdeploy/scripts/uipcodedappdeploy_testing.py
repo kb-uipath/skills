@@ -2,7 +2,7 @@
 """Execute an explicitly authorized, synthetic-only Coded App test deployment.
 
 This helper is intentionally separate from the governed v2.3 planner and the
-v1.2 exact-upgrade recovery helper. It has no planning or resume mode. A direct
+v1.3 exact-upgrade recovery helper. It has no planning or resume mode. A direct
 ``--testing-only --execute`` invocation creates an automatic redacted receipt
 before any external write. The receipt is never production release evidence.
 
@@ -14,7 +14,7 @@ The supported candidate matrix is deliberately narrow:
   proves its route and current version before publication, reconciles the
   newly published candidate, and performs one guarded in-place upgrade whose
   PATCH cannot carry ``routingName``.
-* ``reconciled`` + ``upgrade`` validates an existing v1.2 recovery plan and
+* ``reconciled`` + ``upgrade`` validates an existing v1.3 recovery plan and
   guarded runtime, then performs only its exact in-place deploy operation.
 * ``published-recovery`` + ``upgrade`` consumes one exact retained testing
   receipt whose publish outcome was indeterminate, proves the already-
@@ -51,7 +51,7 @@ import uipcodedappdeploy_recover as recovery  # noqa: E402
 RECEIPT_KIND = "uipcodedappdeploy.testing-receipt"
 RECEIPT_SCHEMA_VERSION = "1.2"
 POLICY_VERSION = "1.2"
-PUBLISH_RECOVERY_SOURCE_SCHEMA_VERSION = "1.1"
+PUBLISH_RECOVERY_SOURCE_SCHEMA_VERSIONS = frozenset(("1.1", "1.2"))
 EXPECTED_CLI_VERSION = "1.198.0"
 EXPECTED_CLI_GIT_HEAD = "1fadf03d7a8dd102742571dff569fdac11808afb"
 EXPECTED_CLI_SHA256 = (
@@ -3505,11 +3505,21 @@ def _load_publish_recovery_receipt(
         "started_at", "updated_at", "redaction", "stages", "observations",
         "verification", "receipt_hash",
     }
-    if not isinstance(receipt, dict) or set(receipt) != legacy_fields:
-        core._fail("Failed testing receipt is not the exact schema 1.1 shape.")
+    current_fields = {*legacy_fields, "recovery_source"}
+    if not isinstance(receipt, dict):
+        core._fail("Failed testing receipt is not an exact supported source shape.")
+    source_schema_version = receipt.get("schema_version")
+    expected_fields = {
+        "1.1": legacy_fields,
+        "1.2": current_fields,
+    }.get(source_schema_version)
+    if expected_fields is None or set(receipt) != expected_fields:
+        core._fail("Failed testing receipt is not an exact supported source shape.")
+    if source_schema_version == "1.2" and receipt["recovery_source"] is not None:
+        core._fail("Failed testing source receipt already contains recovery evidence.")
     if (
         receipt.get("kind") != RECEIPT_KIND
-        or receipt.get("schema_version") != PUBLISH_RECOVERY_SOURCE_SCHEMA_VERSION
+        or source_schema_version not in PUBLISH_RECOVERY_SOURCE_SCHEMA_VERSIONS
         or receipt.get("receipt_hash") != expected_receipt_hash
         or core._document_hash(receipt, "receipt_hash") != expected_receipt_hash
         or receipt.get("status") != "publish_indeterminate"
@@ -3526,7 +3536,7 @@ def _load_publish_recovery_receipt(
         or candidate["helper_sha256"] != receipt.get("helper_sha256")
         or receipt.get("policy")
         != {
-            "policy_version": "1.1",
+            "policy_version": source_schema_version,
             "data_classification": "synthetic_only",
             "internal_authenticated_required": True,
             "production_eligible": False,

@@ -2,16 +2,16 @@
   "_type": "beads_history_manifest",
   "artifacts": {
     ".beads/history.jsonl": {
-      "records": 203,
-      "sha256": "c74d4ab83191d37544ea5e5bc17cb807207c702b86e4b9899fdef76ee886c6ff"
+      "records": 273,
+      "sha256": "0e0a5b52397acd24fcecddb47ab1b72b297005939959c0077e5c89fc34a70825"
     },
     ".beads/issues.jsonl": {
-      "records": 43,
-      "sha256": "8bad35cd6c39450afb5be2e8c46afc65e8893b6e81d723c52247cd8f440a1ba7"
+      "records": 56,
+      "sha256": "88d15d51ee6730febc409e009668122c998096363b4c8eac5763c9dd6046e5a4"
     }
   },
-  "dolt_head": "eef37ul7gnjir78q913t2c9c3ao5eteg",
+  "dolt_head": "7eh9dvjnin6uff65j0hrt7ibef9a8lrj",
   "dolt_ref": "refs/dolt/data",
-  "projection": "Deduplicated issue-table snapshots for GitHub review; the Dolt ref is the complete recovery source.",
+  "projection": "Deduplicated issue-table snapshots for GitHub review with declared local-path redactions applied; the Dolt ref is the complete recovery source.",
   "schema_version": 1
 }

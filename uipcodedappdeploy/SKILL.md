@@ -1,6 +1,6 @@
 ---
 name: uipcodedappdeploy
-description: Plan and execute governed UiPath coded app releases, exact upgrade recovery, or explicitly requested synthetic-only Alpha/Staging test deployments with exact target and artifact binding.
+description: Plan, pack, publish, deploy, or recover UiPath Coded Web and Action Apps through governed releases, exact upgrades, explicitly requested Alpha/Staging testing, or fast non-release POC deployments including Production.
 ---
 
 # UiPath Coded App Deploy
@@ -10,6 +10,8 @@ planning is local and non-mutating except for an explicitly requested plan file,
 and publishing/deployment require approval of its exact hash. A separate
 testing-only entrypoint exists for an explicit internal, synthetic Alpha or
 Staging test request. Testing receipts are never production release evidence.
+An additive fast POC lane supports configured Web or Action App targets in
+Alpha, Staging, or Production; POC receipts are also never release evidence.
 
 ## Hard Boundaries
 
@@ -23,6 +25,9 @@ Staging test request. Testing receipts are never production release evidence.
   client GUID.
 - Pin an absolute UiPath CLI executable, its exact SemVer, and a named login
   profile. Do not rely on `PATH` for a release.
+- Use only CLI and coded-app-tool builds allowlisted by the selected helper.
+  Never substitute npm's current `latest` tag without updating the pinned
+  hashes, patch anchors, fixtures, and full validation suite.
 - The CLI control-plane origin belongs in `--control-plane-url`. Do not confuse
   it with a browser SDK/API origin.
 - Executable plans require an explicit `--environment` and its exact control
@@ -43,6 +48,10 @@ Staging test request. Testing receipts are never production release evidence.
   hash. The only exception is the separate testing-only lane below, where an
   explicit user testing request plus `--testing-only --execute` is the
   authorization and the helper creates an automatic redacted receipt.
+- A fast POC request must use `uipcodedappdeploy_poc.py`; never reinterpret it
+  as governed approval or testing-only authorization. Production requires the
+  current command's `--production-execute`, and customer data always requires
+  the current command's `--customer-data-approved`.
 
 ## Choose The Deployment Lane
 
@@ -50,26 +59,57 @@ Use exactly one lane:
 
 1. **Governed release** — use `uipcodedappdeploy.py` v2.3. This remains the
    default whenever intent, data classification, or environment is ambiguous.
-2. **Exact route-collision recovery** — use `uipcodedappdeploy_recover.py` v1.2
+2. **Exact route-collision recovery** — use `uipcodedappdeploy_recover.py` v1.3
    only for an already-published candidate and an exactly reconciled existing
-   deployment.
+   deployment. v1.3 also covers a chained recovery, where the currently
+   deployed version was itself produced by an earlier recovery.
 3. **Testing-only** — use `uipcodedappdeploy_testing.py` v1.2 only when the user
    explicitly requests an internal, synthetic test deployment to Alpha or
    Staging and accepts that it is not release evidence.
+4. **Fast POC** — use `uipcodedappdeploy_poc.py` v1.0 only when the user
+   explicitly requests a quick POC deployment. It supports Web and Action Apps
+   in Alpha, Staging, and Production, requires explicit `create` or `upgrade`,
+   and always records non-release evidence.
 
 Never add `--force`, weaken the governed helper, or translate an ordinary
 deployment request into testing intent.
 
+## Fast POC Deployment
+
+Read [`references/poc-operations.md`](references/poc-operations.md) before
+configuring or invoking this lane. The helper provides:
+
+- `configure`: provision and verify the private pinned UiPath CLI/coded-app
+  runtime, resolve the named profile and exactly one folder, and save a
+  non-secret mode-`0600` target binding under `~/.uipath/poc-deploy/`;
+- `deploy`: always build, derive the next unused SemVer, prove exact create or
+  upgrade state, publish once, and perform one guarded deployment; and
+- `recover-published`: deploy one exactly reconciled candidate from a retained
+  `publish_indeterminate` or `published_not_deployed` POC receipt without
+  rebuilding, packing, or publishing; and
+- `recover-deploy-indeterminate`: after read-only reconciliation proves the
+  original upgrade did not apply, recover one exact retained upgrade candidate
+  without rebuilding, packing, publishing, modifying the source receipt, or
+  removing its original replay-protection claim.
+
+The POC runtime is pinned to UiPath CLI and coded-app tooling `1.199.0`, sets
+`UIPATH_CLI_DISABLE_VERSION_SYNC=1`, blocks unguarded use, rejects the stock
+upgrade-to-create fallback, and omits `routingName` from exact upgrade PATCHes.
+Do not use the machine's installed `uip` as a substitute.
+
+Production requires `--execute --production-execute`. Customer data requires
+`--customer-data-approved` in the same invocation; Production customer data
+requires all three. These flags may not come from saved configuration or the
+environment. `succeeded_poc_deploy` proves only exact remote metadata plus Web
+route/configuration checks or Action metadata/configuration checks. Action
+Center rendering, submission, outcomes, and write-back remain pending.
+
 ## Explicit Testing-only Deployment
 
 Read [`references/testing-only-policy.md`](references/testing-only-policy.md)
-before invoking this lane. It waives clean-Git release provenance, independent
-approval, production signing, full rebuild/test reruns for an exact candidate,
-and the second plan-hash response. It does not waive exact target/artifact
-binding, mandatory internal-authentication acceptance, synthetic data, route safety, host-local
-atomic claims, redacted receipts, or post-deploy verification. The testing lane
-does not provide distributed serialization, so never execute the same candidate
-concurrently from another user or host.
+and [`references/testing-only-operations.md`](references/testing-only-operations.md)
+before invoking this lane. The first defines authorization and non-waivable
+controls; the second contains the complete command shapes and recovery inputs.
 
 Schema 1.2 supports only these combinations:
 
@@ -79,184 +119,22 @@ Schema 1.2 supports only these combinations:
 - `--candidate-mode dist --intent upgrade`: copy and hash an exact built dist,
   pack and publish it once, verify the newly published system/deploy identity,
   and upgrade only the pre-reconciled deployment while preserving its route.
-- `--candidate-mode reconciled --intent upgrade`: validate an exact v1.2
+- `--candidate-mode reconciled --intent upgrade`: validate an exact v1.3
   recovery plan/runtime; skip build, pack, and publish; guard and upgrade only
   its bound deployment while preserving its route.
 - `--candidate-mode published-recovery --intent upgrade`: consume one exact
-  retained schema-1.1 testing receipt whose publication was indeterminate,
-  reconcile its already-published candidate, and perform one guarded deploy.
-  This mode cannot build, pack, or publish and never modifies the original
-  retained claim.
+  retained schema-1.1 or schema-1.2 testing receipt whose publication was
+  indeterminate, reconcile its already-published candidate, and perform one
+  guarded deploy. This mode cannot build, pack, or publish, cannot chain a
+  prior recovery, and never modifies the original retained claim.
 
-Run only after the direct user request is in the current task:
-
-```bash
-python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_testing.py \
-  --testing-only \
-  --execute \
-  --intent create \
-  --candidate-mode dist \
-  --environment alpha \
-  --control-plane-url https://alpha.uipath.com \
-  --org-id '<exact-org-guid>' \
-  --org-name '<organization>' \
-  --tenant-id '<exact-tenant-guid>' \
-  --tenant-name '<tenant>' \
-  --folder-key '<exact-folder-guid>' \
-  --package-name '<package-name>' \
-  --app-name '<display-title>' \
-  --path-name '<unused-route>' \
-  --client-id '<public-client-guid>' \
-  --version '<candidate-version>' \
-  --tags internal,synthetic-testing \
-  --cli-executable /absolute/pinned/node_modules/@uipath/cli/dist/index.js \
-  --cli-version 1.198.0 \
-  --cli-profile '<named-profile>' \
-  --node-executable /absolute/pinned/node \
-  --node-version 24.13.0 \
-  --project-root /absolute/project \
-  --app-dist /absolute/project/dist \
-  --main-file index.html \
-  --content-type webapp \
-  --testing-purpose 'Synthetic coded app acceptance' \
-  --receipt-output /absolute/ignored/evidence/testing-receipt.json
-```
-
-For an exact in-place upgrade that packs and publishes a new dist candidate,
-use the first command and change the intent to `upgrade`, then also provide:
-
-```bash
-  --expected-deployment-id '<exact-deployment-guid>' \
-  --expected-system-name 'ID<32-hex-characters>' \
-  --expected-current-version '<currently-deployed-version>' \
-  --expected-deploy-version '<new-published-candidate-number>'
-```
-
-The expected system name and deploy version must be known before execution and
-must match both the publish response and a fresh remote candidate read. The
-helper rejects non-progressing semantic versions, performs one route-omitting
-PATCH, and verifies the same deployment, route, and new version afterward.
-
-For an exact in-place upgrade of an already-published candidate:
-
-```bash
-python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_testing.py \
-  --testing-only \
-  --execute \
-  --intent upgrade \
-  --candidate-mode reconciled \
-  --environment alpha \
-  --control-plane-url https://alpha.uipath.com \
-  --org-id '<exact-org-guid>' \
-  --org-name '<organization>' \
-  --tenant-id '<exact-tenant-guid>' \
-  --tenant-name '<tenant>' \
-  --folder-key '<exact-folder-guid>' \
-  --package-name '<package-name>' \
-  --app-name '<display-title>' \
-  --path-name '<existing-route>' \
-  --client-id '<public-client-guid>' \
-  --version '<published-candidate-version>' \
-  --tags internal,synthetic-testing \
-  --cli-executable /absolute/pinned/node_modules/@uipath/cli/dist/index.js \
-  --cli-version 1.198.0 \
-  --cli-profile '<named-profile>' \
-  --recovery-plan /absolute/ignored/evidence/upgrade-recovery-plan.json \
-  --recovery-runtime-manifest /absolute/ignored/evidence/guarded-runtime.manifest.json \
-  --expected-recovery-plan-hash 'sha256:<exact-technical-input-hash>' \
-  --expected-deployment-id '<exact-deployment-guid>' \
-  --expected-system-name 'ID<32-hex-characters>' \
-  --expected-current-version '<currently-deployed-version>' \
-  --expected-deploy-version '<published-candidate-number>' \
-  --expected-runtime-manifest-hash 'sha256:<exact-runtime-manifest-hash>' \
-  --testing-purpose 'Synthetic browser mockup acceptance' \
-  --receipt-output /absolute/ignored/evidence/testing-receipt.json
-```
-
-For a dist-upgrade receipt that stopped at `publish_indeterminate` even though
-the exact package later became remotely queryable, use the dedicated
-deploy-only recovery mode. Every hash is explicit technical authority from the
-retained source evidence; the receipt output must be new:
-
-```bash
-python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_testing.py \
-  --testing-only \
-  --execute \
-  --intent upgrade \
-  --candidate-mode published-recovery \
-  --environment alpha \
-  --control-plane-url https://alpha.uipath.com \
-  --org-id '<exact-org-guid>' \
-  --org-name '<organization>' \
-  --tenant-id '<exact-tenant-guid>' \
-  --tenant-name '<tenant>' \
-  --folder-key '<exact-folder-guid>' \
-  --package-name '<package-name>' \
-  --app-name '<display-title>' \
-  --path-name '<existing-route>' \
-  --client-id '<public-client-guid>' \
-  --version '<published-candidate-version>' \
-  --tags internal,synthetic-testing \
-  --cli-executable /absolute/pinned/node_modules/@uipath/cli/dist/index.js \
-  --cli-version 1.198.0 \
-  --cli-profile '<named-profile>' \
-  --failed-testing-receipt /absolute/ignored/evidence/failed-testing-receipt.json \
-  --expected-failed-receipt-hash 'sha256:<receipt-document-hash>' \
-  --expected-failed-receipt-file-sha256 'sha256:<receipt-file-hash>' \
-  --expected-retained-claim-hash 'sha256:<claim-document-hash>' \
-  --expected-retained-claim-file-sha256 'sha256:<claim-file-hash>' \
-  --expected-package-file-sha256 'sha256:<package-file-hash>' \
-  --expected-source-helper-sha256 'sha256:<failed-run-helper-hash>' \
-  --recovery-runtime-manifest /absolute/ignored/evidence/create-guard-runtime.manifest.json \
-  --expected-runtime-manifest-hash 'sha256:<runtime-manifest-document-hash>' \
-  --expected-deployment-id '<exact-deployment-guid>' \
-  --expected-system-name 'ID<32-hex-characters>' \
-  --expected-current-version '<currently-deployed-version>' \
-  --expected-deploy-version '<published-candidate-number>' \
-  --testing-purpose 'Recover exact synthetic Alpha publication' \
-  --receipt-output /absolute/ignored/evidence/new-testing-receipt.json
-```
-
-The helper derives the failed workspace from the receipt path, rehashes the
-receipt, original claim, package, configuration, runtime manifest, immutable
-runtime tree, CLI, and Node runtime, and creates a second atomic transition
-claim. It then performs a read-only candidate guard and exactly one
-route-omitting `upgrade-execute`. It never republishes and never deletes,
-moves, or rewrites the original retained claim. If this recovery becomes
-indeterminate, reconcile remote state and obtain another explicit design; do
-not retry it.
-
-There is no plan file, approval hash, or resume. The output path must be new.
-Malformed or secret-bearing arguments, an invalid receipt path, an unknown CLI
-build, or an incomplete/mismatched target are rejected before an execution
-attempt can be reserved and therefore produce no receipt. Once the new path,
-pinned CLI, and complete target validate, the helper exclusively reserves the
-receipt; every later handled failure writes its preflight or claimed state.
-The helper exclusively reserves the receipt path and creates an atomic,
-home-scoped operation claim before any external write. Reconciled testing uses
-the same exact-candidate claim namespace as recovery, so the two lanes cannot
-race one PATCH. Dist/create claims remain stable across repacks for the same
-target, package version, and route, preventing a changed ZIP timestamp from
-bypassing an indeterminate write. The schema-1.2 receipt records Git state only
-as informational metadata and binds the exact dist/package/runtime/target
-bytes. A recovery-plan hash is a required technical input, not approval.
-
-The helper accepts only the allowlisted CLI 1.198.0 build and its supported
-Node build. It revalidates helper, CLI, Node, package, configuration, and guarded
-runtime bytes after durably marking each write indeterminate and immediately
-before spawning it. Unknown or drifted bytes fail closed and retain replay
-protection.
-
-Any interrupted, nonzero, timed-out, or otherwise ambiguous `publish` or
-`deploy` becomes `publish_indeterminate` or `deploy_indeterminate`. Do not rerun
-the command. Reconcile exact remote state and require a fresh explicit testing
-request. Report success only as a synthetic nonproduction test deployment.
-The automatic receipt deliberately leaves
-`authentication_certification: pending_external_acceptance`; `succeeded_testing`
-means the exact deployment, route, and local app configuration passed the
-helper's technical checks. Anonymous denial, named-user sign-in, referenced
-assets, and browser behavior remain mandatory rollout acceptance evidence and
-must not be inferred from that receipt alone.
+Run this lane only when the direct testing request is in the current task and
+both `--testing-only` and `--execute` are present. There is no plan, approval
+hash, resume, automatic retry, or distributed serialization. The helper binds
+the exact target, candidate, runtime, and receipt; reserves a host-local claim;
+and treats every ambiguous write as indeterminate. `succeeded_testing` proves
+only the helper's technical checks. Anonymous denial, named-user sign-in,
+referenced assets, and browser behavior remain external acceptance gates.
 
 ## Prerequisites
 
@@ -465,6 +343,7 @@ paths and SHA-256 digests, then generate an exact-upgrade plan:
 ```bash
 python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_recover.py \
   --project-root /absolute/path/to/failed-release/source \
+  --predecessor-kind governed \
   --prior-successful-plan /absolute/evidence/prior-plan.json \
   --prior-successful-receipt /absolute/evidence/prior-plan.json.receipt.json \
   --prior-successful-app-config /absolute/evidence/prior-source/.uipath/app.config.json \
@@ -475,6 +354,76 @@ python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_recover.py \
   --plan-output /absolute/evidence/upgrade-recovery-plan.json \
   --format json
 ```
+
+### Chained Recovery: A Recovery Predecessor
+
+`--predecessor-kind governed` is the default and asserts that the currently
+deployed version came from a governed v2.3 release. When that version was
+instead produced by an earlier recovery, the prior evidence is a historical
+schema 1.2 recovery plan and receipt, which the governed loaders cannot read.
+Declare `--predecessor-kind recovery` and supply four extra inputs:
+
+```bash
+python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_recover.py \
+  --project-root /absolute/path/to/failed-release/source \
+  --predecessor-kind recovery \
+  --trusted-predecessor-helper-sha256 'sha256:<exact-historical-recovery-helper-digest>' \
+  --trusted-predecessor-core-helper-sha256 'sha256:<exact-historical-core-helper-digest>' \
+  --prior-successful-plan /absolute/evidence/predecessor-recovery-plan.json \
+  --prior-successful-receipt /absolute/evidence/predecessor-recovery-plan.json.receipt.json \
+  --prior-successful-app-config /absolute/evidence/predecessor-source/.uipath/app.config.json \
+  --predecessor-runtime-manifest /absolute/evidence/predecessor-guarded-runtime.manifest.json \
+  --predecessor-pre-upgrade-workspace-config /absolute/evidence/predecessor-pre-upgrade-app.config.json \
+  --failed-plan /absolute/evidence/failed-plan.json \
+  --failed-receipt /absolute/evidence/failed-plan.json.receipt.json \
+  --reconciliation-evidence /absolute/evidence/reconciliation-evidence.json \
+  --recovery-runtime-manifest /absolute/evidence/guarded-runtime.manifest.json \
+  --plan-output /absolute/evidence/upgrade-recovery-plan.json \
+  --format json
+```
+
+Schema 1.2 is accepted **only** by the historical predecessor validator. An
+active `--plan` at schema 1.2 is rejected outright; regenerate it under 1.3.
+
+A historical plan records the digests of the helper bytes that created it.
+Those bytes are by definition not the current bytes and can never be
+re-derived, so they must be supplied as explicit trust anchors and approved
+with the plan hash. Repeat both anchor flags once per chain link, in matching
+order; every link must match one supplied pair exactly.
+
+The predecessor gate is pure filesystem work and runs before any subprocess or
+network-capable call. It fails closed when:
+
+- the predecessor receipt is `failed`, `in_progress`, or `deployed_unverified`
+  — an incomplete predecessor is never treated as a usable baseline;
+- any of its eight stages did not succeed, or it did not verify its retained
+  route or its own candidate version;
+- it released its execution claim, or the retained claim is missing, altered,
+  or not bound to its plan and receipt;
+- any evidence file in the recursive closure is missing or its raw bytes
+  changed since that plan was approved;
+- the supplied trust anchors do not cover every link in the chain; or
+- the predecessor's guarded runtime drifted.
+
+Each historical plan describes its own evidence by absolute path and digest, so
+the chain is self-describing and needs no extra operator input to walk. Every
+visited file contributes its raw-byte digest to the canonical closure recorded
+in `predecessor.evidence_closure` and hashed into
+`predecessor.evidence_closure_sha256`.
+
+A succeeded recovery rewrites exactly one file inside its isolated runtime: the
+workspace `.uipath/app.config.json` that its own upgrade stage updated to the
+newly deployed version. Reconstruction substitutes the retained pre-upgrade
+bytes back into the observed tree and requires the result to equal the approved
+`tree_sha256`. The observed file must match the digest its receipt recorded, so
+the permitted mutation is pinned to exactly the expected one. Any other byte,
+size, or mode difference anywhere in the runtime fails closed. This is why the
+pre-upgrade workspace config must be retained as evidence: without those bytes
+the pre-upgrade tree state is not reconstructable and the plan cannot be built.
+
+Chained plans and receipts carry a `predecessor` block and a
+`predecessor_binding_hash`. Review the block's kind, depth, anchors, chain, and
+closure hash before approving the plan hash.
 
 Review that the plan contains only an atomic execution claim, reconciliation,
 a pre-upgrade read-only guard, a last-moment runtime hash barrier, one upgrade,
@@ -543,8 +492,9 @@ authentication and application behavior remain separate acceptance gates.
 - `references/deployment-receipt.v2.schema.json`
 - `references/deployment-recovery-plan.v1.schema.json`
 - `references/deployment-recovery-receipt.v1.schema.json`
-- `references/deployment-testing-receipt.v1.schema.json` (testing contract 1.1)
+- `references/deployment-testing-receipt.v1.schema.json` (testing contract 1.2)
 - `references/testing-only-policy.md`
+- `references/testing-only-operations.md`
 
 The governed and recovery schemas are integrity contracts, not signatures.
 Their exact-hash approval remains required. The testing receipt is automatic,
