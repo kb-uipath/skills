@@ -212,5 +212,109 @@ class BeadsHistoryTests(unittest.TestCase):
                 beads_history.ROOT = original_root
 
 
+def local_path(user: str = "example") -> str:
+    """Build a local absolute path without embedding one in this file's source."""
+    return "/".join(("", "Users", user, ".codex", "skills", "demo"))
+
+
+class BeadsHistoryRedactionTests(unittest.TestCase):
+    """The review projection must never publish a local filesystem path."""
+
+    def test_redaction_rewrites_the_path_and_keeps_surrounding_evidence(self) -> None:
+        leaked = local_path()
+        snapshot = issue("closed", "2026-07-24T12:00:00Z")
+        snapshot["notes"] = f"Merged at abc123. Installed {leaked} was byte-verified."
+
+        redacted = beads_history.redact_snapshot(snapshot)
+
+        self.assertNotIn(leaked, redacted["notes"])
+        self.assertIn(beads_history.REDACTED_PATH, redacted["notes"])
+        # Redaction is surgical: the surrounding audit evidence survives.
+        self.assertIn("Merged at abc123.", redacted["notes"])
+        self.assertIn("was byte-verified.", redacted["notes"])
+        # The input is not mutated in place.
+        self.assertIn(leaked, snapshot["notes"])
+
+    def test_redaction_reaches_nested_strings_and_leaves_other_content_alone(self) -> None:
+        snapshot = issue("open", "2026-07-24T12:00:00Z")
+        snapshot["labels"] = ["release", f"path:{local_path('someone')}"]
+        snapshot["design"] = {"detail": f"see {local_path('other')}"}
+        snapshot["priority"] = 1
+
+        redacted = beads_history.redact_snapshot(snapshot)
+
+        self.assertEqual("release", redacted["labels"][0])
+        self.assertEqual(f"path:{beads_history.REDACTED_PATH}", redacted["labels"][1])
+        self.assertEqual(
+            f"see {beads_history.REDACTED_PATH}", redacted["design"]["detail"]
+        )
+        self.assertEqual("Test issue", redacted["title"])
+        self.assertEqual(1, redacted["priority"])
+
+    def test_redaction_runs_before_deduplication(self) -> None:
+        """Snapshots differing only by a redacted path must collapse to one."""
+
+        first = issue("open", "2026-07-24T12:00:00Z")
+        first["notes"] = f"Installed {local_path('alpha')}"
+        second = issue("open", "2026-07-24T12:00:00Z")
+        second["notes"] = f"Installed {local_path('bravo')}"
+        raw = [
+            raw_history("aaaa", "2026-07-24T12:00:01Z", first),
+            raw_history("bbbb", "2026-07-24T12:00:02Z", second),
+        ]
+
+        normalized = beads_history.normalize_issue_history("skills-test", raw)
+
+        self.assertEqual(1, len(normalized))
+        self.assertEqual(
+            f"Installed {beads_history.REDACTED_PATH}",
+            normalized[0]["issue"]["notes"],
+        )
+
+    def test_validation_rejects_a_projection_containing_a_local_path(self) -> None:
+        """Verification fails closed even if redaction were bypassed upstream."""
+
+        current = issue("open", "2026-07-24T12:00:00Z")
+        current["notes"] = f"Installed {local_path()}"
+        record = {
+            "_type": beads_history.HISTORY_TYPE,
+            "commit_date": "2026-07-24T12:00:01Z",
+            "commit_hash": "aaaa",
+            "issue": current,
+            "issue_id": "skills-test",
+        }
+
+        with self.assertRaisesRegex(
+            beads_history.HistoryValidationError, "survived declared redaction"
+        ):
+            beads_history.validate_history_records({"skills-test": current}, [record])
+
+    def test_terminal_comparison_is_redaction_aware(self) -> None:
+        """A redacted terminal snapshot must not read as drift from current state."""
+
+        current = issue("open", "2026-07-24T12:00:00Z")
+        current["notes"] = f"Installed {local_path()}"
+        records = beads_history.normalize_issue_history(
+            "skills-test", [raw_history("aaaa", "2026-07-24T12:00:01Z", current)]
+        )
+
+        self.assertIn(
+            beads_history.REDACTED_PATH, records[0]["issue"]["notes"]
+        )
+        beads_history.validate_history_records({"skills-test": current}, records)
+
+    def test_redaction_patterns_do_not_match_their_own_source(self) -> None:
+        """The tool must stay clean under the scan whose classes it mirrors."""
+
+        source = SCRIPT_PATH.read_text(encoding="utf-8")
+        offenders = [
+            pattern.pattern
+            for pattern in beads_history.REDACTION_PATTERNS
+            if pattern.search(source)
+        ]
+
+        self.assertEqual([], offenders)
+
+
 if __name__ == "__main__":
     unittest.main()

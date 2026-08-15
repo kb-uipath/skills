@@ -21,6 +21,28 @@ MANIFEST_PATH = ROOT / ".beads" / "history-manifest.json"
 HISTORY_TYPE = "beads_issue_history"
 MANIFEST_TYPE = "beads_history_manifest"
 COMMIT_HASH_RE = re.compile(r"^[0-9a-z]+$")
+REDACTED_PATH = "[redacted-local-path]"
+# Declared redactions for the public review projection.
+#
+# The projection is a deduplicated review artifact and is explicitly not the
+# recovery source; the Dolt ref stays complete and unmodified. These rules
+# rewrite local filesystem paths that reached issue fields before the
+# public-tracker boundary was enforced. A forward-only tracker update cannot
+# clear them, because the projection reproduces historical field values.
+#
+# The classes mirror LOCAL_PATH_PATTERNS in tools/validate_repo.py, so this tool
+# cannot emit an artifact its own repository scan would reject. The user and
+# home rules consume the whole path rather than stopping at the first separator,
+# so no trailing segment survives. Every pattern is written so that it does not
+# match its own source text, keeping this module clean under that same scan.
+REDACTION_PATTERNS = (
+    re.compile(r"/Users/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*"),
+    re.compile(r"/home/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*"),
+    re.compile(r"[A-Za-z]:\\Users\\[A-Za-z0-9._-]+(?:\\[A-Za-z0-9._-]+)*"),
+    re.compile(r"/(?:private/)?var/folders/[A-Za-z0-9._/-]+"),
+    re.compile(r"/(?:private/)?tmp/[A-Za-z0-9._/-]+"),
+    re.compile(r"/Volumes/[A-Za-z0-9._ -]+/[A-Za-z0-9._/-]+"),
+)
 REQUIRED_ISSUE_FIELDS = {
     "id",
     "title",
@@ -100,6 +122,35 @@ def parse_timestamp(value: Any, label: str) -> datetime:
     return parsed
 
 
+def redact_snapshot(value: Any) -> Any:
+    """Apply the declared redactions to every string in an issue snapshot.
+
+    Redaction runs before deduplication so that two snapshots differing only in
+    a redacted path collapse into one record, as the projection contract
+    requires. Mapping keys are left untouched; `assert_no_local_paths` fails the
+    export loudly if a path ever reaches one.
+    """
+    if isinstance(value, str):
+        for pattern in REDACTION_PATTERNS:
+            value = pattern.sub(REDACTED_PATH, value)
+        return value
+    if isinstance(value, list):
+        return [redact_snapshot(item) for item in value]
+    if isinstance(value, dict):
+        return {key: redact_snapshot(item) for key, item in value.items()}
+    return value
+
+
+def assert_no_local_paths(records: list[dict[str, Any]]) -> None:
+    """Fail closed if any local path survived the declared redactions."""
+    for index, record in enumerate(records, start=1):
+        rendered = json.dumps(record, sort_keys=True, ensure_ascii=False)
+        if any(pattern.search(rendered) for pattern in REDACTION_PATTERNS):
+            raise HistoryValidationError(
+                f"history line {index}: a local absolute path survived declared redaction"
+            )
+
+
 def issue_fingerprint(issue: dict[str, Any]) -> str:
     """Return a stable comparison representation for an issue snapshot."""
     return json.dumps(issue, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -141,7 +192,7 @@ def normalize_issue_history(
                 "_type": HISTORY_TYPE,
                 "commit_date": commit_date,
                 "commit_hash": commit_hash,
-                "issue": issue,
+                "issue": redact_snapshot(issue),
                 "issue_id": issue_id,
             }
         )
@@ -224,6 +275,7 @@ def validate_history_records(
         raise HistoryValidationError("history artifact has no records")
     if records != sorted(records, key=history_sort_key):
         raise HistoryValidationError("history records are not in deterministic order")
+    assert_no_local_paths(records)
 
     seen_commits: set[tuple[str, str]] = set()
     last_fingerprint: dict[str, str] = {}
@@ -280,10 +332,15 @@ def validate_history_records(
         )
     for issue_id, current in current_issues.items():
         terminal = latest[issue_id]
+        # Compare like with like: the projection is redacted by contract, while
+        # the current snapshot is whatever bd exported. A local path in the
+        # current snapshot is a separate finding, reported by the repository
+        # scan against .beads/issues.jsonl rather than disguised as drift here.
+        redacted_current = redact_snapshot(current)
         mismatches = [
             key
             for key, value in terminal.items()
-            if key not in current or current[key] != value
+            if key not in redacted_current or redacted_current[key] != value
         ]
         if mismatches:
             raise HistoryValidationError(
@@ -322,7 +379,8 @@ def build_manifest(
         "dolt_head": dolt_head,
         "dolt_ref": "refs/dolt/data",
         "projection": (
-            "Deduplicated issue-table snapshots for GitHub review; "
+            "Deduplicated issue-table snapshots for GitHub review with declared "
+            "local-path redactions applied; "
             "the Dolt ref is the complete recovery source."
         ),
         "schema_version": 1,
@@ -499,10 +557,20 @@ def export_history(
     if not history_changed and not manifest_changed:
         print("Beads history projection and manifest are already current.")
         return 0
+    redacted_records = sum(
+        1
+        for record in records
+        if REDACTED_PATH in json.dumps(record, ensure_ascii=False)
+    )
     print(
         f"Exported {len(records)} issue-state transitions to "
         f"{history_path.relative_to(ROOT)} at Dolt HEAD {dolt_head}."
     )
+    if redacted_records:
+        print(
+            f"Applied declared local-path redactions to {redacted_records} "
+            "record(s); the Dolt ref remains unmodified."
+        )
     return 0
 
 
