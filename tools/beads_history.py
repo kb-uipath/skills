@@ -21,21 +21,19 @@ MANIFEST_PATH = ROOT / ".beads" / "history-manifest.json"
 HISTORY_TYPE = "beads_issue_history"
 MANIFEST_TYPE = "beads_history_manifest"
 COMMIT_HASH_RE = re.compile(r"^[0-9a-z]+$")
-REDACTED_PATH = "[redacted-local-path]"
-# Declared redactions for the public review projection.
+# Detection-only patterns for the fail-closed projection guard.
 #
-# The projection is a deduplicated review artifact and is explicitly not the
-# recovery source; the Dolt ref stays complete and unmodified. These rules
-# rewrite local filesystem paths that reached issue fields before the
-# public-tracker boundary was enforced. A forward-only tracker update cannot
-# clear them, because the projection reproduces historical field values.
+# Redaction itself is deliberately NOT pattern-driven. `LEGACY_NOTE_REDACTIONS`
+# below rewrites only values that a human has reviewed, so a newly leaked path
+# fails loudly here instead of being silently scrubbed by a broad rule.
 #
 # The classes mirror LOCAL_PATH_PATTERNS in tools/validate_repo.py, so this tool
 # cannot emit an artifact its own repository scan would reject. The user and
 # home rules consume the whole path rather than stopping at the first separator,
-# so no trailing segment survives. Every pattern is written so that it does not
-# match its own source text, keeping this module clean under that same scan.
-REDACTION_PATTERNS = (
+# so a trailing segment cannot escape detection. Every pattern is written so
+# that it does not match its own source text, keeping this module clean under
+# that same scan.
+LOCAL_PATH_PATTERNS = (
     re.compile(r"/Users/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*"),
     re.compile(r"/home/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*"),
     re.compile(r"[A-Za-z]:\\Users\\[A-Za-z0-9._-]+(?:\\[A-Za-z0-9._-]+)*"),
@@ -51,6 +49,17 @@ REQUIRED_ISSUE_FIELDS = {
     "issue_type",
     "created_at",
     "updated_at",
+}
+LEGACY_NOTE_REDACTIONS = {
+    (
+        "skills-37t",
+        "26cb18f6df2ae07312016ec6a30fd8a19980ca041f5380dbea37afac32c7eee4",
+    ): (
+        "PR #20 merged Green at dce51183d16dcac87c37138ce007238176d47998. "
+        "The installed uipcodedappdeploy skill was replaced from the exact "
+        "merged tree and byte-verified; installed helper sha256:"
+        "55f2d756b19cd9a2dff7bea4ee20a8a424216608d10728b409dcff6806cbca8f."
+    ),
 }
 
 
@@ -122,38 +131,41 @@ def parse_timestamp(value: Any, label: str) -> datetime:
     return parsed
 
 
-def redact_snapshot(value: Any) -> Any:
-    """Apply the declared redactions to every string in an issue snapshot.
-
-    Redaction runs before deduplication so that two snapshots differing only in
-    a redacted path collapse into one record, as the projection contract
-    requires. Mapping keys are left untouched; `assert_no_local_paths` fails the
-    export loudly if a path ever reaches one.
-    """
-    if isinstance(value, str):
-        for pattern in REDACTION_PATTERNS:
-            value = pattern.sub(REDACTED_PATH, value)
-        return value
-    if isinstance(value, list):
-        return [redact_snapshot(item) for item in value]
-    if isinstance(value, dict):
-        return {key: redact_snapshot(item) for key, item in value.items()}
-    return value
-
-
 def assert_no_local_paths(records: list[dict[str, Any]]) -> None:
-    """Fail closed if any local path survived the declared redactions."""
+    """Fail closed if any local path reaches the public review projection.
+
+    This guard never rewrites anything. A path that is not covered by a reviewed
+    `LEGACY_NOTE_REDACTIONS` entry stops the export, so a newly leaked value has
+    to be corrected at its source or reviewed and added deliberately, rather
+    than disappearing into a broad substitution rule.
+    """
     for index, record in enumerate(records, start=1):
         rendered = json.dumps(record, sort_keys=True, ensure_ascii=False)
-        if any(pattern.search(rendered) for pattern in REDACTION_PATTERNS):
+        if any(pattern.search(rendered) for pattern in LOCAL_PATH_PATTERNS):
             raise HistoryValidationError(
-                f"history line {index}: a local absolute path survived declared redaction"
+                f"history line {index}: local absolute path is not covered by a "
+                "reviewed redaction; correct it at the source or add a "
+                "LEGACY_NOTE_REDACTIONS entry"
             )
 
 
 def issue_fingerprint(issue: dict[str, Any]) -> str:
     """Return a stable comparison representation for an issue snapshot."""
     return json.dumps(issue, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def redact_known_legacy_issue(issue: dict[str, Any]) -> dict[str, Any]:
+    """Redact only explicitly reviewed legacy notes from the public projection."""
+    notes = issue.get("notes")
+    if not isinstance(notes, str):
+        return issue
+    digest = hashlib.sha256(notes.encode("utf-8")).hexdigest()
+    replacement = LEGACY_NOTE_REDACTIONS.get((str(issue.get("id", "")), digest))
+    if replacement is None:
+        return issue
+    redacted = dict(issue)
+    redacted["notes"] = replacement
+    return redacted
 
 
 def history_sort_key(record: dict[str, Any]) -> tuple[datetime, str, str]:
@@ -182,6 +194,7 @@ def normalize_issue_history(
             raise HistoryValidationError(
                 f"{issue_id} history entry {index}: issue snapshot ID mismatch"
             )
+        issue = redact_known_legacy_issue(issue)
         if not isinstance(commit_hash, str) or not COMMIT_HASH_RE.fullmatch(commit_hash):
             raise HistoryValidationError(
                 f"{issue_id} history entry {index}: invalid Dolt commit hash"
@@ -192,7 +205,7 @@ def normalize_issue_history(
                 "_type": HISTORY_TYPE,
                 "commit_date": commit_date,
                 "commit_hash": commit_hash,
-                "issue": redact_snapshot(issue),
+                "issue": issue,
                 "issue_id": issue_id,
             }
         )
@@ -332,11 +345,13 @@ def validate_history_records(
         )
     for issue_id, current in current_issues.items():
         terminal = latest[issue_id]
-        # Compare like with like: the projection is redacted by contract, while
-        # the current snapshot is whatever bd exported. A local path in the
-        # current snapshot is a separate finding, reported by the repository
-        # scan against .beads/issues.jsonl rather than disguised as drift here.
-        redacted_current = redact_snapshot(current)
+        # Compare like with like. A reviewed legacy redaction is applied to the
+        # projection but not to the bd-exported current snapshot, so apply it
+        # here too; otherwise a redaction covering a terminal state would read
+        # as history drift. An unreviewed path in the current snapshot stays a
+        # separate finding, reported by the repository scan against
+        # .beads/issues.jsonl rather than being disguised as drift here.
+        redacted_current = redact_known_legacy_issue(current)
         mismatches = [
             key
             for key, value in terminal.items()
@@ -557,10 +572,9 @@ def export_history(
     if not history_changed and not manifest_changed:
         print("Beads history projection and manifest are already current.")
         return 0
+    replacements = set(LEGACY_NOTE_REDACTIONS.values())
     redacted_records = sum(
-        1
-        for record in records
-        if REDACTED_PATH in json.dumps(record, ensure_ascii=False)
+        1 for record in records if record["issue"].get("notes") in replacements
     )
     print(
         f"Exported {len(records)} issue-state transitions to "
@@ -568,7 +582,7 @@ def export_history(
     )
     if redacted_records:
         print(
-            f"Applied declared local-path redactions to {redacted_records} "
+            f"Applied reviewed legacy redactions to {redacted_records} "
             "record(s); the Dolt ref remains unmodified."
         )
     return 0

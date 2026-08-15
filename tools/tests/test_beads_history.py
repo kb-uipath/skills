@@ -4,6 +4,7 @@ import importlib.util
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -67,6 +68,36 @@ class BeadsHistoryTests(unittest.TestCase):
             ["open", "in_progress", "open"],
             [record["issue"]["status"] for record in normalized],
         )
+
+    def test_normalize_redacts_only_an_allowlisted_legacy_note(self) -> None:
+        legacy_note = "machine-specific legacy locator"
+        safe_note = "installed skill"
+        snapshot = issue("open", "2026-07-24T12:00:00Z")
+        snapshot["notes"] = legacy_note
+        key = (
+            "skills-test",
+            beads_history.hashlib.sha256(legacy_note.encode("utf-8")).hexdigest(),
+        )
+
+        with mock.patch.dict(
+            beads_history.LEGACY_NOTE_REDACTIONS,
+            {key: safe_note},
+            clear=True,
+        ):
+            normalized = beads_history.normalize_issue_history(
+                "skills-test",
+                [raw_history("aaaa", "2026-07-24T12:00:01Z", snapshot)],
+            )
+
+        self.assertEqual(safe_note, normalized[0]["issue"]["notes"])
+        self.assertEqual(legacy_note, snapshot["notes"])
+
+        unknown = dict(snapshot, notes="unknown future locator")
+        normalized = beads_history.normalize_issue_history(
+            "skills-test",
+            [raw_history("bbbb", "2026-07-24T12:00:02Z", unknown)],
+        )
+        self.assertEqual("unknown future locator", normalized[0]["issue"]["notes"])
 
     def test_validate_accepts_terminal_subset_of_current_issue(self) -> None:
         current = issue("in_progress", "2026-07-24T12:02:00Z")
@@ -217,99 +248,107 @@ def local_path(user: str = "example") -> str:
     return "/".join(("", "Users", user, ".codex", "skills", "demo"))
 
 
-class BeadsHistoryRedactionTests(unittest.TestCase):
-    """The review projection must never publish a local filesystem path."""
+class BeadsHistoryLocalPathGuardTests(unittest.TestCase):
+    """Reviewed redactions do the rewriting; the guard refuses everything else.
 
-    def test_redaction_rewrites_the_path_and_keeps_surrounding_evidence(self) -> None:
-        leaked = local_path()
-        snapshot = issue("closed", "2026-07-24T12:00:00Z")
-        snapshot["notes"] = f"Merged at abc123. Installed {leaked} was byte-verified."
+    Redaction is deliberately not pattern-driven. `LEGACY_NOTE_REDACTIONS`
+    rewrites only values a human has reviewed, and `assert_no_local_paths`
+    stops anything else from reaching the public projection instead of
+    silently scrubbing it.
+    """
 
-        redacted = beads_history.redact_snapshot(snapshot)
-
-        self.assertNotIn(leaked, redacted["notes"])
-        self.assertIn(beads_history.REDACTED_PATH, redacted["notes"])
-        # Redaction is surgical: the surrounding audit evidence survives.
-        self.assertIn("Merged at abc123.", redacted["notes"])
-        self.assertIn("was byte-verified.", redacted["notes"])
-        # The input is not mutated in place.
-        self.assertIn(leaked, snapshot["notes"])
-
-    def test_redaction_reaches_nested_strings_and_leaves_other_content_alone(self) -> None:
-        snapshot = issue("open", "2026-07-24T12:00:00Z")
-        snapshot["labels"] = ["release", f"path:{local_path('someone')}"]
-        snapshot["design"] = {"detail": f"see {local_path('other')}"}
-        snapshot["priority"] = 1
-
-        redacted = beads_history.redact_snapshot(snapshot)
-
-        self.assertEqual("release", redacted["labels"][0])
-        self.assertEqual(f"path:{beads_history.REDACTED_PATH}", redacted["labels"][1])
-        self.assertEqual(
-            f"see {beads_history.REDACTED_PATH}", redacted["design"]["detail"]
-        )
-        self.assertEqual("Test issue", redacted["title"])
-        self.assertEqual(1, redacted["priority"])
-
-    def test_redaction_runs_before_deduplication(self) -> None:
-        """Snapshots differing only by a redacted path must collapse to one."""
-
-        first = issue("open", "2026-07-24T12:00:00Z")
-        first["notes"] = f"Installed {local_path('alpha')}"
-        second = issue("open", "2026-07-24T12:00:00Z")
-        second["notes"] = f"Installed {local_path('bravo')}"
-        raw = [
-            raw_history("aaaa", "2026-07-24T12:00:01Z", first),
-            raw_history("bbbb", "2026-07-24T12:00:02Z", second),
-        ]
-
-        normalized = beads_history.normalize_issue_history("skills-test", raw)
-
-        self.assertEqual(1, len(normalized))
-        self.assertEqual(
-            f"Installed {beads_history.REDACTED_PATH}",
-            normalized[0]["issue"]["notes"],
-        )
-
-    def test_validation_rejects_a_projection_containing_a_local_path(self) -> None:
-        """Verification fails closed even if redaction were bypassed upstream."""
-
-        current = issue("open", "2026-07-24T12:00:00Z")
-        current["notes"] = f"Installed {local_path()}"
-        record = {
+    def record(self, snapshot: dict[str, object]) -> dict[str, object]:
+        return {
             "_type": beads_history.HISTORY_TYPE,
             "commit_date": "2026-07-24T12:00:01Z",
             "commit_hash": "aaaa",
-            "issue": current,
+            "issue": snapshot,
             "issue_id": "skills-test",
         }
 
+    def test_guard_rejects_a_path_that_no_reviewed_redaction_covers(self) -> None:
+        snapshot = issue("open", "2026-07-24T12:00:00Z")
+        snapshot["notes"] = f"Installed {local_path()}"
+
         with self.assertRaisesRegex(
-            beads_history.HistoryValidationError, "survived declared redaction"
+            beads_history.HistoryValidationError, "not covered by a reviewed redaction"
         ):
-            beads_history.validate_history_records({"skills-test": current}, [record])
+            beads_history.assert_no_local_paths([self.record(snapshot)])
 
-    def test_terminal_comparison_is_redaction_aware(self) -> None:
-        """A redacted terminal snapshot must not read as drift from current state."""
+    def test_guard_is_enforced_by_validation_so_verify_and_ci_fail_closed(self) -> None:
+        snapshot = issue("open", "2026-07-24T12:00:00Z")
+        snapshot["notes"] = f"Installed {local_path()}"
 
+        with self.assertRaisesRegex(
+            beads_history.HistoryValidationError, "not covered by a reviewed redaction"
+        ):
+            beads_history.validate_history_records(
+                {"skills-test": snapshot}, [self.record(snapshot)]
+            )
+
+    def test_guard_reaches_nested_values_not_just_notes(self) -> None:
+        snapshot = issue("open", "2026-07-24T12:00:00Z")
+        snapshot["design"] = {"detail": f"see {local_path('someone')}"}
+
+        with self.assertRaisesRegex(
+            beads_history.HistoryValidationError, "not covered by a reviewed redaction"
+        ):
+            beads_history.assert_no_local_paths([self.record(snapshot)])
+
+    def test_a_reviewed_redaction_satisfies_the_guard(self) -> None:
+        """The two mechanisms compose: the map clears what the guard checks."""
+
+        leaked = f"Installed {local_path()} was byte-verified."
+        safe = "Installed skill was byte-verified."
+        snapshot = issue("open", "2026-07-24T12:00:00Z")
+        snapshot["notes"] = leaked
+        key = (
+            "skills-test",
+            beads_history.hashlib.sha256(leaked.encode("utf-8")).hexdigest(),
+        )
+
+        with mock.patch.dict(
+            beads_history.LEGACY_NOTE_REDACTIONS, {key: safe}, clear=True
+        ):
+            records = beads_history.normalize_issue_history(
+                "skills-test",
+                [raw_history("aaaa", "2026-07-24T12:00:01Z", snapshot)],
+            )
+            beads_history.assert_no_local_paths(records)
+
+        self.assertEqual(safe, records[0]["issue"]["notes"])
+        self.assertEqual(leaked, snapshot["notes"])
+
+    def test_terminal_comparison_applies_the_same_reviewed_redaction(self) -> None:
+        """A redaction covering a terminal state must not read as history drift."""
+
+        leaked = f"Installed {local_path()} was byte-verified."
+        safe = "Installed skill was byte-verified."
         current = issue("open", "2026-07-24T12:00:00Z")
-        current["notes"] = f"Installed {local_path()}"
-        records = beads_history.normalize_issue_history(
-            "skills-test", [raw_history("aaaa", "2026-07-24T12:00:01Z", current)]
+        current["notes"] = leaked
+        key = (
+            "skills-test",
+            beads_history.hashlib.sha256(leaked.encode("utf-8")).hexdigest(),
         )
 
-        self.assertIn(
-            beads_history.REDACTED_PATH, records[0]["issue"]["notes"]
-        )
-        beads_history.validate_history_records({"skills-test": current}, records)
+        with mock.patch.dict(
+            beads_history.LEGACY_NOTE_REDACTIONS, {key: safe}, clear=True
+        ):
+            records = beads_history.normalize_issue_history(
+                "skills-test",
+                [raw_history("aaaa", "2026-07-24T12:00:01Z", current)],
+            )
+            beads_history.validate_history_records({"skills-test": current}, records)
 
-    def test_redaction_patterns_do_not_match_their_own_source(self) -> None:
+        self.assertEqual(safe, records[0]["issue"]["notes"])
+
+    def test_detection_patterns_do_not_match_their_own_source(self) -> None:
         """The tool must stay clean under the scan whose classes it mirrors."""
 
         source = SCRIPT_PATH.read_text(encoding="utf-8")
         offenders = [
             pattern.pattern
-            for pattern in beads_history.REDACTION_PATTERNS
+            for pattern in beads_history.LOCAL_PATH_PATTERNS
             if pattern.search(source)
         ]
 

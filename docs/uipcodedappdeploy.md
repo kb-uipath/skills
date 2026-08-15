@@ -6,7 +6,7 @@ Deploy UiPath Coded Apps through one of three deliberately separate lanes.
 | --- | --- | --- | --- |
 | Governed release | Plan/receipt v2.3 | Exact reviewed `plan_hash` | Reviewable Alpha/Staging release candidate |
 | Exact upgrade recovery | Plan/receipt v1.3 | Exact reviewed recovery hash | Reconciled route-collision repair, including a chained recovery predecessor |
-| Testing-only | Automatic receipt v1.1 | Explicit request plus `--testing-only --execute` | Internal synthetic Alpha/Staging testing |
+| Testing-only | Automatic receipt v1.2 | Explicit request plus `--testing-only --execute` | Internal synthetic Alpha/Staging testing |
 
 Production targets are rejected in every current lane. Testing receipts are
 explicitly ineligible as production release evidence.
@@ -36,7 +36,7 @@ predecessor's guarded-runtime manifest, and the retained pre-upgrade workspace
 app config.
 
 The versioned input/output contracts are plan/receipt v2.3 for governed release,
-plan/receipt v1.3 for recovery, and automatic receipt v1.1 for testing-only.
+plan/receipt v1.3 for recovery, and automatic receipt v1.2 for testing-only.
 Recovery schema 1.2 is readable only as historical predecessor evidence.
 
 ## Prompt
@@ -145,7 +145,7 @@ runtime drift, missing evidence, and trust-anchor mismatch all fail before any
 subprocess or network-capable path. The result is recorded in the plan's
 `predecessor` block and hashed into `predecessor_binding_hash`.
 
-## Testing-only v1.1
+## Testing-only v1.2
 
 The testing helper restores one-step deployment for a narrow class of work
 without weakening either governed lane. Read
@@ -171,6 +171,9 @@ Supported matrices:
   in the PATCH.
 - `reconciled/upgrade` consumes an exact v1.3 recovery plan/runtime, skips pack
   and publish, and upgrades only the named deployment in place.
+- `published-recovery/upgrade` consumes an exact schema 1.1 or 1.2
+  `publish_indeterminate` receipt, rejects chained recovery, skips pack and
+  publish, and performs one guarded deploy of the reconciled candidate.
 
 Example fresh test deployment from exact built distribution bytes:
 
@@ -308,8 +311,9 @@ be certified separately before the rollout is reported complete.
 - `uipcodedappdeploy/references/deployment-recovery-plan.v1.schema.json`
 - `uipcodedappdeploy/references/deployment-recovery-receipt.v1.schema.json`
 - `uipcodedappdeploy/references/deployment-testing-receipt.v1.schema.json`
-  (testing contract 1.1)
+  (testing contract 1.2)
 - `uipcodedappdeploy/references/testing-only-policy.md`
+- `uipcodedappdeploy/references/testing-only-operations.md`
 
 Hashes detect change; they are not signatures or proof of approver identity.
 The automatic testing receipt additionally states
@@ -354,6 +358,9 @@ responses, or unredacted environment state.
 - UiPath CLI 1.198.0 generates nondeterministic NuGet envelope data. Governed
   and testing helpers retain both normalized coded-app content and exact file
   digests.
+- The helpers certify exact 1.198.0 tool bytes. npm's `latest` tag may be newer;
+  newer builds remain blocked until their hashes, patch anchors, fixtures, and
+  full validation suite are reviewed together.
 - CLI login status proves the reported organization and tenant, not all
   effective permissions.
 - Route availability does not prove authenticated application behavior; that
@@ -371,7 +378,7 @@ production readiness.
 
 ## Last Verified
 
-Last verified: **2026-08-05**.
+Last verified: **2026-08-11**.
 
 ## Validation
 
