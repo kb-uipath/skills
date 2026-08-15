@@ -50,7 +50,7 @@ Use exactly one lane:
 
 1. **Governed release** — use `uipcodedappdeploy.py` v2.3. This remains the
    default whenever intent, data classification, or environment is ambiguous.
-2. **Exact route-collision recovery** — use `uipcodedappdeploy_recover.py` v1.2
+2. **Exact route-collision recovery** — use `uipcodedappdeploy_recover.py` v1.3
    only for an already-published candidate and an exactly reconciled existing
    deployment.
 3. **Testing-only** — use `uipcodedappdeploy_testing.py` v1.1 only when the user
@@ -79,7 +79,7 @@ Schema 1.1 supports only these combinations:
 - `--candidate-mode dist --intent upgrade`: copy and hash an exact built dist,
   pack and publish it once, verify the newly published system/deploy identity,
   and upgrade only the pre-reconciled deployment while preserving its route.
-- `--candidate-mode reconciled --intent upgrade`: validate an exact v1.2
+- `--candidate-mode reconciled --intent upgrade`: validate an exact v1.3
   recovery plan/runtime; skip build, pack, and publish; guard and upgrade only
   its bound deployment while preserving its route.
 
@@ -366,6 +366,7 @@ a general deployment CLI:
 python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_recover.py \
   --prepare-runtime-from-cli /absolute/source/node_modules/@uipath/cli/dist/index.js \
   --node-executable /absolute/path/to/node \
+  --runtime-app-config-source /absolute/candidate/.uipath/app.config.json \
   --runtime-output /absolute/ignored/evidence/guarded-runtime \
   --runtime-manifest-output /absolute/ignored/evidence/guarded-runtime.manifest.json \
   --format json
@@ -396,9 +397,12 @@ ordered policy is bound in `execution.environment_policy`. This intentionally
 means proxy-dependent recovery is blocked until a separately reviewed policy
 exists rather than inheriting an unapproved proxy.
 
-The runtime output and manifest output must be distinct, non-overlapping paths
-outside the complete source project, and the manifest must remain outside
-the copied runtime root. Keep both outputs in an ignored evidence location.
+The app-config source must be the exact candidate project's regular
+`.uipath/app.config.json`; it is copied and hash-bound separately from the CLI
+source. The runtime output and manifest output must be distinct,
+non-overlapping paths outside both complete source projects, and the manifest
+must remain outside the copied runtime root. Keep both outputs in an ignored
+evidence location.
 Never patch the release checkout's original `node_modules` in place.
 
 Persist a reconciliation JSON document whose raw observations include absolute
@@ -410,6 +414,8 @@ python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_recover.py \
   --prior-successful-plan /absolute/evidence/prior-plan.json \
   --prior-successful-receipt /absolute/evidence/prior-plan.json.receipt.json \
   --prior-successful-app-config /absolute/evidence/prior-source/.uipath/app.config.json \
+  --trusted-prior-recovery-helper-sha256 'sha256:<exact-prior-helper-hash>' \
+  --trusted-prior-core-helper-sha256 'sha256:<exact-prior-core-hash>' \
   --failed-plan /absolute/evidence/failed-plan.json \
   --failed-receipt /absolute/evidence/failed-plan.json.receipt.json \
   --reconciliation-evidence /absolute/evidence/reconciliation-evidence.json \
@@ -417,6 +423,24 @@ python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_recover.py \
   --plan-output /absolute/evidence/upgrade-recovery-plan.json \
   --format json
 ```
+
+Supply both trusted-prior hashes only when the successful predecessor is a
+recovery receipt. They are explicit human trust anchors, never inferred from
+the artifacts. Omit both for an ordinary governed v2.3 predecessor. A recovery
+predecessor is accepted only after the helper recursively reopens and hashes
+its plan, succeeded receipt, post-deploy app config, retained exact-candidate
+claim, guarded runtime manifest and files, all seven bound evidence records,
+and every reconciliation observation. It rejects failed, incomplete,
+`deployed_unverified`, unapproved, missing, aliased, symlinked, or drifted
+chains before any remote operation. Contract 1.2 is supported only as a
+historical predecessor; it is never executable by the v1.3 loader.
+
+The generated plan contains a self-hashed `predecessor` block. For a recovery
+chain it binds both explicit trust anchors, raw plan and receipt file hashes,
+self-hashes, exact approval and status, app-config and retained-claim hashes,
+the historical runtime manifest, and a canonical raw-byte recursive closure.
+The closure is recomputed during immutable plan loading and again at the
+immediate pre-PATCH runtime barrier.
 
 Review that the plan contains only an atomic execution claim, reconciliation,
 a pre-upgrade read-only guard, a last-moment runtime hash barrier, one upgrade,
@@ -483,8 +507,10 @@ authentication and application behavior remain separate acceptance gates.
 
 - `references/deployment-plan.v2.schema.json`
 - `references/deployment-receipt.v2.schema.json`
-- `references/deployment-recovery-plan.v1.schema.json`
-- `references/deployment-recovery-receipt.v1.schema.json`
+- `references/deployment-recovery-plan.v1.schema.json` (legacy 1.2 predecessor only)
+- `references/deployment-recovery-receipt.v1.schema.json` (legacy 1.2 predecessor only)
+- `references/deployment-recovery-plan.v1.3.schema.json`
+- `references/deployment-recovery-receipt.v1.3.schema.json`
 - `references/deployment-testing-receipt.v1.schema.json` (testing contract 1.1)
 - `references/testing-only-policy.md`
 
@@ -501,8 +527,8 @@ display title through UiPath CLI 1.198.0.
 ## Validation
 
 ```bash
-python3.11 -m unittest discover -s uipcodedappdeploy/tests -p 'test_*.py'
-python3 tools/validate_repo.py
+python3.12 -m unittest discover -s uipcodedappdeploy/tests -p 'test_*.py'
+python3.12 tools/validate_repo.py
 ```
 
 Unit tests stub subprocess and URL execution; they must never contact UiPath or

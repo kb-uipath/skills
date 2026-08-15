@@ -5,7 +5,7 @@ Deploy UiPath Coded Apps through one of three deliberately separate lanes.
 | Lane | Contract | Authorization | Intended use |
 | --- | --- | --- | --- |
 | Governed release | Plan/receipt v2.3 | Exact reviewed `plan_hash` | Reviewable Alpha/Staging release candidate |
-| Exact upgrade recovery | Plan/receipt v1.2 | Exact reviewed recovery hash | Reconciled route-collision repair |
+| Exact upgrade recovery | Plan/receipt v1.3 | Exact reviewed recovery hash | Reconciled route-collision repair |
 | Testing-only | Automatic receipt v1.1 | Explicit request plus `--testing-only --execute` | Internal synthetic Alpha/Staging testing |
 
 Production targets are rejected in every current lane. Testing receipts are
@@ -33,7 +33,7 @@ plain-language synthetic testing purpose plus either exact built distribution
 bytes or an exact recovery plan.
 
 The versioned input/output contracts are plan/receipt v2.3 for governed release,
-plan/receipt v1.2 for recovery, and automatic receipt v1.1 for testing-only.
+plan/receipt v1.3 for recovery, and automatic receipt v1.1 for testing-only.
 
 ## Prompt
 
@@ -107,7 +107,7 @@ python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy.py \
 Interrupted or nonzero external writes are indeterminate. Governed resume is
 allowed only for determinate local stages; it is blocked for publish/deploy.
 
-## Exact route-collision recovery v1.2
+## Exact route-collision recovery v1.3
 
 UiPath CLI 1.198.0 can resend an unchanged `routingName` on an existing-app
 PATCH, which some environments reject as `routing name must be unique`. Never
@@ -121,9 +121,13 @@ current version, route, and published deploy version; prevents the fresh-create
 branch; and omits `routingName` only from the one guarded PATCH. A second guard
 proves the same deployment now reports the candidate version.
 
-Recovery requires its own reviewed v1.2 plan and exact approval hash. It has no
-resume. The complete preparation, evidence, plan, and execution commands are in
-`uipcodedappdeploy/SKILL.md`.
+Recovery requires its own reviewed v1.3 plan and exact approval hash. A
+successful recovery predecessor additionally requires two explicit historical
+helper trust hashes and a recursively verified raw-byte closure over its plan,
+receipt, app config, retained claim, runtime, and nested evidence. Legacy v1.2
+is accepted only as predecessor evidence and cannot execute. Recovery has no
+resume. The complete preparation, evidence, plan, and execution commands are
+in `uipcodedappdeploy/SKILL.md`.
 
 ## Testing-only v1.1
 
@@ -149,7 +153,7 @@ Supported matrices:
   candidate once, verifies its system/deploy identity, and performs one guarded
   in-place upgrade of the pre-reconciled deployment without sending the route
   in the PATCH.
-- `reconciled/upgrade` consumes an exact v1.2 recovery plan/runtime, skips pack
+- `reconciled/upgrade` consumes an exact v1.3 recovery plan/runtime, skips pack
   and publish, and upgrades only the named deployment in place.
 
 Example fresh test deployment from exact built distribution bytes:
@@ -282,7 +286,11 @@ be certified separately before the rollout is reported complete.
 - `uipcodedappdeploy/references/deployment-plan.v2.schema.json`
 - `uipcodedappdeploy/references/deployment-receipt.v2.schema.json`
 - `uipcodedappdeploy/references/deployment-recovery-plan.v1.schema.json`
+  (legacy recovery contract 1.2, predecessor validation only)
 - `uipcodedappdeploy/references/deployment-recovery-receipt.v1.schema.json`
+  (legacy recovery contract 1.2, predecessor validation only)
+- `uipcodedappdeploy/references/deployment-recovery-plan.v1.3.schema.json`
+- `uipcodedappdeploy/references/deployment-recovery-receipt.v1.3.schema.json`
 - `uipcodedappdeploy/references/deployment-testing-receipt.v1.schema.json`
   (testing contract 1.1)
 - `uipcodedappdeploy/references/testing-only-policy.md`

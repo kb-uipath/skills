@@ -1,4 +1,4 @@
 interface:
   display_name: "UiPath Coded App Deploy"
   short_description: "Governed, recovery, or testing-only coded app deploy"
-  default_prompt: "Use $uipcodedappdeploy to classify this request as governed v2.3 release, exact v1.2 recovery, or explicit synthetic-only Alpha/Staging testing. Keep governed plan-hash approval as the default; use the one-step testing helper only when I explicitly request testing, and never retry an indeterminate write, change a route, or treat testing evidence as production evidence."
+  default_prompt: "Use $uipcodedappdeploy to classify this request as governed v2.3 release, exact v1.3 recovery, or explicit synthetic-only Alpha/Staging testing. Keep governed plan-hash approval as the default; accept v1.2 only as a recursively verified predecessor, use the one-step testing helper only when I explicitly request testing, and never retry an indeterminate write, change a route, or treat testing evidence as production evidence."

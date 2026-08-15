@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -37,13 +39,15 @@ import uipcodedappdeploy as core  # noqa: E402
 
 
 PLAN_KIND = "uipcodedappdeploy.upgrade-recovery-plan"
-PLAN_SCHEMA_VERSION = "1.2"
+PLAN_SCHEMA_VERSION = "1.3"
+LEGACY_RECOVERY_SCHEMA_VERSION = "1.2"
 RECEIPT_KIND = "uipcodedappdeploy.upgrade-recovery-receipt"
-RECEIPT_SCHEMA_VERSION = "1.2"
+RECEIPT_SCHEMA_VERSION = "1.3"
 RECONCILIATION_KIND = "uipcodedappdeploy.remote-reconciliation"
 RECONCILIATION_SCHEMA_VERSION = "1.0"
 RUNTIME_MANIFEST_KIND = "uipcodedappdeploy.guarded-runtime"
-RUNTIME_MANIFEST_SCHEMA_VERSION = "1.1"
+RUNTIME_MANIFEST_SCHEMA_VERSION = "1.2"
+LEGACY_RUNTIME_MANIFEST_SCHEMA_VERSION = "1.1"
 PATCH_ALGORITHM = "uipath-codedapp-tool-1.198.0-exact-upgrade-v2"
 EXPECTED_CODEDAPP_TOOL_VERSION = "1.198.0"
 EXPECTED_CODEDAPP_TOOL_GIT_HEAD = "1fadf03d7a8dd102742571dff569fdac11808afb"
@@ -242,6 +246,121 @@ EVIDENCE_LABELS = (
     "recovery_runtime_manifest",
 )
 
+PREDECESSOR_CLOSURE_ALGORITHM = "canonical-artifact-closure-v1"
+PREDECESSOR_TRUST_MODE = "explicit-hash-anchor-v1"
+PREDECESSOR_MAX_DEPTH = 8
+PREDECESSOR_MAX_FILES = 256
+PREDECESSOR_MAX_TOTAL_BYTES = 1024 * 1024 * 1024
+PREDECESSOR_MAX_FILE_BYTES = 256 * 1024 * 1024
+
+PRIOR_RECOVERY_PLAN_FIELDS_V12 = {
+    "kind",
+    "schema_version",
+    "created_at",
+    "recovery_helper_sha256",
+    "core_helper_path",
+    "core_helper_sha256",
+    "evidence",
+    "evidence_binding_hash",
+    "project_root",
+    "target",
+    "existing_deployment",
+    "candidate",
+    "upgrade_guard",
+    "failed_attempt",
+    "stages",
+    "execution",
+    "plan_hash",
+}
+PRIOR_RECOVERY_PLAN_FIELDS_V13 = PRIOR_RECOVERY_PLAN_FIELDS_V12 | {"predecessor"}
+PRIOR_RECOVERY_RECEIPT_FIELDS_V12 = {
+    "kind",
+    "schema_version",
+    "plan_hash",
+    "approved_plan_hash",
+    "recovery_helper_sha256",
+    "core_helper_path",
+    "core_helper_sha256",
+    "evidence_binding_hash",
+    "target",
+    "existing_deployment",
+    "candidate",
+    "upgrade_guard",
+    "execution_claim_path",
+    "execution_claim_sha256",
+    "execution_claim_hash",
+    "execution_claim_released",
+    "status",
+    "started_at",
+    "updated_at",
+    "post_deploy_app_config_digest",
+    "observed_local_app_url",
+    "local_app_url_matches_verified_route",
+    "pre_upgrade_guard_observation",
+    "post_upgrade_guard_observation",
+    "redaction",
+    "stages",
+    "receipt_hash",
+}
+PRIOR_RECOVERY_RECEIPT_FIELDS_V13 = PRIOR_RECOVERY_RECEIPT_FIELDS_V12 | {
+    "predecessor"
+}
+PRIOR_RECOVERY_CANDIDATE_FIELDS = {
+    "version",
+    "system_name",
+    "deploy_version",
+    "source_sha",
+    "package_path",
+    "package_content_digest",
+    "package_file_digest",
+    "candidate_package_file_digest",
+    "source_cli_executable",
+    "source_cli_executable_sha256",
+    "recovery_cli_executable",
+    "recovery_cli_executable_sha256",
+    "recovery_node_executable",
+    "recovery_node_executable_sha256",
+    "recovery_node_version",
+    "cli_version",
+    "cli_profile",
+    "cli_profile_hash",
+    "codedapp_tool_source_file",
+    "codedapp_tool_source_file_sha256",
+    "codedapp_tool_source_manifest",
+    "codedapp_tool_source_manifest_sha256",
+    "codedapp_tool_recovery_file",
+    "codedapp_tool_recovery_file_sha256",
+    "codedapp_tool_recovery_manifest",
+    "codedapp_tool_recovery_manifest_sha256",
+    "codedapp_tool_version",
+    "codedapp_tool_git_head",
+    "recovery_runtime_root",
+    "recovery_runtime_tree_sha256",
+    "recovery_runtime_manifest_hash",
+    "recovery_workspace",
+    "recovery_workspace_app_config_sha256",
+    "recovery_runtime_self_test",
+    "patch_algorithm",
+    "patch_contract_sha256",
+    "tags",
+}
+PRIOR_RECOVERY_STAGE_CONTRACT = (
+    ("execution_claim", "claim_exact_candidate", "local_write"),
+    ("reconcile", "validate_recovery", "local_read"),
+    ("pre_upgrade_guard", "verify_exact_upgrade_target", "external_read"),
+    ("runtime_barrier", "revalidate_guarded_runtime", "local_read"),
+    ("upgrade", "command", "external_write"),
+    ("post_upgrade_guard", "verify_exact_upgraded_target", "external_read"),
+    ("verify", "verify_existing_url", "external_read"),
+    ("post_deploy_metadata", "inspect_app_config", "local_read"),
+)
+RECOVERY_REDACTION_POLICY = {
+    "commands": "omitted",
+    "environment": "omitted",
+    "subprocess_output": "omitted",
+    "errors": "generic_message_only",
+}
+
 
 def _load_object(path: Path, label: str) -> dict[str, Any]:
     if path.is_symlink() or not path.is_file():
@@ -267,6 +386,162 @@ def _evidence_record(path: Path, label: str) -> dict[str, str]:
         "path": str(resolved),
         "sha256": core._hash_file(resolved, label),
     }
+
+
+def _assert_no_symlink_ancestors(path: Path, label: str) -> None:
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current /= part
+        try:
+            mode = current.lstat().st_mode
+        except OSError as exc:
+            core._fail(f"Could not inspect {label}: {type(exc).__name__}")
+        if stat.S_ISLNK(mode):
+            core._fail(f"{label} may not contain a symlink component.")
+
+
+def _new_closure_state() -> dict[str, Any]:
+    return {"records": {}, "identities": {}, "total_bytes": 0}
+
+
+def _read_bound_file(
+    path: Path,
+    label: str,
+    *,
+    state: dict[str, Any] | None = None,
+    role: str | None = None,
+    expected_sha256: str | None = None,
+    capture_payload: bool = True,
+) -> tuple[Path, bytes, os.stat_result]:
+    if not path.is_absolute() or ".." in path.parts:
+        core._fail(f"{label} path must be absolute and canonical.")
+    _assert_no_symlink_ancestors(path, label)
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        core._fail(f"Could not resolve {label}: {type(exc).__name__}")
+    if resolved != path:
+        core._fail(f"{label} path must already be canonical.")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(resolved, flags)
+    except OSError as exc:
+        core._fail(f"Could not open {label}: {type(exc).__name__}")
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            core._fail(f"{label} must be a regular file.")
+        if before.st_nlink != 1:
+            core._fail(f"{label} must not have hard-link aliases.")
+        if before.st_size > PREDECESSOR_MAX_FILE_BYTES:
+            core._fail(f"{label} exceeds the predecessor evidence size limit.")
+        chunks: list[bytes] = []
+        hasher = hashlib.sha256()
+        remaining = before.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                core._fail(f"{label} changed while being read.")
+            hasher.update(chunk)
+            if capture_payload:
+                chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            core._fail(f"{label} grew while being read.")
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    ):
+        core._fail(f"{label} changed while being read.")
+    payload = b"".join(chunks) if capture_payload else b""
+    digest = "sha256:" + hasher.hexdigest()
+    if expected_sha256 is not None:
+        core._validate_hash(expected_sha256, f"{label} expected hash")
+        if digest != expected_sha256:
+            core._fail(f"{label} bytes do not match the bound hash.")
+    if state is not None:
+        if not role:
+            core._fail("Predecessor closure records require an evidence role.")
+        canonical = str(resolved)
+        identity = (before.st_dev, before.st_ino)
+        aliased = state["identities"].get(identity)
+        if aliased is not None and aliased != canonical:
+            core._fail("Predecessor evidence contains a hard-link path alias.")
+        state["identities"][identity] = canonical
+        record = state["records"].get(canonical)
+        if record is None:
+            if len(state["records"]) >= PREDECESSOR_MAX_FILES:
+                core._fail("Predecessor evidence exceeds the file-count limit.")
+            if state["total_bytes"] + before.st_size > PREDECESSOR_MAX_TOTAL_BYTES:
+                core._fail("Predecessor evidence exceeds the total-byte limit.")
+            record = {
+                "path": canonical,
+                "sha256": digest,
+                "size": before.st_size,
+                "roles": [],
+            }
+            state["records"][canonical] = record
+            state["total_bytes"] += before.st_size
+        elif record["sha256"] != digest or record["size"] != before.st_size:
+            core._fail("Predecessor evidence path has conflicting byte bindings.")
+        if role not in record["roles"]:
+            record["roles"].append(role)
+    return resolved, payload, before
+
+
+def _read_bound_json(
+    path: Path,
+    label: str,
+    *,
+    state: dict[str, Any] | None = None,
+    role: str | None = None,
+    expected_sha256: str | None = None,
+) -> tuple[Path, dict[str, Any]]:
+    resolved, payload, _ = _read_bound_file(
+        path,
+        label,
+        state=state,
+        role=role,
+        expected_sha256=expected_sha256,
+    )
+    try:
+        document = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        core._fail(f"Could not parse {label} JSON: {type(exc).__name__}")
+    if not isinstance(document, dict):
+        core._fail(f"{label} must contain a JSON object.")
+    return resolved, document
+
+
+def _finalize_closure(state: dict[str, Any]) -> dict[str, Any]:
+    files = []
+    for record in state["records"].values():
+        normalized = copy.deepcopy(record)
+        normalized["roles"] = sorted(normalized["roles"])
+        files.append(normalized)
+    files.sort(key=lambda item: item["path"])
+    projection = {
+        "algorithm": PREDECESSOR_CLOSURE_ALGORITHM,
+        "files": files,
+        "file_count": len(files),
+        "total_bytes": state["total_bytes"],
+    }
+    projection["sha256"] = core._hash_json(projection)
+    return projection
+
+
+def _closure_file_record(state: dict[str, Any], path: Path) -> dict[str, Any]:
+    record = state["records"].get(str(path.resolve(strict=True)))
+    if record is None:
+        core._fail("Predecessor closure is missing a required artifact.")
+    return record
 
 
 def _tree_digest(root: Path, label: str) -> str:
@@ -306,6 +581,31 @@ def _paths_overlap(first: Path, second: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _resolve_runtime_app_config_source(path: Path) -> tuple[Path, Path]:
+    """Resolve one explicit candidate app config and its containing project."""
+
+    expanded = path.expanduser()
+    if not expanded.is_absolute():
+        core._fail("Recovery runtime app-config source path must be absolute.")
+    if expanded.is_symlink() or not expanded.is_file():
+        core._fail(
+            "Recovery runtime app-config source must be a regular non-symlink file."
+        )
+    resolved = expanded.resolve()
+    if resolved.is_symlink() or not resolved.is_file():
+        core._fail(
+            "Recovery runtime app-config source must resolve to a regular non-symlink file."
+        )
+    project_root = resolved.parent.parent
+    if resolved != project_root / core.APP_CONFIG_RELATIVE_PATH:
+        core._fail(
+            "Recovery runtime app-config source must be an exact "
+            ".uipath/app.config.json project file."
+        )
+    _load_object(resolved, "recovery runtime app-config source")
+    return resolved, project_root
 
 
 def _recovery_environment(source: dict[str, str] | None = None) -> dict[str, str]:
@@ -470,6 +770,7 @@ def _self_test_runtime(
 def _prepare_runtime(
     source_cli: Path,
     node_executable: Path,
+    app_config_source: Path,
     runtime_output: Path,
     manifest_output: Path,
 ) -> dict[str, Any]:
@@ -480,6 +781,10 @@ def _prepare_runtime(
     node_runtime = _resolve_node_runtime(node_executable, environment)
     if runtime_output.exists() or manifest_output.exists():
         core._fail("Recovery runtime preparation refuses to overwrite existing output.")
+    if _paths_overlap(runtime_output, manifest_output):
+        core._fail(
+            "Recovery runtime and manifest outputs must be distinct and non-overlapping."
+        )
     if source_cli.is_symlink() or not source_cli.is_file():
         core._fail("Recovery source CLI must be a regular non-symlink file.")
     try:
@@ -490,9 +795,17 @@ def _prepare_runtime(
     if source_node_modules.name != "node_modules":
         core._fail("Recovery source CLI must resolve inside node_modules.")
     source_project_root = source_node_modules.parent
+    source_app_config, app_config_project_root = _resolve_runtime_app_config_source(
+        app_config_source
+    )
     if _paths_overlap(runtime_output, source_project_root):
         core._fail(
             "Recovery runtime output must be outside and disjoint from the source project."
+        )
+    if _paths_overlap(runtime_output, app_config_project_root):
+        core._fail(
+            "Recovery runtime output must be outside and disjoint from the "
+            "app-config source project."
         )
     try:
         manifest_output.relative_to(runtime_output)
@@ -506,6 +819,14 @@ def _prepare_runtime(
         pass
     else:
         core._fail("Recovery runtime manifest must not mutate the source project.")
+    try:
+        manifest_output.relative_to(app_config_project_root)
+    except ValueError:
+        pass
+    else:
+        core._fail(
+            "Recovery runtime manifest must not mutate the app-config source project."
+        )
     source_tool = source_cli.parents[2] / "codedapp-tool" / "dist" / "tool.js"
     source_tool_manifest_path = source_cli.parents[2] / "codedapp-tool" / "package.json"
     source_tool_manifest = _load_object(
@@ -531,13 +852,21 @@ def _prepare_runtime(
     core._atomic_write_bytes(
         runtime_tool, patched_tool, runtime_tool.stat().st_mode & 0o777
     )
-    source_app_config = source_project_root / core.APP_CONFIG_RELATIVE_PATH
-    if source_app_config.is_symlink() or not source_app_config.is_file():
-        core._fail("Recovery source app config must be a regular non-symlink file.")
+    source_app_config_sha256 = core._hash_file(
+        source_app_config, "recovery runtime app-config source"
+    )
     runtime_workspace = runtime_output / ISOLATED_WORKSPACE_RELATIVE
     runtime_app_config = runtime_workspace / core.APP_CONFIG_RELATIVE_PATH
     runtime_app_config.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_app_config, runtime_app_config)
+    if core._hash_file(
+        source_app_config, "recovery runtime app-config source"
+    ) != source_app_config_sha256:
+        core._fail("Recovery runtime app-config source changed while being copied.")
+    if core._hash_file(
+        runtime_app_config, "recovery workspace app config"
+    ) != source_app_config_sha256:
+        core._fail("Recovery workspace app config is not an exact source copy.")
     runtime_self_test = _self_test_runtime(
         runtime_cli,
         runtime_tool,
@@ -564,6 +893,8 @@ def _prepare_runtime(
             ),
             "codedapp_tool_version": source_tool_manifest["version"],
             "codedapp_tool_git_head": source_tool_manifest["gitHead"],
+            "app_config_source": str(source_app_config),
+            "app_config_source_sha256": source_app_config_sha256,
         },
         "runtime": {
             "root": str(runtime_output),
@@ -721,12 +1052,12 @@ def _execution_claim_key(
 def _one_stage(plan: dict[str, Any], name: str) -> dict[str, Any]:
     matches = [stage for stage in plan["stages"] if stage.get("name") == name]
     if len(matches) != 1:
-        core._fail(f"Expected exactly one {name} stage in the v2.3 plan.")
+        core._fail(f"Expected exactly one {name} stage in the bound plan.")
     return matches[0]
 
 
-def _validate_prior_app_config(
-    document: dict[str, Any], prior_plan: dict[str, Any]
+def _validate_prior_core_app_config(
+    document: dict[str, Any], predecessor: dict[str, Any]
 ) -> dict[str, str]:
     required = {
         "appName",
@@ -741,11 +1072,11 @@ def _validate_prior_app_config(
     }
     if not required.issubset(document):
         core._fail("Prior successful app config is missing deployment metadata.")
-    parameters = prior_plan["parameters"]
+    parameters = predecessor["parameters"]
     expected = {
         "appName": parameters["package_name"],
         "displayName": parameters["app_name"],
-        "appVersion": prior_plan["project"]["new_version"],
+        "appVersion": predecessor["version"],
         "appType": parameters["app_type"],
         "personalWorkspace": False,
     }
@@ -769,6 +1100,1237 @@ def _validate_prior_app_config(
         "deployment_id": document["deploymentId"],
         "app_url": app_url,
     }
+
+
+def _require_absolute_path(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        core._fail(f"{label} must be an absolute path.")
+    path = Path(value)
+    if not path.is_absolute() or ".." in path.parts:
+        core._fail(f"{label} must be an absolute canonical path.")
+    return value
+
+
+def _validate_prior_recovery_target(target: Any) -> dict[str, Any]:
+    expected_fields = {
+        "environment",
+        "control_plane_url",
+        "organization_name",
+        "organization_id",
+        "tenant_name",
+        "tenant_id",
+        "folder_key",
+        "client_id",
+    }
+    if not isinstance(target, dict) or set(target) != expected_fields:
+        core._fail("Prior recovery target fields are invalid.")
+    environment = target.get("environment")
+    expected_environment = core.TARGET_ENVIRONMENTS.get(environment)
+    if (
+        expected_environment is None
+        or target.get("control_plane_url")
+        != expected_environment["control_plane_url"]
+    ):
+        core._fail("Prior recovery target environment is invalid.")
+    for field in ("organization_name", "tenant_name"):
+        if not isinstance(target.get(field), str) or not target[field]:
+            core._fail(f"Prior recovery target {field} is invalid.")
+    for field in ("organization_id", "tenant_id", "folder_key", "client_id"):
+        value = target.get(field)
+        if not isinstance(value, str) or core.GUID_RE.fullmatch(value) is None:
+            core._fail(f"Prior recovery target {field} is invalid.")
+    return target
+
+
+def _validate_prior_recovery_existing(
+    existing: Any, target: dict[str, Any]
+) -> dict[str, Any]:
+    expected_fields = {
+        "app_name",
+        "package_name",
+        "app_type",
+        "system_name",
+        "deployment_id",
+        "route_name",
+        "app_url",
+        "deployed_version",
+    }
+    if not isinstance(existing, dict) or set(existing) != expected_fields:
+        core._fail("Prior recovery existing deployment fields are invalid.")
+    for field in ("app_name", "package_name"):
+        if not isinstance(existing.get(field), str) or not existing[field]:
+            core._fail(f"Prior recovery existing deployment {field} is invalid.")
+    if existing.get("app_type") not in ("Web", "Action"):
+        core._fail("Prior recovery existing deployment app_type is invalid.")
+    if (
+        not isinstance(existing.get("system_name"), str)
+        or core.APP_SYSTEM_NAME_RE.fullmatch(existing["system_name"]) is None
+    ):
+        core._fail("Prior recovery existing deployment system_name is invalid.")
+    if (
+        not isinstance(existing.get("deployment_id"), str)
+        or core.GUID_RE.fullmatch(existing["deployment_id"]) is None
+    ):
+        core._fail("Prior recovery existing deployment deployment_id is invalid.")
+    if (
+        not isinstance(existing.get("route_name"), str)
+        or core.PATH_NAME_RE.fullmatch(existing["route_name"]) is None
+    ):
+        core._fail("Prior recovery existing deployment route_name is invalid.")
+    core._parse_semver(
+        existing.get("deployed_version"),
+        "Prior recovery existing deployment version",
+    )
+    expected_url = (
+        f"https://{target['organization_name']}.{target['environment']}.uipath.host/"
+        f"{existing['route_name']}"
+    )
+    if existing.get("app_url") != expected_url:
+        core._fail("Prior recovery existing deployment app_url is invalid.")
+    return existing
+
+
+def _prior_recovery_expected_command(
+    *,
+    target: dict[str, Any],
+    existing: dict[str, Any],
+    candidate: dict[str, Any],
+    guard: dict[str, Any],
+) -> list[str]:
+    command = [
+        candidate["recovery_node_executable"],
+        candidate["recovery_cli_executable"],
+        "codedapp",
+        "deploy",
+    ]
+    if existing["app_name"] == existing["package_name"]:
+        command.extend(["--name", existing["package_name"]])
+    command.extend(
+        [
+            "--version",
+            candidate["version"],
+            "--path-name",
+            existing["route_name"],
+            "--client-id",
+            target["client_id"],
+            "--tags",
+            ",".join(candidate["tags"]),
+            "--base-url",
+            target["control_plane_url"],
+            "--org-id",
+            target["organization_id"],
+            "--org-name",
+            target["organization_name"],
+            "--tenant-id",
+            target["tenant_id"],
+            "--profile",
+            candidate["cli_profile"],
+            "--folder-key",
+            target["folder_key"],
+            "--expected-deployment-id",
+            guard["deployment_id"],
+            "--expected-system-name",
+            guard["system_name"],
+            "--expected-deploy-version",
+            str(guard["deploy_version"]),
+            "--expected-current-version",
+            guard["current_version"],
+            "--expected-route-name",
+            guard["route_name"],
+        ]
+    )
+    return command
+
+
+def _validate_prior_recovery_plan(
+    document: dict[str, Any], *, schema_version: str
+) -> dict[str, Any]:
+    expected_fields = (
+        PRIOR_RECOVERY_PLAN_FIELDS_V12
+        if schema_version == LEGACY_RECOVERY_SCHEMA_VERSION
+        else PRIOR_RECOVERY_PLAN_FIELDS_V13
+    )
+    if set(document) != expected_fields:
+        core._fail(
+            f"Prior recovery plan fields do not match schema {schema_version}."
+        )
+    if (
+        document.get("kind") != PLAN_KIND
+        or document.get("schema_version") != schema_version
+    ):
+        core._fail("Prior recovery plan kind or schema version is invalid.")
+    _require_iso8601(document.get("created_at"), "Prior recovery plan created_at")
+    for field in (
+        "recovery_helper_sha256",
+        "core_helper_sha256",
+        "evidence_binding_hash",
+        "plan_hash",
+    ):
+        core._validate_hash(document.get(field), f"Prior recovery plan {field}")
+    _require_absolute_path(
+        document.get("core_helper_path"), "Prior recovery core helper path"
+    )
+    if core._document_hash(document, "plan_hash") != document["plan_hash"]:
+        core._fail("Prior recovery plan hash is invalid.")
+
+    evidence = document.get("evidence")
+    if not isinstance(evidence, list) or len(evidence) != len(EVIDENCE_LABELS):
+        core._fail("Prior recovery plan evidence is incomplete.")
+    for expected_label, record in zip(EVIDENCE_LABELS, evidence):
+        if not isinstance(record, dict) or set(record) != {"label", "path", "sha256"}:
+            core._fail("Prior recovery plan evidence record is invalid.")
+        if record.get("label") != expected_label:
+            core._fail("Prior recovery plan evidence order is invalid.")
+        _require_absolute_path(
+            record.get("path"), f"Prior recovery {expected_label} path"
+        )
+        core._validate_hash(
+            record.get("sha256"), f"Prior recovery {expected_label} hash"
+        )
+    if core._hash_json(evidence) != document["evidence_binding_hash"]:
+        core._fail("Prior recovery evidence binding hash is invalid.")
+
+    project_root = _require_absolute_path(
+        document.get("project_root"), "Prior recovery project root"
+    )
+    target = _validate_prior_recovery_target(document.get("target"))
+    existing = _validate_prior_recovery_existing(
+        document.get("existing_deployment"), target
+    )
+
+    candidate = document.get("candidate")
+    if not isinstance(candidate, dict) or set(candidate) != PRIOR_RECOVERY_CANDIDATE_FIELDS:
+        core._fail("Prior recovery candidate fields are invalid.")
+    core._parse_semver(candidate.get("version"), "Prior recovery candidate version")
+    if (
+        not isinstance(candidate.get("system_name"), str)
+        or core.APP_SYSTEM_NAME_RE.fullmatch(candidate["system_name"]) is None
+    ):
+        core._fail("Prior recovery candidate system_name is invalid.")
+    if (
+        isinstance(candidate.get("deploy_version"), bool)
+        or not isinstance(candidate.get("deploy_version"), int)
+        or candidate["deploy_version"] < 1
+    ):
+        core._fail("Prior recovery candidate deploy_version is invalid.")
+    if (
+        not isinstance(candidate.get("source_sha"), str)
+        or core.SOURCE_SHA_RE.fullmatch(candidate["source_sha"]) is None
+    ):
+        core._fail("Prior recovery candidate source_sha is invalid.")
+    if candidate.get("package_path") != core._package_path(
+        existing["package_name"], candidate["version"]
+    ):
+        core._fail("Prior recovery candidate package_path is invalid.")
+    hash_fields = (
+        "package_content_digest",
+        "package_file_digest",
+        "candidate_package_file_digest",
+        "source_cli_executable_sha256",
+        "recovery_cli_executable_sha256",
+        "recovery_node_executable_sha256",
+        "cli_profile_hash",
+        "codedapp_tool_source_file_sha256",
+        "codedapp_tool_source_manifest_sha256",
+        "codedapp_tool_recovery_file_sha256",
+        "codedapp_tool_recovery_manifest_sha256",
+        "recovery_runtime_tree_sha256",
+        "recovery_runtime_manifest_hash",
+        "recovery_workspace_app_config_sha256",
+        "patch_contract_sha256",
+    )
+    for field in hash_fields:
+        core._validate_hash(candidate.get(field), f"Prior recovery candidate {field}")
+    path_fields = (
+        "source_cli_executable",
+        "recovery_cli_executable",
+        "recovery_node_executable",
+        "codedapp_tool_source_file",
+        "codedapp_tool_source_manifest",
+        "codedapp_tool_recovery_file",
+        "codedapp_tool_recovery_manifest",
+        "recovery_runtime_root",
+        "recovery_workspace",
+    )
+    for field in path_fields:
+        _require_absolute_path(candidate.get(field), f"Prior recovery candidate {field}")
+    for field in ("recovery_node_version", "cli_version", "codedapp_tool_version"):
+        core._parse_semver(candidate.get(field), f"Prior recovery candidate {field}")
+    if candidate["cli_version"] != EXPECTED_CODEDAPP_TOOL_VERSION:
+        core._fail("Prior recovery candidate CLI version is unsupported.")
+    if not isinstance(candidate.get("cli_profile"), str) or not candidate["cli_profile"]:
+        core._fail("Prior recovery candidate cli_profile is invalid.")
+    expected_profile_hash = core._hash_json(
+        {
+            "name": candidate["cli_profile"],
+            "environment": target["environment"],
+            "control_plane_url": target["control_plane_url"],
+            "org_id": target["organization_id"],
+            "tenant_id": target["tenant_id"],
+        }
+    )
+    if candidate["cli_profile_hash"] != expected_profile_hash:
+        core._fail("Prior recovery candidate CLI profile binding is invalid.")
+    if (
+        candidate["source_cli_executable_sha256"]
+        != candidate["recovery_cli_executable_sha256"]
+    ):
+        core._fail("Prior recovery source and guarded CLI digests differ.")
+    if candidate["codedapp_tool_source_file_sha256"] != EXPECTED_CODEDAPP_TOOL_SHA256:
+        core._fail("Prior recovery coded app tool digest is invalid.")
+    if (
+        candidate["codedapp_tool_source_manifest_sha256"]
+        != candidate["codedapp_tool_recovery_manifest_sha256"]
+    ):
+        core._fail("Prior recovery coded app tool manifest digests differ.")
+    if (
+        candidate["codedapp_tool_version"] != EXPECTED_CODEDAPP_TOOL_VERSION
+        or candidate["codedapp_tool_git_head"] != EXPECTED_CODEDAPP_TOOL_GIT_HEAD
+        or candidate["patch_algorithm"] != PATCH_ALGORITHM
+        or candidate["recovery_runtime_self_test"]
+        != {
+            "node_syntax": "passed",
+            "dynamic_tool_resolution": "passed",
+            "unguarded_deploy": "blocked_before_network",
+            "verify_only_without_guard": "blocked_before_network",
+        }
+    ):
+        core._fail("Prior recovery guarded runtime contract is invalid.")
+    tags = candidate.get("tags")
+    if (
+        not isinstance(tags, list)
+        or not tags
+        or tags != sorted(set(tags))
+        or any(
+            not isinstance(tag, str) or core.PATH_NAME_RE.fullmatch(tag) is None
+            for tag in tags
+        )
+    ):
+        core._fail("Prior recovery candidate tags are invalid.")
+
+    guard = document.get("upgrade_guard")
+    expected_guard_fields = {
+        "mode",
+        "deployment_id",
+        "system_name",
+        "deploy_version",
+        "current_version",
+        "route_name",
+        "fresh_deploy_prohibited",
+        "routing_name_omitted_from_patch",
+        "local_execution_claim_scope",
+        "local_execution_claim_key",
+    }
+    if not isinstance(guard, dict) or set(guard) != expected_guard_fields:
+        core._fail("Prior recovery upgrade guard fields are invalid.")
+    expected_guard_values = {
+        "mode": "exact_deployment_fail_closed_v1",
+        "deployment_id": existing["deployment_id"],
+        "system_name": candidate["system_name"],
+        "deploy_version": candidate["deploy_version"],
+        "current_version": existing["deployed_version"],
+        "route_name": existing["route_name"],
+        "fresh_deploy_prohibited": True,
+        "routing_name_omitted_from_patch": True,
+        "local_execution_claim_scope": "home_scoped_exact_candidate_v1",
+    }
+    for field, value in expected_guard_values.items():
+        if guard.get(field) != value:
+            core._fail(f"Prior recovery upgrade guard {field} is invalid.")
+    if existing["system_name"] != candidate["system_name"]:
+        core._fail("Prior recovery system identity is inconsistent.")
+    claim_parameters = {
+        "environment": target["environment"],
+        "org_id": target["organization_id"],
+        "tenant_id": target["tenant_id"],
+        "folder_key": target["folder_key"],
+    }
+    expected_claim_key = _execution_claim_key(
+        parameters=claim_parameters,
+        deployment_id=existing["deployment_id"],
+        system_name=candidate["system_name"],
+        deploy_version=candidate["deploy_version"],
+        candidate_version=candidate["version"],
+    )
+    if guard.get("local_execution_claim_key") != expected_claim_key:
+        core._fail("Prior recovery execution claim key is invalid.")
+
+    failed_attempt = document.get("failed_attempt")
+    if not isinstance(failed_attempt, dict) or set(failed_attempt) != {
+        "plan_hash",
+        "approved_plan_hash",
+        "deployment_binding_hash",
+        "receipt_status",
+        "recovery",
+    }:
+        core._fail("Prior recovery failed-attempt binding is invalid.")
+    for field in ("plan_hash", "approved_plan_hash", "deployment_binding_hash"):
+        core._validate_hash(
+            failed_attempt.get(field), f"Prior recovery failed attempt {field}"
+        )
+    if (
+        failed_attempt["approved_plan_hash"] != failed_attempt["plan_hash"]
+        or failed_attempt.get("receipt_status") != "in_progress"
+        or not isinstance(failed_attempt.get("recovery"), str)
+        or "blind" not in failed_attempt["recovery"]
+    ):
+        core._fail("Prior recovery failed-attempt approval is invalid.")
+
+    upgrade_command = _prior_recovery_expected_command(
+        target=target,
+        existing=existing,
+        candidate=candidate,
+        guard=guard,
+    )
+    expected_stages = [
+        {
+            "name": "execution_claim",
+            "action": "claim_exact_candidate",
+            "effect": "local_write",
+        },
+        {"name": "reconcile", "action": "validate_recovery", "effect": "local_read"},
+        {
+            "name": "pre_upgrade_guard",
+            "action": "verify_exact_upgrade_target",
+            "effect": "external_read",
+            "cwd": candidate["recovery_workspace"],
+            "command": _remote_guard_command(upgrade_command),
+        },
+        {
+            "name": "runtime_barrier",
+            "action": "revalidate_guarded_runtime",
+            "effect": "local_read",
+        },
+        {
+            "name": "upgrade",
+            "action": "command",
+            "effect": "external_write",
+            "cwd": candidate["recovery_workspace"],
+            "command": upgrade_command,
+        },
+        {
+            "name": "post_upgrade_guard",
+            "action": "verify_exact_upgraded_target",
+            "effect": "external_read",
+            "cwd": candidate["recovery_workspace"],
+            "command": _remote_guard_command(
+                upgrade_command, expected_current_version=candidate["version"]
+            ),
+            "attempts": 3,
+            "delays_seconds": [1, 2],
+        },
+        {
+            "name": "verify",
+            "action": "verify_existing_url",
+            "effect": "external_read",
+            "url": existing["app_url"],
+            "timeout_seconds": 30,
+        },
+        {
+            "name": "post_deploy_metadata",
+            "action": "inspect_app_config",
+            "effect": "local_read",
+        },
+    ]
+    if document.get("stages") != expected_stages:
+        core._fail("Prior recovery stages do not match their projected candidate.")
+    expected_execution = {
+        "executable": True,
+        "blockers": [],
+        "resume_supported": False,
+        "publishes_package": False,
+        "changes_route": False,
+        "environment_policy": {
+            "forbidden": list(FORBIDDEN_RECOVERY_ENVIRONMENT),
+            "preserved": list(RECOVERY_ENVIRONMENT_PRESERVE),
+            "overrides": RECOVERY_ENVIRONMENT_OVERRIDES,
+        },
+    }
+    if document.get("execution") != expected_execution:
+        core._fail("Prior recovery execution policy is invalid.")
+
+    return {
+        "kind": f"recovery_v{schema_version}",
+        "schema_version": schema_version,
+        "plan": document,
+        "plan_hash": document["plan_hash"],
+        "project_root": project_root,
+        "version": candidate["version"],
+        "parameters": {
+            "environment": target["environment"],
+            "control_plane_url": target["control_plane_url"],
+            "tenant_name": target["tenant_name"],
+            "tenant_id": target["tenant_id"],
+            "org_id": target["organization_id"],
+            "org_name": target["organization_name"],
+            "folder_key": target["folder_key"],
+            "package_name": existing["package_name"],
+            "app_name": existing["app_name"],
+            "app_type": existing["app_type"],
+            "path_name": existing["route_name"],
+            "client_id": target["client_id"],
+            "tags": candidate["tags"],
+            "cli_executable_sha256": candidate["source_cli_executable_sha256"],
+            "cli_version": candidate["cli_version"],
+            "cli_profile": candidate["cli_profile"],
+            "cli_profile_hash": candidate["cli_profile_hash"],
+        },
+        "expected_deployment": {
+            "system_name": candidate["system_name"],
+            "deployment_id": existing["deployment_id"],
+            "app_url": existing["app_url"],
+        },
+    }
+
+
+def _validate_prior_guard_observation(
+    observation: Any,
+    *,
+    plan: dict[str, Any],
+    current_version: str,
+    label: str,
+) -> dict[str, Any]:
+    expected = {
+        "deploymentId": plan["existing_deployment"]["deployment_id"],
+        "systemName": plan["candidate"]["system_name"],
+        "deployVersion": plan["candidate"]["deploy_version"],
+        "currentVersion": current_version,
+        "routeName": plan["existing_deployment"]["route_name"],
+        "version": plan["candidate"]["version"],
+        "appName": plan["existing_deployment"]["app_name"],
+        "appUrl": plan["existing_deployment"]["app_url"],
+        "operation": "recovery_verify",
+    }
+    if not isinstance(observation, dict) or observation != expected:
+        core._fail(f"Prior recovery {label} does not match its exact guard.")
+    return observation
+
+
+def _validate_prior_recovery_receipt(
+    document: dict[str, Any], predecessor: dict[str, Any]
+) -> dict[str, Any]:
+    plan = predecessor["plan"]
+    schema_version = predecessor["schema_version"]
+    expected_fields = (
+        PRIOR_RECOVERY_RECEIPT_FIELDS_V12
+        if schema_version == LEGACY_RECOVERY_SCHEMA_VERSION
+        else PRIOR_RECOVERY_RECEIPT_FIELDS_V13
+    )
+    if set(document) != expected_fields:
+        core._fail(
+            f"Prior recovery receipt fields do not match schema {schema_version}."
+        )
+    if (
+        document.get("kind") != RECEIPT_KIND
+        or document.get("schema_version") != schema_version
+    ):
+        core._fail("Prior recovery receipt kind or schema version is invalid.")
+    for field in (
+        "plan_hash",
+        "approved_plan_hash",
+        "recovery_helper_sha256",
+        "core_helper_sha256",
+        "evidence_binding_hash",
+        "execution_claim_sha256",
+        "execution_claim_hash",
+        "post_deploy_app_config_digest",
+        "receipt_hash",
+    ):
+        core._validate_hash(document.get(field), f"Prior recovery receipt {field}")
+    _require_absolute_path(
+        document.get("core_helper_path"), "Prior recovery receipt core helper path"
+    )
+    _require_absolute_path(
+        document.get("execution_claim_path"),
+        "Prior recovery receipt execution claim path",
+    )
+    for field in ("started_at", "updated_at"):
+        _require_iso8601(document.get(field), f"Prior recovery receipt {field}")
+    if core._document_hash(document, "receipt_hash") != document["receipt_hash"]:
+        core._fail("Prior recovery receipt hash is invalid.")
+    expected_bindings = {
+        "plan_hash": plan["plan_hash"],
+        "approved_plan_hash": plan["plan_hash"],
+        "recovery_helper_sha256": plan["recovery_helper_sha256"],
+        "core_helper_path": plan["core_helper_path"],
+        "core_helper_sha256": plan["core_helper_sha256"],
+        "evidence_binding_hash": plan["evidence_binding_hash"],
+        "target": plan["target"],
+        "existing_deployment": plan["existing_deployment"],
+        "candidate": plan["candidate"],
+        "upgrade_guard": plan["upgrade_guard"],
+    }
+    if schema_version == PLAN_SCHEMA_VERSION:
+        expected_bindings["predecessor"] = plan["predecessor"]
+    for field, value in expected_bindings.items():
+        if document.get(field) != value:
+            core._fail(f"Prior recovery receipt {field} does not match its plan.")
+    if document.get("status") != "succeeded":
+        core._fail("Prior recovery receipt must be succeeded.")
+    if document.get("execution_claim_released") is not False:
+        core._fail("Prior recovery receipt must retain its exact-candidate claim.")
+    claim_path = Path(document["execution_claim_path"])
+    if claim_path.is_symlink() or not claim_path.is_file():
+        core._fail("Prior recovery execution claim must remain a regular file.")
+    if (
+        core._hash_file(claim_path, "prior recovery execution claim")
+        != document["execution_claim_sha256"]
+    ):
+        core._fail("Prior recovery execution claim bytes changed.")
+    claim = _load_object(claim_path, "prior recovery execution claim")
+    expected_claim_fields = {
+        "kind",
+        "schema_version",
+        "created_at",
+        "plan_hash",
+        "claim_key",
+        "claim_scope",
+        "deployment_id",
+        "candidate_version",
+        "claim_hash",
+    }
+    if set(claim) != expected_claim_fields:
+        core._fail("Prior recovery execution claim fields are invalid.")
+    _require_iso8601(claim.get("created_at"), "Prior recovery execution claim created_at")
+    expected_claim = {
+        "kind": "uipcodedappdeploy.upgrade-recovery-execution-claim",
+        "schema_version": "1.0",
+        "plan_hash": plan["plan_hash"],
+        "claim_key": plan["upgrade_guard"]["local_execution_claim_key"],
+        "claim_scope": plan["upgrade_guard"]["local_execution_claim_scope"],
+        "deployment_id": plan["existing_deployment"]["deployment_id"],
+        "candidate_version": plan["candidate"]["version"],
+    }
+    for field, value in expected_claim.items():
+        if claim.get(field) != value:
+            core._fail(f"Prior recovery execution claim {field} is invalid.")
+    if (
+        claim.get("claim_hash") != core._document_hash(claim, "claim_hash")
+        or document["execution_claim_hash"] != claim["claim_hash"]
+    ):
+        core._fail("Prior recovery execution claim self-hash is invalid.")
+    if document.get("redaction") != RECOVERY_REDACTION_POLICY:
+        core._fail("Prior recovery receipt redaction policy is invalid.")
+    if (
+        document.get("observed_local_app_url")
+        != plan["existing_deployment"]["app_url"]
+        or document.get("local_app_url_matches_verified_route") is not True
+    ):
+        core._fail("Prior recovery receipt local route verification is invalid.")
+    _validate_prior_guard_observation(
+        document.get("pre_upgrade_guard_observation"),
+        plan=plan,
+        current_version=plan["upgrade_guard"]["current_version"],
+        label="pre-upgrade guard observation",
+    )
+    _validate_prior_guard_observation(
+        document.get("post_upgrade_guard_observation"),
+        plan=plan,
+        current_version=plan["candidate"]["version"],
+        label="post-upgrade guard observation",
+    )
+    stages = document.get("stages")
+    if not isinstance(stages, list) or len(stages) != len(PRIOR_RECOVERY_STAGE_CONTRACT):
+        core._fail("Prior recovery receipt stages are incomplete.")
+    for stage, planned, contract in zip(stages, plan["stages"], PRIOR_RECOVERY_STAGE_CONTRACT):
+        name, _action, effect = contract
+        if (
+            not isinstance(stage, dict)
+            or not set(stage).issubset(
+                {"name", "effect", "status", "started_at", "finished_at", "recovery"}
+            )
+            or stage.get("name") != name
+            or stage.get("effect") != effect
+            or stage.get("name") != planned.get("name")
+            or stage.get("effect") != planned.get("effect")
+            or stage.get("status") != "succeeded"
+            or "started_at" not in stage
+            or "finished_at" not in stage
+            or "recovery" in stage
+        ):
+            core._fail("Prior recovery receipt must show every stage succeeded.")
+        _require_iso8601(stage["started_at"], f"Prior recovery {name} started_at")
+        _require_iso8601(stage["finished_at"], f"Prior recovery {name} finished_at")
+    predecessor["receipt"] = document
+    predecessor["post_deploy_app_config_digest"] = document[
+        "post_deploy_app_config_digest"
+    ]
+    predecessor["deployment_identity_independently_bound"] = True
+    return predecessor
+
+
+def _normalize_prior_core_plan(
+    plan: dict[str, Any], receipt: dict[str, Any]
+) -> dict[str, Any]:
+    if receipt.get("status") != "succeeded":
+        core._fail("Prior deployment receipt must be succeeded.")
+    parameters = plan["parameters"]
+    return {
+        "kind": "core_v2.3",
+        "plan": plan,
+        "receipt": receipt,
+        "plan_hash": plan["plan_hash"],
+        "project_root": plan["project"]["root"],
+        "version": plan["project"]["new_version"],
+        "parameters": {
+            field: parameters[field]
+            for field in (
+                "environment",
+                "control_plane_url",
+                "tenant_name",
+                "tenant_id",
+                "org_id",
+                "org_name",
+                "folder_key",
+                "package_name",
+                "app_name",
+                "app_type",
+                "path_name",
+                "client_id",
+                "tags",
+                "cli_executable_sha256",
+                "cli_version",
+                "cli_profile",
+                "cli_profile_hash",
+            )
+        },
+        "expected_deployment": None,
+        "post_deploy_app_config_digest": None,
+        "deployment_identity_independently_bound": False,
+    }
+
+
+def _load_predecessor(
+    plan_path: Path,
+    receipt_path: Path,
+    *,
+    trusted_recovery_helper_sha256: str | None = None,
+    trusted_core_helper_sha256: str | None = None,
+) -> dict[str, Any]:
+    raw_plan = _load_object(plan_path, "prior successful plan")
+    if (
+        raw_plan.get("kind") == core.PLAN_KIND
+        and raw_plan.get("schema_version") == core.PLAN_SCHEMA_VERSION
+    ):
+        if trusted_recovery_helper_sha256 or trusted_core_helper_sha256:
+            core._fail(
+                "Recovery predecessor trust hashes are invalid for a governed predecessor."
+            )
+        plan = core._load_plan(plan_path)
+        receipt = core._load_receipt(receipt_path, plan)
+        return _normalize_prior_core_plan(plan, receipt)
+    if (
+        raw_plan.get("kind") == PLAN_KIND
+        and raw_plan.get("schema_version")
+        in (LEGACY_RECOVERY_SCHEMA_VERSION, PLAN_SCHEMA_VERSION)
+    ):
+        if not trusted_recovery_helper_sha256 or not trusted_core_helper_sha256:
+            core._fail(
+                "A recovery predecessor requires both explicit trusted prior helper hashes."
+            )
+        core._validate_hash(
+            trusted_recovery_helper_sha256,
+            "Trusted prior recovery helper hash",
+        )
+        core._validate_hash(
+            trusted_core_helper_sha256,
+            "Trusted prior core helper hash",
+        )
+        if raw_plan.get("recovery_helper_sha256") != trusted_recovery_helper_sha256:
+            core._fail("Prior recovery helper hash does not match the explicit trust anchor.")
+        if raw_plan.get("core_helper_sha256") != trusted_core_helper_sha256:
+            core._fail("Prior core helper hash does not match the explicit trust anchor.")
+        schema_version = raw_plan["schema_version"]
+        predecessor = _validate_prior_recovery_plan(
+            raw_plan, schema_version=schema_version
+        )
+        receipt = _load_object(receipt_path, "prior successful recovery receipt")
+        predecessor = _validate_prior_recovery_receipt(receipt, predecessor)
+        predecessor["trusted_recovery_helper_sha256"] = (
+            trusted_recovery_helper_sha256
+        )
+        predecessor["trusted_core_helper_sha256"] = trusted_core_helper_sha256
+        return predecessor
+    core._fail(
+        "Prior successful evidence must be a governed v2.3 deployment or "
+        "a successful schema-1.2 or schema-1.3 exact-upgrade recovery."
+    )
+
+
+def _validate_predecessor_app_config(
+    path: Path, document: dict[str, Any], predecessor: dict[str, Any]
+) -> dict[str, str]:
+    if predecessor["kind"] == "core_v2.3":
+        return _validate_prior_core_app_config(document, predecessor)
+
+    expected_digest = predecessor["post_deploy_app_config_digest"]
+    observed_digest = core._hash_file(path, "prior recovery post-deploy app config")
+    if observed_digest != expected_digest:
+        core._fail(
+            "Prior recovery app config does not match its receipt post-deploy digest."
+        )
+    parameters = predecessor["parameters"]
+    deployment = predecessor["expected_deployment"]
+    expected = {
+        "appName": parameters["package_name"],
+        "displayName": parameters["app_name"],
+        "appVersion": predecessor["version"],
+        "systemName": deployment["system_name"],
+        "appUrl": deployment["app_url"],
+        "appType": parameters["app_type"],
+        "personalWorkspace": False,
+    }
+    for field, value in expected.items():
+        if document.get(field) != value:
+            core._fail(f"Prior recovery app config {field} does not match its receipt.")
+    config_deployment_id = document.get("deploymentId")
+    _require_iso8601(document.get("deployedAt"), "Prior recovery app config deployedAt")
+    if config_deployment_id is None:
+        if not predecessor["deployment_identity_independently_bound"]:
+            core._fail("Prior recovery app config is missing an independently bound deployment.")
+    elif config_deployment_id != deployment["deployment_id"]:
+        core._fail("Prior recovery app config deploymentId does not match its receipt.")
+    return copy.deepcopy(deployment)
+
+
+def _validate_sanctioned_failed_receipt(receipt: dict[str, Any]) -> None:
+    if receipt.get("status") != "in_progress":
+        core._fail("Nested failed receipt must remain in_progress and indeterminate.")
+    deploy = _one_stage({"stages": receipt.get("stages", [])}, "deploy")
+    if (
+        deploy.get("status") != "running"
+        or "blind resume prohibited" not in deploy.get("recovery", "")
+    ):
+        core._fail("Nested failed deploy stage is not the sanctioned route collision.")
+    for name in ("publish", "app_config"):
+        if _one_stage({"stages": receipt["stages"]}, name).get("status") != "succeeded":
+            core._fail(f"Nested failed receipt {name} stage is incomplete.")
+
+
+def _validate_recovery_claim(
+    predecessor: dict[str, Any],
+    *,
+    state: dict[str, Any],
+    role_prefix: str,
+) -> tuple[Path, dict[str, Any]]:
+    plan = predecessor["plan"]
+    receipt = predecessor["receipt"]
+    claim_path = Path(receipt["execution_claim_path"])
+    home_value = os.environ.get("HOME")
+    if not home_value:
+        core._fail("Recovery predecessor claim validation requires HOME.")
+    expected_root = (
+        Path(home_value).expanduser().resolve()
+        / ".uipath"
+        / "uipcodedappdeploy-recovery-claims"
+    )
+    if claim_path.parent != expected_root:
+        core._fail("Prior recovery claim is outside the home-scoped claim directory.")
+    expected_name = (
+        plan["upgrade_guard"]["local_execution_claim_key"].removeprefix("sha256:")
+        + ".json"
+    )
+    if claim_path.name != expected_name:
+        core._fail("Prior recovery claim filename does not match its exact candidate key.")
+    _, claim = _read_bound_json(
+        claim_path,
+        "prior recovery execution claim",
+        state=state,
+        role=f"{role_prefix}.execution_claim",
+        expected_sha256=receipt["execution_claim_sha256"],
+    )
+    expected_fields = {
+        "kind",
+        "schema_version",
+        "created_at",
+        "plan_hash",
+        "claim_key",
+        "claim_scope",
+        "deployment_id",
+        "candidate_version",
+        "claim_hash",
+    }
+    if set(claim) != expected_fields:
+        core._fail("Prior recovery execution claim fields are invalid.")
+    expected = {
+        "kind": "uipcodedappdeploy.upgrade-recovery-execution-claim",
+        "schema_version": "1.0",
+        "plan_hash": plan["plan_hash"],
+        "claim_key": plan["upgrade_guard"]["local_execution_claim_key"],
+        "claim_scope": plan["upgrade_guard"]["local_execution_claim_scope"],
+        "deployment_id": plan["existing_deployment"]["deployment_id"],
+        "candidate_version": plan["candidate"]["version"],
+    }
+    for field, value in expected.items():
+        if claim.get(field) != value:
+            core._fail(f"Prior recovery execution claim {field} is invalid.")
+    _require_iso8601(claim.get("created_at"), "Prior recovery claim created_at")
+    if (
+        claim.get("claim_hash") != core._document_hash(claim, "claim_hash")
+        or receipt.get("execution_claim_hash") != claim.get("claim_hash")
+        or receipt.get("execution_claim_released") is not False
+    ):
+        core._fail("Prior recovery execution claim integrity is invalid.")
+    return claim_path, claim
+
+
+def _merge_bound_closure(
+    state: dict[str, Any], closure: dict[str, Any], *, role_prefix: str
+) -> None:
+    if closure.get("algorithm") != PREDECESSOR_CLOSURE_ALGORITHM:
+        core._fail("Nested predecessor closure algorithm is invalid.")
+    files = closure.get("files")
+    if not isinstance(files, list):
+        core._fail("Nested predecessor closure files are invalid.")
+    for record in files:
+        if not isinstance(record, dict) or set(record) != {
+            "path",
+            "sha256",
+            "size",
+            "roles",
+        }:
+            core._fail("Nested predecessor closure record is invalid.")
+        _read_bound_file(
+            Path(record["path"]),
+            "nested predecessor closure artifact",
+            state=state,
+            role=f"{role_prefix}.closure",
+            expected_sha256=record["sha256"],
+            capture_payload=False,
+        )
+
+
+def _binding_hash(block: dict[str, Any]) -> str:
+    return core._document_hash(block, "binding_hash")
+
+
+def _build_governed_predecessor_binding(
+    predecessor: dict[str, Any],
+    *,
+    plan_path: Path,
+    receipt_path: Path,
+    app_config_path: Path,
+) -> dict[str, Any]:
+    state = _new_closure_state()
+    plan_path, plan_document = _read_bound_json(
+        plan_path,
+        "governed predecessor plan",
+        state=state,
+        role="predecessor.plan",
+    )
+    receipt_path, receipt_document = _read_bound_json(
+        receipt_path,
+        "governed predecessor receipt",
+        state=state,
+        role="predecessor.receipt",
+    )
+    app_config_path, app_config_document = _read_bound_json(
+        app_config_path,
+        "governed predecessor app config",
+        state=state,
+        role="predecessor.app_config",
+    )
+    plan = core._validate_plan_document(plan_document)
+    receipt = core._validate_receipt(receipt_document, plan)
+    normalized = _normalize_prior_core_plan(plan, receipt)
+    _validate_predecessor_app_config(app_config_path, app_config_document, normalized)
+    closure = _finalize_closure(state)
+    block = {
+        "type": "governed",
+        "trust": {"mode": "validated-core-v2.3"},
+        "plan": {
+            "kind": plan["kind"],
+            "schema_version": plan["schema_version"],
+            "plan_hash": plan["plan_hash"],
+            "file_sha256": _closure_file_record(state, plan_path)["sha256"],
+        },
+        "receipt": {
+            "kind": receipt["kind"],
+            "schema_version": receipt["schema_version"],
+            "receipt_hash": receipt["receipt_hash"],
+            "approved_plan_hash": receipt["approved_plan_hash"],
+            "status": receipt["status"],
+            "file_sha256": _closure_file_record(state, receipt_path)["sha256"],
+        },
+        "app_config": {
+            "path": str(app_config_path),
+            "sha256": _closure_file_record(state, app_config_path)["sha256"],
+        },
+        "closure": closure,
+    }
+    block["binding_hash"] = _binding_hash(block)
+    return block
+
+
+def _normalize_nested_predecessor(
+    plan_document: dict[str, Any],
+    receipt_document: dict[str, Any],
+    *,
+    parent_plan: dict[str, Any],
+) -> dict[str, Any]:
+    if (
+        plan_document.get("kind") == core.PLAN_KIND
+        and plan_document.get("schema_version") == core.PLAN_SCHEMA_VERSION
+    ):
+        plan = core._validate_plan_document(plan_document)
+        receipt = core._validate_receipt(receipt_document, plan)
+        return _normalize_prior_core_plan(plan, receipt)
+    if (
+        plan_document.get("kind") == PLAN_KIND
+        and plan_document.get("schema_version")
+        in (LEGACY_RECOVERY_SCHEMA_VERSION, PLAN_SCHEMA_VERSION)
+    ):
+        if parent_plan.get("schema_version") != PLAN_SCHEMA_VERSION:
+            core._fail("Schema-1.2 recovery cannot contain a recovery predecessor.")
+        stored = parent_plan.get("predecessor")
+        trust = stored.get("trust") if isinstance(stored, dict) else None
+        if (
+            not isinstance(trust, dict)
+            or trust.get("mode") != PREDECESSOR_TRUST_MODE
+        ):
+            core._fail("Nested recovery predecessor trust block is invalid.")
+        helper_hash = trust.get("recovery_helper_sha256")
+        core_hash = trust.get("core_helper_sha256")
+        core._validate_hash(helper_hash, "Nested trusted recovery helper hash")
+        core._validate_hash(core_hash, "Nested trusted core helper hash")
+        if (
+            plan_document.get("recovery_helper_sha256") != helper_hash
+            or plan_document.get("core_helper_sha256") != core_hash
+        ):
+            core._fail("Nested recovery predecessor does not match its trust anchors.")
+        schema_version = plan_document["schema_version"]
+        normalized = _validate_prior_recovery_plan(
+            plan_document, schema_version=schema_version
+        )
+        normalized = _validate_prior_recovery_receipt(
+            receipt_document, normalized
+        )
+        normalized["trusted_recovery_helper_sha256"] = helper_hash
+        normalized["trusted_core_helper_sha256"] = core_hash
+        return normalized
+    core._fail("Nested predecessor kind or schema is unsupported.")
+
+
+def _build_recovery_predecessor_binding(
+    predecessor: dict[str, Any],
+    *,
+    plan_path: Path,
+    receipt_path: Path,
+    app_config_path: Path,
+    depth: int = 0,
+) -> dict[str, Any]:
+    if depth >= PREDECESSOR_MAX_DEPTH:
+        core._fail("Recovery predecessor chain exceeds the depth limit.")
+    state = _new_closure_state()
+    plan_path, plan_document = _read_bound_json(
+        plan_path,
+        "recovery predecessor plan",
+        state=state,
+        role="predecessor.plan",
+    )
+    receipt_path, receipt_document = _read_bound_json(
+        receipt_path,
+        "recovery predecessor receipt",
+        state=state,
+        role="predecessor.receipt",
+    )
+    app_config_path, app_config_document = _read_bound_json(
+        app_config_path,
+        "recovery predecessor app config",
+        state=state,
+        role="predecessor.app_config",
+    )
+    if plan_document != predecessor["plan"] or receipt_document != predecessor["receipt"]:
+        core._fail("Recovery predecessor bytes changed during validation.")
+    deployment = _validate_predecessor_app_config(
+        app_config_path, app_config_document, predecessor
+    )
+    claim_path, claim = _validate_recovery_claim(
+        predecessor, state=state, role_prefix="predecessor"
+    )
+
+    evidence = plan_document.get("evidence")
+    if not isinstance(evidence, list) or len(evidence) != len(EVIDENCE_LABELS):
+        core._fail("Recovery predecessor evidence set is incomplete.")
+    if core._hash_json(evidence) != plan_document.get("evidence_binding_hash"):
+        core._fail("Recovery predecessor evidence binding hash is invalid.")
+    evidence_paths: dict[str, Path] = {}
+    evidence_documents: dict[str, dict[str, Any]] = {}
+    seen_paths: set[Path] = set()
+    for expected_label, record in zip(EVIDENCE_LABELS, evidence):
+        if (
+            not isinstance(record, dict)
+            or set(record) != {"label", "path", "sha256"}
+            or record.get("label") != expected_label
+        ):
+            core._fail("Recovery predecessor evidence record is invalid.")
+        path = Path(record["path"])
+        if path in seen_paths:
+            core._fail("Recovery predecessor evidence contains a duplicate path.")
+        seen_paths.add(path)
+        resolved, document = _read_bound_json(
+            path,
+            f"recovery predecessor {expected_label}",
+            state=state,
+            role=f"predecessor.evidence.{expected_label}",
+            expected_sha256=record["sha256"],
+        )
+        evidence_paths[expected_label] = resolved
+        evidence_documents[expected_label] = document
+
+    nested = _normalize_nested_predecessor(
+        evidence_documents["prior_successful_plan"],
+        evidence_documents["prior_successful_receipt"],
+        parent_plan=plan_document,
+    )
+    nested_app_config_path = evidence_paths["prior_successful_app_config"]
+    if nested["kind"] == "core_v2.3":
+        nested_block = _build_governed_predecessor_binding(
+            nested,
+            plan_path=evidence_paths["prior_successful_plan"],
+            receipt_path=evidence_paths["prior_successful_receipt"],
+            app_config_path=nested_app_config_path,
+        )
+    else:
+        nested_block = _build_recovery_predecessor_binding(
+            nested,
+            plan_path=evidence_paths["prior_successful_plan"],
+            receipt_path=evidence_paths["prior_successful_receipt"],
+            app_config_path=nested_app_config_path,
+            depth=depth + 1,
+        )
+    if plan_document["schema_version"] == PLAN_SCHEMA_VERSION:
+        if plan_document.get("predecessor") != nested_block:
+            core._fail("Stored recursive predecessor block does not match reopened evidence.")
+    elif nested["kind"] != "core_v2.3":
+        core._fail("Legacy recovery predecessor chain is not supported.")
+    _merge_bound_closure(state, nested_block["closure"], role_prefix="predecessor.nested")
+
+    failed_plan = core._validate_plan_document(evidence_documents["failed_plan"])
+    failed_receipt = core._validate_receipt(
+        evidence_documents["failed_receipt"], failed_plan
+    )
+    _validate_sanctioned_failed_receipt(failed_receipt)
+    if (
+        failed_plan["plan_hash"] != plan_document["failed_attempt"]["plan_hash"]
+        or failed_receipt["approved_plan_hash"]
+        != plan_document["failed_attempt"]["approved_plan_hash"]
+    ):
+        core._fail("Recovery predecessor failed-attempt files do not match its plan.")
+    _validate_predecessor_release_binding(nested, failed_plan)
+    nested_config = evidence_documents["prior_successful_app_config"]
+    nested_deployment = _validate_predecessor_app_config(
+        nested_app_config_path, nested_config, nested
+    )
+    reconciliation = _validate_reconciliation(
+        evidence_documents["reconciliation_evidence"],
+        predecessor=nested,
+        failed_plan=failed_plan,
+        failed_receipt=failed_receipt,
+        deployment=nested_deployment,
+        closure_state=state,
+        reconciliation_path=evidence_paths["reconciliation_evidence"],
+        role_prefix="predecessor.reconciliation",
+    )
+    historical_runtime = _validate_historical_runtime_manifest(
+        evidence_documents["recovery_runtime_manifest"],
+        predecessor_plan_schema=plan_document["schema_version"],
+        trusted_preparer_sha256=predecessor[
+            "trusted_recovery_helper_sha256"
+        ],
+        receipt=receipt_document,
+        failed_plan=failed_plan,
+        failed_receipt=failed_receipt,
+        state=state,
+        role_prefix="predecessor.runtime",
+    )
+    source_config = Path(historical_runtime["source_app_config"])
+    if source_config != Path(failed_plan["project"]["root"]) / core.APP_CONFIG_RELATIVE_PATH:
+        core._fail("Historical runtime source config does not match the failed project.")
+    if historical_runtime["source_app_config_sha256"] != failed_receipt.get(
+        "app_config_file_digest"
+    ):
+        core._fail("Historical runtime source config does not match the failed receipt.")
+    if Path(historical_runtime["workspace_app_config"]) != app_config_path:
+        core._fail("Recovery predecessor app config is not its guarded workspace config.")
+    validation = {
+        "package_name": failed_plan["parameters"]["package_name"],
+        "app_name": failed_plan["parameters"]["app_name"],
+        "app_type": failed_plan["parameters"]["app_type"],
+        "version": failed_plan["project"]["new_version"],
+        "system_name": deployment["system_name"],
+        "deployment_id": deployment["deployment_id"],
+    }
+    _validate_candidate_app_config(source_config, **validation, label="Historical source app config")
+    _validate_candidate_app_config(app_config_path, **validation, label="Historical post-deploy app config")
+    expected_candidate = plan_document["candidate"]
+    comparisons = {
+        "system_name": reconciliation["candidate_system_name"],
+        "deploy_version": reconciliation["candidate_deploy_version"],
+        "recovery_runtime_root": historical_runtime["root"],
+        "recovery_runtime_tree_sha256": historical_runtime["tree_sha256"],
+        "recovery_runtime_manifest_hash": evidence_documents[
+            "recovery_runtime_manifest"
+        ]["manifest_hash"],
+        "recovery_node_executable_sha256": historical_runtime[
+            "node_executable_sha256"
+        ],
+        "recovery_cli_executable_sha256": historical_runtime[
+            "cli_executable_sha256"
+        ],
+    }
+    for field, value in comparisons.items():
+        if expected_candidate.get(field) != value:
+            core._fail(f"Recovery predecessor candidate {field} drifted.")
+
+    closure = _finalize_closure(state)
+    runtime_manifest_path = evidence_paths["recovery_runtime_manifest"]
+    block = {
+        "type": "recovery",
+        "trust": {
+            "mode": PREDECESSOR_TRUST_MODE,
+            "recovery_helper_sha256": predecessor[
+                "trusted_recovery_helper_sha256"
+            ],
+            "core_helper_sha256": predecessor["trusted_core_helper_sha256"],
+        },
+        "plan": {
+            "kind": plan_document["kind"],
+            "schema_version": plan_document["schema_version"],
+            "plan_hash": plan_document["plan_hash"],
+            "file_sha256": _closure_file_record(state, plan_path)["sha256"],
+        },
+        "receipt": {
+            "kind": receipt_document["kind"],
+            "schema_version": receipt_document["schema_version"],
+            "receipt_hash": receipt_document["receipt_hash"],
+            "approved_plan_hash": receipt_document["approved_plan_hash"],
+            "status": receipt_document["status"],
+            "file_sha256": _closure_file_record(state, receipt_path)["sha256"],
+        },
+        "app_config": {
+            "path": str(app_config_path),
+            "sha256": _closure_file_record(state, app_config_path)["sha256"],
+        },
+        "execution_claim": {
+            "path": str(claim_path),
+            "claim_hash": claim["claim_hash"],
+            "file_sha256": _closure_file_record(state, claim_path)["sha256"],
+            "retained": True,
+        },
+        "runtime_manifest": {
+            "path": str(runtime_manifest_path),
+            "manifest_hash": evidence_documents["recovery_runtime_manifest"][
+                "manifest_hash"
+            ],
+            "file_sha256": _closure_file_record(state, runtime_manifest_path)[
+                "sha256"
+            ],
+        },
+        "closure": closure,
+    }
+    block["binding_hash"] = _binding_hash(block)
+    return block
 
 
 def _validate_runtime_manifest(
@@ -819,6 +2381,8 @@ def _validate_runtime_manifest(
         "codedapp_tool_manifest_sha256",
         "codedapp_tool_version",
         "codedapp_tool_git_head",
+        "app_config_source",
+        "app_config_source_sha256",
     }:
         core._fail("Recovery runtime source fields are invalid.")
     if set(runtime) != {
@@ -883,6 +2447,27 @@ def _validate_runtime_manifest(
         source_tool_manifest_path, "recovery source coded app tool manifest"
     ) != source.get("codedapp_tool_manifest_sha256"):
         core._fail("Recovery source coded app tool manifest changed.")
+    source_app_config = Path(source.get("app_config_source", ""))
+    if (
+        not source_app_config.is_absolute()
+        or source_app_config != source_app_config.resolve()
+        or source_app_config.is_symlink()
+        or not source_app_config.is_file()
+    ):
+        core._fail(
+            "Recovery runtime app-config source must remain an absolute regular file."
+        )
+    app_config_project_root = source_app_config.parent.parent
+    if source_app_config != app_config_project_root / core.APP_CONFIG_RELATIVE_PATH:
+        core._fail("Recovery runtime app-config source path is invalid.")
+    core._validate_hash(
+        source.get("app_config_source_sha256"),
+        "Recovery runtime app-config source digest",
+    )
+    if core._hash_file(
+        source_app_config, "recovery runtime app-config source"
+    ) != source.get("app_config_source_sha256"):
+        core._fail("Recovery runtime app-config source changed after preparation.")
 
     runtime_root = Path(runtime.get("root", ""))
     runtime_node_modules = Path(runtime.get("node_modules_root", ""))
@@ -901,6 +2486,11 @@ def _validate_runtime_manifest(
             core._fail(f"{label} must be an absolute real directory.")
     if runtime_node_modules != runtime_root / "node_modules":
         core._fail("Recovery runtime node_modules path is not rooted as approved.")
+    source_project_root = Path(source["node_modules_root"]).parent
+    if _paths_overlap(runtime_root, source_project_root):
+        core._fail("Recovery runtime overlaps its source CLI project.")
+    if _paths_overlap(runtime_root, app_config_project_root):
+        core._fail("Recovery runtime overlaps its app-config source project.")
     if runtime_cli != runtime_node_modules / "@uipath" / "cli" / "dist" / "index.js":
         core._fail("Recovery runtime CLI path is invalid.")
     if runtime_tool != runtime_node_modules / "@uipath" / "codedapp-tool" / "dist" / "tool.js":
@@ -969,6 +2559,12 @@ def _validate_runtime_manifest(
         "workspace_app_config_sha256"
     ):
         core._fail("Recovery workspace app config changed after approval.")
+    if runtime.get("workspace_app_config_sha256") != source.get(
+        "app_config_source_sha256"
+    ):
+        core._fail(
+            "Recovery workspace app config does not match its bound source digest."
+        )
     if _tree_digest(runtime_root, "recovery runtime") != runtime.get(
         "tree_sha256"
     ):
@@ -980,6 +2576,8 @@ def _validate_runtime_manifest(
         "workspace": str(runtime_workspace),
         "workspace_app_config": str(runtime_app_config),
         "workspace_app_config_sha256": runtime["workspace_app_config_sha256"],
+        "source_app_config": str(source_app_config),
+        "source_app_config_sha256": source["app_config_source_sha256"],
         "self_test": runtime["self_test"],
         "node_executable": str(runtime_node),
         "node_executable_sha256": runtime["node_executable_sha256"],
@@ -1002,13 +2600,380 @@ def _validate_runtime_manifest(
     }
 
 
-def _validate_reconciliation(
+def _tree_digest_with_substitution(
+    root: Path,
+    *,
+    substitute_path: Path,
+    substitute_mode: int,
+    substitute_size: int,
+    substitute_sha256: str,
+    label: str,
+) -> str:
+    if root.is_symlink() or not root.is_dir():
+        core._fail(f"{label} must be a real directory, not a symlink.")
+    try:
+        substitute_path.relative_to(root)
+    except ValueError:
+        core._fail("Historical runtime substitution path escapes its runtime root.")
+    records: list[dict[str, Any]] = []
+    found_substitution = False
+    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+        if path.is_symlink():
+            core._fail(f"{label} may not contain symlinks.")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            core._fail(f"{label} contains an unsupported filesystem entry.")
+        if path == substitute_path:
+            found_substitution = True
+            mode = substitute_mode
+            size = substitute_size
+            digest = substitute_sha256
+        else:
+            observed = path.stat()
+            mode = observed.st_mode & 0o777
+            size = observed.st_size
+            digest = core._hash_file(path, f"{label} file")
+        records.append(
+            {
+                "path": path.relative_to(root).as_posix(),
+                "mode": mode,
+                "size": size,
+                "sha256": digest,
+            }
+        )
+    if not found_substitution:
+        core._fail("Historical runtime is missing its workspace app config.")
+    return core._hash_json({"files": records})
+
+
+def _validate_historical_runtime_manifest(
     document: dict[str, Any],
     *,
-    prior_plan: dict[str, Any],
+    predecessor_plan_schema: str,
+    trusted_preparer_sha256: str,
+    receipt: dict[str, Any],
+    failed_plan: dict[str, Any],
+    failed_receipt: dict[str, Any],
+    state: dict[str, Any],
+    role_prefix: str,
+) -> dict[str, Any]:
+    expected_top_level = {
+        "kind",
+        "schema_version",
+        "created_at",
+        "preparer_sha256",
+        "patch_algorithm",
+        "patch_contract_sha256",
+        "source",
+        "runtime",
+        "manifest_hash",
+    }
+    if set(document) != expected_top_level:
+        core._fail("Historical recovery runtime manifest fields are invalid.")
+    schema_version = document.get("schema_version")
+    if document.get("kind") != RUNTIME_MANIFEST_KIND or schema_version not in (
+        LEGACY_RUNTIME_MANIFEST_SCHEMA_VERSION,
+        RUNTIME_MANIFEST_SCHEMA_VERSION,
+    ):
+        core._fail("Historical recovery runtime manifest contract is invalid.")
+    if (
+        schema_version == LEGACY_RUNTIME_MANIFEST_SCHEMA_VERSION
+        and predecessor_plan_schema != LEGACY_RECOVERY_SCHEMA_VERSION
+    ):
+        core._fail(
+            "Only a schema-1.2 recovery predecessor may use a legacy runtime manifest."
+        )
+    _require_iso8601(document.get("created_at"), "Historical recovery runtime created_at")
+    if document.get("preparer_sha256") != trusted_preparer_sha256:
+        core._fail("Historical runtime preparer does not match the trust anchor.")
+    if (
+        document.get("patch_algorithm") != PATCH_ALGORITHM
+        or document.get("patch_contract_sha256") != _patch_contract_hash()
+    ):
+        core._fail("Historical recovery runtime patch contract is invalid.")
+    if core._document_hash(document, "manifest_hash") != document.get("manifest_hash"):
+        core._fail("Historical recovery runtime manifest self-hash is invalid.")
+    source = document.get("source")
+    runtime = document.get("runtime")
+    expected_source = {
+        "node_modules_root",
+        "cli_executable",
+        "cli_executable_sha256",
+        "codedapp_tool_file",
+        "codedapp_tool_file_sha256",
+        "codedapp_tool_manifest",
+        "codedapp_tool_manifest_sha256",
+        "codedapp_tool_version",
+        "codedapp_tool_git_head",
+    }
+    if schema_version == RUNTIME_MANIFEST_SCHEMA_VERSION:
+        expected_source |= {"app_config_source", "app_config_source_sha256"}
+    expected_runtime = {
+        "root",
+        "node_modules_root",
+        "tree_sha256",
+        "workspace",
+        "workspace_app_config",
+        "workspace_app_config_sha256",
+        "self_test",
+        "node_executable",
+        "node_executable_sha256",
+        "node_version",
+        "cli_executable",
+        "cli_executable_sha256",
+        "codedapp_tool_file",
+        "codedapp_tool_file_sha256",
+        "codedapp_tool_manifest",
+        "codedapp_tool_manifest_sha256",
+    }
+    if not isinstance(source, dict) or set(source) != expected_source:
+        core._fail("Historical recovery runtime source fields are invalid.")
+    if not isinstance(runtime, dict) or set(runtime) != expected_runtime:
+        core._fail("Historical recovery runtime output fields are invalid.")
+
+    source_node_modules = Path(source["node_modules_root"])
+    source_cli = Path(source["cli_executable"])
+    source_tool = Path(source["codedapp_tool_file"])
+    source_tool_manifest = Path(source["codedapp_tool_manifest"])
+    if schema_version == RUNTIME_MANIFEST_SCHEMA_VERSION:
+        source_app_config = Path(source["app_config_source"])
+        source_app_config_sha256 = source["app_config_source_sha256"]
+    else:
+        source_app_config = source_node_modules.parent / core.APP_CONFIG_RELATIVE_PATH
+        source_app_config_sha256 = failed_receipt.get("app_config_file_digest")
+        core._validate_hash(
+            source_app_config_sha256,
+            "Historical legacy source app-config digest",
+        )
+    runtime_root = Path(runtime["root"])
+    runtime_node_modules = Path(runtime["node_modules_root"])
+    runtime_cli = Path(runtime["cli_executable"])
+    runtime_tool = Path(runtime["codedapp_tool_file"])
+    runtime_tool_manifest = Path(runtime["codedapp_tool_manifest"])
+    runtime_workspace = Path(runtime["workspace"])
+    runtime_app_config = Path(runtime["workspace_app_config"])
+    runtime_node = Path(runtime["node_executable"])
+
+    if source_cli.parents[3] != source_node_modules:
+        core._fail("Historical recovery source CLI path is invalid.")
+    failed_parameters = failed_plan["parameters"]
+    if (
+        source_cli != Path(failed_parameters["cli_executable"])
+        or source.get("cli_executable_sha256")
+        != failed_parameters["cli_executable_sha256"]
+    ):
+        core._fail("Historical recovery source CLI does not match the failed plan.")
+    failed_project_root = Path(failed_plan["project"]["root"])
+    if (
+        source_node_modules.parent != failed_project_root
+        or source_app_config != failed_project_root / core.APP_CONFIG_RELATIVE_PATH
+    ):
+        core._fail("Historical runtime source root does not match the failed project.")
+    if source_tool != source_cli.parents[2] / "codedapp-tool" / "dist" / "tool.js":
+        core._fail("Historical recovery source tool path is invalid.")
+    if source_tool_manifest != source_cli.parents[2] / "codedapp-tool" / "package.json":
+        core._fail("Historical recovery source tool manifest path is invalid.")
+    if runtime_node_modules != runtime_root / "node_modules":
+        core._fail("Historical recovery runtime node_modules path is invalid.")
+    if runtime_cli != runtime_node_modules / "@uipath" / "cli" / "dist" / "index.js":
+        core._fail("Historical recovery runtime CLI path is invalid.")
+    if runtime_tool != runtime_node_modules / "@uipath" / "codedapp-tool" / "dist" / "tool.js":
+        core._fail("Historical recovery runtime tool path is invalid.")
+    if runtime_tool_manifest != runtime_node_modules / "@uipath" / "codedapp-tool" / "package.json":
+        core._fail("Historical recovery runtime tool manifest path is invalid.")
+    if runtime_workspace != runtime_root / ISOLATED_WORKSPACE_RELATIVE:
+        core._fail("Historical recovery workspace path is invalid.")
+    if runtime_app_config != runtime_workspace / core.APP_CONFIG_RELATIVE_PATH:
+        core._fail("Historical recovery workspace app-config path is invalid.")
+
+    _, source_cli_bytes, _ = _read_bound_file(
+        source_cli,
+        "historical recovery source CLI",
+        state=state,
+        role=f"{role_prefix}.source_cli",
+        expected_sha256=source["cli_executable_sha256"],
+    )
+    _, runtime_cli_bytes, _ = _read_bound_file(
+        runtime_cli,
+        "historical recovery runtime CLI",
+        state=state,
+        role=f"{role_prefix}.runtime_cli",
+        expected_sha256=runtime["cli_executable_sha256"],
+    )
+    if source_cli_bytes != runtime_cli_bytes:
+        core._fail("Historical recovery source and runtime CLI bytes differ.")
+    _, source_tool_bytes, _ = _read_bound_file(
+        source_tool,
+        "historical recovery source tool",
+        state=state,
+        role=f"{role_prefix}.source_tool",
+        expected_sha256=source["codedapp_tool_file_sha256"],
+    )
+    if source["codedapp_tool_file_sha256"] != EXPECTED_CODEDAPP_TOOL_SHA256:
+        core._fail("Historical recovery source tool digest is unsupported.")
+    _, runtime_tool_bytes, _ = _read_bound_file(
+        runtime_tool,
+        "historical recovery runtime tool",
+        state=state,
+        role=f"{role_prefix}.runtime_tool",
+        expected_sha256=runtime["codedapp_tool_file_sha256"],
+    )
+    if runtime_tool_bytes != _patched_tool_bytes(source_tool_bytes):
+        core._fail("Historical guarded tool bytes do not match the deterministic patch.")
+    _, source_manifest_document = _read_bound_json(
+        source_tool_manifest,
+        "historical recovery source tool manifest",
+        state=state,
+        role=f"{role_prefix}.source_tool_manifest",
+        expected_sha256=source["codedapp_tool_manifest_sha256"],
+    )
+    _, runtime_manifest_document = _read_bound_json(
+        runtime_tool_manifest,
+        "historical recovery runtime tool manifest",
+        state=state,
+        role=f"{role_prefix}.runtime_tool_manifest",
+        expected_sha256=runtime["codedapp_tool_manifest_sha256"],
+    )
+    if source_manifest_document != runtime_manifest_document:
+        core._fail("Historical recovery tool manifests differ.")
+    if (
+        source_manifest_document.get("version") != EXPECTED_CODEDAPP_TOOL_VERSION
+        or source_manifest_document.get("gitHead") != EXPECTED_CODEDAPP_TOOL_GIT_HEAD
+        or source_manifest_document.get("main") != "./dist/tool.js"
+        or source.get("codedapp_tool_version") != EXPECTED_CODEDAPP_TOOL_VERSION
+        or source.get("codedapp_tool_git_head") != EXPECTED_CODEDAPP_TOOL_GIT_HEAD
+    ):
+        core._fail("Historical recovery tool identity is invalid.")
+    _, _, source_app_config_stat = _read_bound_file(
+        source_app_config,
+        "historical recovery source app config",
+        state=state,
+        role=f"{role_prefix}.source_app_config",
+        expected_sha256=source_app_config_sha256,
+    )
+    if runtime.get("workspace_app_config_sha256") != source_app_config_sha256:
+        core._fail("Historical runtime pre-upgrade app-config binding is invalid.")
+    _, _, _ = _read_bound_file(
+        runtime_node,
+        "historical recovery Node executable",
+        state=state,
+        role=f"{role_prefix}.node_executable",
+        expected_sha256=runtime["node_executable_sha256"],
+        capture_payload=False,
+    )
+    core._parse_semver(runtime.get("node_version"), "Historical recovery Node version")
+    expected_self_test = {
+        "node_syntax": "passed",
+        "dynamic_tool_resolution": "passed",
+        "unguarded_deploy": "blocked_before_network",
+        "verify_only_without_guard": "blocked_before_network",
+    }
+    if runtime.get("self_test") != expected_self_test:
+        core._fail("Historical recovery runtime self-test is invalid.")
+    post_config_digest = receipt.get("post_deploy_app_config_digest")
+    core._validate_hash(post_config_digest, "Historical post-deploy app-config digest")
+    _read_bound_file(
+        runtime_app_config,
+        "historical recovery post-deploy app config",
+        state=state,
+        role=f"{role_prefix}.post_deploy_app_config",
+        expected_sha256=post_config_digest,
+    )
+    reconstructed = _tree_digest_with_substitution(
+        runtime_root,
+        substitute_path=runtime_app_config,
+        substitute_mode=source_app_config_stat.st_mode & 0o777,
+        substitute_size=source_app_config_stat.st_size,
+        substitute_sha256=source_app_config_sha256,
+        label="historical recovery runtime",
+    )
+    if reconstructed != runtime.get("tree_sha256"):
+        core._fail("Historical recovery runtime drifted outside the approved config mutation.")
+    return {
+        "root": str(runtime_root),
+        "tree_sha256": runtime["tree_sha256"],
+        "workspace": str(runtime_workspace),
+        "workspace_app_config": str(runtime_app_config),
+        "workspace_app_config_sha256": post_config_digest,
+        "source_app_config": str(source_app_config),
+        "source_app_config_sha256": source_app_config_sha256,
+        "node_executable": str(runtime_node),
+        "node_executable_sha256": runtime["node_executable_sha256"],
+        "node_version": runtime["node_version"],
+        "cli_executable": str(runtime_cli),
+        "cli_executable_sha256": runtime["cli_executable_sha256"],
+        "manifest_hash": document["manifest_hash"],
+    }
+
+
+def _validate_runtime_app_config_binding(
+    runtime: dict[str, Any],
+    *,
     failed_plan: dict[str, Any],
     failed_receipt: dict[str, Any],
     deployment: dict[str, str],
+) -> None:
+    """Bind the isolated runtime to the failed candidate's exact app config."""
+
+    failed_root = Path(failed_plan["project"]["root"])
+    expected_source = failed_root / core.APP_CONFIG_RELATIVE_PATH
+    source_path = Path(runtime["source_app_config"])
+    if source_path != expected_source:
+        core._fail(
+            "Recovery runtime app-config source does not match the failed project config."
+        )
+    if expected_source.is_symlink() or not expected_source.is_file():
+        core._fail(
+            "Failed-project app config must remain a regular non-symlink file."
+        )
+    source_digest = core._hash_file(
+        expected_source, "failed-project runtime app-config source"
+    )
+    if source_digest != runtime["source_app_config_sha256"]:
+        core._fail("Failed-project app config changed after runtime preparation.")
+    receipt_digest = failed_receipt.get("app_config_file_digest")
+    core._validate_hash(receipt_digest, "Failed receipt app-config file digest")
+    if source_digest != receipt_digest:
+        core._fail(
+            "Recovery runtime app-config source does not match the failed receipt."
+        )
+    if runtime["workspace_app_config_sha256"] != source_digest:
+        core._fail(
+            "Recovery workspace app config does not match the failed candidate config."
+        )
+
+    parameters = failed_plan["parameters"]
+    validation = {
+        "package_name": parameters["package_name"],
+        "app_name": parameters["app_name"],
+        "app_type": parameters["app_type"],
+        "version": failed_plan["project"]["new_version"],
+        "system_name": deployment["system_name"],
+        "deployment_id": deployment["deployment_id"],
+    }
+    _validate_candidate_app_config(
+        expected_source,
+        **validation,
+        label="Runtime app-config source",
+    )
+    _validate_candidate_app_config(
+        Path(runtime["workspace_app_config"]),
+        **validation,
+        label="Recovery workspace app config",
+    )
+
+
+def _validate_reconciliation(
+    document: dict[str, Any],
+    *,
+    predecessor: dict[str, Any],
+    failed_plan: dict[str, Any],
+    failed_receipt: dict[str, Any],
+    deployment: dict[str, str],
+    closure_state: dict[str, Any] | None = None,
+    reconciliation_path: Path | None = None,
+    role_prefix: str = "reconciliation",
 ) -> dict[str, Any]:
     if document.get("kind") != RECONCILIATION_KIND:
         core._fail("Reconciliation evidence kind is invalid.")
@@ -1042,8 +3007,8 @@ def _validate_reconciliation(
         "deploymentId": deployment["deployment_id"],
         "routeName": parameters["path_name"],
         "appUrl": deployment["app_url"],
-        "deployedVersionBeforeRecovery": prior_plan["project"]["new_version"],
-        "priorSuccessfulPlanHash": prior_plan["plan_hash"],
+        "deployedVersionBeforeRecovery": predecessor["version"],
+        "priorSuccessfulPlanHash": predecessor["plan_hash"],
     }
     for field, value in expected_existing.items():
         if existing.get(field) != value:
@@ -1087,6 +3052,7 @@ def _validate_reconciliation(
         core._fail("Reconciliation evidence observations must be an array.")
     observed_names: set[str] = set()
     observed_paths: dict[str, Path] = {}
+    observed_documents: dict[str, dict[str, Any]] = {}
     for observation in observations:
         if not isinstance(observation, dict) or set(observation) != {
             "name",
@@ -1102,17 +3068,31 @@ def _validate_reconciliation(
             core._fail("Reconciliation observation paths must be absolute.")
         core._validate_hash(observation["sha256"], f"Reconciliation {name} hash")
         path = Path(path_value)
-        if path.is_symlink() or not path.is_file():
-            core._fail(f"Reconciliation observation is not a regular file: {name}.")
-        if core._hash_file(path, f"reconciliation {name}") != observation["sha256"]:
-            core._fail(f"Reconciliation observation changed: {name}.")
+        if closure_state is None:
+            if path.is_symlink() or not path.is_file():
+                core._fail(f"Reconciliation observation is not a regular file: {name}.")
+            if core._hash_file(path, f"reconciliation {name}") != observation["sha256"]:
+                core._fail(f"Reconciliation observation changed: {name}.")
+        else:
+            if reconciliation_path is None:
+                core._fail("Recursive reconciliation validation requires its source path.")
+            try:
+                path.relative_to(reconciliation_path.parent)
+            except ValueError:
+                core._fail("Reconciliation observation escapes its evidence directory.")
+            _, observed_documents[name] = _read_bound_json(
+                path,
+                f"reconciliation {name}",
+                state=closure_state,
+                role=f"{role_prefix}.observation.{name}",
+                expected_sha256=observation["sha256"],
+            )
         observed_names.add(name)
         observed_paths[name] = path
     if not required_observations.issubset(observed_names):
         core._fail("Reconciliation is missing required remote observations.")
-    probe = _load_object(
-        observed_paths["deployed app recovery probe"],
-        "deployed app recovery probe",
+    probe = observed_documents.get("deployed app recovery probe") or _load_object(
+        observed_paths["deployed app recovery probe"], "deployed app recovery probe"
     )
     probe_result = probe.get("result")
     probe_data = probe_result.get("Data") if isinstance(probe_result, dict) else None
@@ -1130,7 +3110,7 @@ def _validate_reconciliation(
         "DeploymentId": deployment["deployment_id"],
         "SystemName": candidate["systemName"],
         "DeployVersion": candidate["deployVersion"],
-        "CurrentVersion": prior_plan["project"]["new_version"],
+        "CurrentVersion": predecessor["version"],
         "RouteName": parameters["path_name"],
         "Version": failed_plan["project"]["new_version"],
         "AppName": parameters["app_name"],
@@ -1140,7 +3120,9 @@ def _validate_reconciliation(
     for field, value in expected_probe.items():
         if probe_data.get(field) != value:
             core._fail(f"Deployed app recovery probe {field} does not match evidence.")
-    package_observation = _load_object(
+    package_observation = observed_documents.get(
+        "published package candidate"
+    ) or _load_object(
         observed_paths["published package candidate"],
         "published package candidate",
     )
@@ -1159,30 +3141,10 @@ def _validate_reconciliation(
     }
 
 
-def _cross_validate_v23_evidence(
-    *,
-    prior_plan: dict[str, Any],
-    prior_receipt: dict[str, Any],
-    prior_app_config: dict[str, Any],
-    failed_plan: dict[str, Any],
-    failed_receipt: dict[str, Any],
-    reconciliation: dict[str, Any],
-    runtime_manifest: dict[str, Any],
-) -> dict[str, Any]:
-    if prior_receipt["status"] != "succeeded":
-        core._fail("Prior deployment receipt must be succeeded.")
-    if failed_receipt["status"] != "in_progress":
-        core._fail("Failed deployment receipt must remain in_progress and indeterminate.")
-    deploy_receipt = _one_stage({"stages": failed_receipt["stages"]}, "deploy")
-    if deploy_receipt.get("status") != "running" or "blind resume prohibited" not in deploy_receipt.get(
-        "recovery", ""
-    ):
-        core._fail("Failed deploy stage must be indeterminate and prohibit blind resume.")
-    for name in ("publish", "app_config"):
-        if _one_stage({"stages": failed_receipt["stages"]}, name).get("status") != "succeeded":
-            core._fail(f"Failed receipt {name} stage must have succeeded before recovery.")
-
-    prior_parameters = prior_plan["parameters"]
+def _validate_predecessor_release_binding(
+    predecessor: dict[str, Any], failed_plan: dict[str, Any]
+) -> None:
+    prior_parameters = predecessor["parameters"]
     failed_parameters = failed_plan["parameters"]
     immutable_fields = (
         "environment",
@@ -1197,7 +3159,6 @@ def _cross_validate_v23_evidence(
         "app_type",
         "path_name",
         "client_id",
-        "tags",
         "cli_executable_sha256",
         "cli_version",
         "cli_profile",
@@ -1206,12 +3167,55 @@ def _cross_validate_v23_evidence(
     for field in immutable_fields:
         if prior_parameters[field] != failed_parameters[field]:
             core._fail(f"Recovery target drifted between deployments: {field}.")
-    if prior_plan["project"]["new_version"] == failed_plan["project"]["new_version"]:
+    if predecessor["version"] == failed_plan["project"]["new_version"]:
         core._fail("Recovery candidate must differ from the prior deployed version.")
-    if prior_plan["project"]["root"] == failed_plan["project"]["root"]:
+    if predecessor["project_root"] == failed_plan["project"]["root"]:
         core._fail("Recovery evidence must use separate immutable release workspaces.")
 
-    deployment = _validate_prior_app_config(prior_app_config, prior_plan)
+
+def _cross_validate_evidence(
+    *,
+    predecessor: dict[str, Any],
+    prior_plan_path: Path,
+    prior_receipt_path: Path,
+    prior_app_config_path: Path,
+    prior_app_config: dict[str, Any],
+    failed_plan: dict[str, Any],
+    failed_receipt: dict[str, Any],
+    reconciliation: dict[str, Any],
+    runtime_manifest: dict[str, Any],
+) -> dict[str, Any]:
+    if failed_receipt["status"] != "in_progress":
+        core._fail("Failed deployment receipt must remain in_progress and indeterminate.")
+    deploy_receipt = _one_stage({"stages": failed_receipt["stages"]}, "deploy")
+    if deploy_receipt.get("status") != "running" or "blind resume prohibited" not in deploy_receipt.get(
+        "recovery", ""
+    ):
+        core._fail("Failed deploy stage must be indeterminate and prohibit blind resume.")
+    for name in ("publish", "app_config"):
+        if _one_stage({"stages": failed_receipt["stages"]}, name).get("status") != "succeeded":
+            core._fail(f"Failed receipt {name} stage must have succeeded before recovery.")
+
+    _validate_predecessor_release_binding(predecessor, failed_plan)
+    failed_parameters = failed_plan["parameters"]
+
+    deployment = _validate_predecessor_app_config(
+        prior_app_config_path, prior_app_config, predecessor
+    )
+    if predecessor["kind"] == "core_v2.3":
+        predecessor_binding = _build_governed_predecessor_binding(
+            predecessor,
+            plan_path=prior_plan_path,
+            receipt_path=prior_receipt_path,
+            app_config_path=prior_app_config_path,
+        )
+    else:
+        predecessor_binding = _build_recovery_predecessor_binding(
+            predecessor,
+            plan_path=prior_plan_path,
+            receipt_path=prior_receipt_path,
+            app_config_path=prior_app_config_path,
+        )
     expected_url = (
         f"https://{failed_parameters['org_name']}."
         f"{failed_parameters['environment']}.uipath.host/{failed_parameters['path_name']}"
@@ -1220,12 +3224,18 @@ def _cross_validate_v23_evidence(
         core._fail("Prior deployment URL does not match the approved environment and route.")
     reconciled = _validate_reconciliation(
         reconciliation,
-        prior_plan=prior_plan,
+        predecessor=predecessor,
         failed_plan=failed_plan,
         failed_receipt=failed_receipt,
         deployment=deployment,
     )
     runtime = _validate_runtime_manifest(runtime_manifest, failed_parameters)
+    _validate_runtime_app_config_binding(
+        runtime,
+        failed_plan=failed_plan,
+        failed_receipt=failed_receipt,
+        deployment=deployment,
+    )
 
     deploy_stage = _one_stage(failed_plan, "deploy")
     if deploy_stage.get("action") != "command" or deploy_stage.get("effect") != "external_write":
@@ -1237,7 +3247,7 @@ def _cross_validate_v23_evidence(
         deployment_id=deployment["deployment_id"],
         system_name=reconciled["candidate_system_name"],
         deploy_version=reconciled["candidate_deploy_version"],
-        current_version=prior_plan["project"]["new_version"],
+        current_version=predecessor["version"],
         route_name=failed_parameters["path_name"],
     )
     if recovery_command[:4] != [
@@ -1264,19 +3274,30 @@ def _cross_validate_v23_evidence(
         ),
         "candidate_system_name": reconciled["candidate_system_name"],
         "candidate_deploy_version": reconciled["candidate_deploy_version"],
+        "predecessor_version": predecessor["version"],
+        "predecessor_binding": predecessor_binding,
         "runtime": runtime,
     }
 
 
-def _load_bound_evidence(evidence: list[dict[str, str]]) -> dict[str, Any]:
+def _load_bound_evidence(
+    evidence: list[dict[str, str]],
+    *,
+    trusted_recovery_helper_sha256: str | None = None,
+    trusted_core_helper_sha256: str | None = None,
+) -> dict[str, Any]:
     if not isinstance(evidence, list) or len(evidence) != len(EVIDENCE_LABELS):
         core._fail("Recovery plan evidence set is incomplete.")
     by_label: dict[str, Path] = {}
     for expected, record in zip(EVIDENCE_LABELS, evidence):
         path = _validate_evidence_record(record, expected)
         by_label[expected] = path
-    prior_plan = core._load_plan(by_label["prior_successful_plan"])
-    prior_receipt = core._load_receipt(by_label["prior_successful_receipt"], prior_plan)
+    predecessor = _load_predecessor(
+        by_label["prior_successful_plan"],
+        by_label["prior_successful_receipt"],
+        trusted_recovery_helper_sha256=trusted_recovery_helper_sha256,
+        trusted_core_helper_sha256=trusted_core_helper_sha256,
+    )
     failed_plan = core._load_plan(by_label["failed_plan"])
     failed_receipt = core._load_receipt(by_label["failed_receipt"], failed_plan)
     prior_app_config = _load_object(by_label["prior_successful_app_config"], "prior app config")
@@ -1284,9 +3305,11 @@ def _load_bound_evidence(evidence: list[dict[str, str]]) -> dict[str, Any]:
     runtime_manifest = _load_object(
         by_label["recovery_runtime_manifest"], "recovery runtime manifest"
     )
-    derived = _cross_validate_v23_evidence(
-        prior_plan=prior_plan,
-        prior_receipt=prior_receipt,
+    derived = _cross_validate_evidence(
+        predecessor=predecessor,
+        prior_plan_path=by_label["prior_successful_plan"],
+        prior_receipt_path=by_label["prior_successful_receipt"],
+        prior_app_config_path=by_label["prior_successful_app_config"],
         prior_app_config=prior_app_config,
         failed_plan=failed_plan,
         failed_receipt=failed_receipt,
@@ -1295,8 +3318,9 @@ def _load_bound_evidence(evidence: list[dict[str, str]]) -> dict[str, Any]:
     )
     return {
         "paths": by_label,
-        "prior_plan": prior_plan,
-        "prior_receipt": prior_receipt,
+        "predecessor": predecessor,
+        "prior_plan": predecessor["plan"],
+        "prior_receipt": predecessor["receipt"],
         "failed_plan": failed_plan,
         "failed_receipt": failed_receipt,
         "prior_app_config": prior_app_config,
@@ -1312,6 +3336,7 @@ def _expected_projection(context: dict[str, Any]) -> dict[str, Any]:
     parameters = failed_plan["parameters"]
     deployment = context["deployment"]
     return {
+        "predecessor": copy.deepcopy(context["predecessor_binding"]),
         "project_root": failed_plan["project"]["root"],
         "target": {
             "environment": parameters["environment"],
@@ -1331,7 +3356,7 @@ def _expected_projection(context: dict[str, Any]) -> dict[str, Any]:
             "deployment_id": deployment["deployment_id"],
             "route_name": parameters["path_name"],
             "app_url": deployment["app_url"],
-            "deployed_version": context["prior_plan"]["project"]["new_version"],
+            "deployed_version": context["predecessor_version"],
         },
         "candidate": {
             "version": failed_plan["project"]["new_version"],
@@ -1395,7 +3420,7 @@ def _expected_projection(context: dict[str, Any]) -> dict[str, Any]:
             "deployment_id": deployment["deployment_id"],
             "system_name": context["candidate_system_name"],
             "deploy_version": context["candidate_deploy_version"],
-            "current_version": context["prior_plan"]["project"]["new_version"],
+            "current_version": context["predecessor_version"],
             "route_name": parameters["path_name"],
             "fresh_deploy_prohibited": True,
             "routing_name_omitted_from_patch": True,
@@ -1486,7 +3511,15 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
     evidence = [
         _evidence_record(Path(getattr(args, label)), label) for label in EVIDENCE_LABELS
     ]
-    context = _load_bound_evidence(evidence)
+    context = _load_bound_evidence(
+        evidence,
+        trusted_recovery_helper_sha256=getattr(
+            args, "trusted_prior_recovery_helper_sha256", None
+        ),
+        trusted_core_helper_sha256=getattr(
+            args, "trusted_prior_core_helper_sha256", None
+        ),
+    )
     project_root = Path(args.project_root).expanduser().resolve()
     if str(project_root) != context["failed_plan"]["project"]["root"]:
         core._fail("--project-root must match the failed plan project root exactly.")
@@ -1517,6 +3550,7 @@ def _validate_plan(document: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         "core_helper_sha256",
         "evidence",
         "evidence_binding_hash",
+        "predecessor",
         "project_root",
         "target",
         "existing_deployment",
@@ -1551,7 +3585,17 @@ def _validate_plan(document: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         core._fail("Recovery plan hash is invalid; regenerate the plan.")
     if core._hash_json(document["evidence"]) != document["evidence_binding_hash"]:
         core._fail("Recovery evidence binding hash is invalid.")
-    context = _load_bound_evidence(document["evidence"])
+    predecessor = document.get("predecessor")
+    trust = predecessor.get("trust") if isinstance(predecessor, dict) else None
+    context = _load_bound_evidence(
+        document["evidence"],
+        trusted_recovery_helper_sha256=(
+            trust.get("recovery_helper_sha256") if isinstance(trust, dict) else None
+        ),
+        trusted_core_helper_sha256=(
+            trust.get("core_helper_sha256") if isinstance(trust, dict) else None
+        ),
+    )
     expected = _expected_projection(context)
     for field, value in expected.items():
         if document[field] != value:
@@ -1677,7 +3721,7 @@ def _new_receipt(
     now = core._utc_now()
     receipt = {
         "kind": RECEIPT_KIND,
-        "schema_version": RECEIPT_SCHEMA_VERSION,
+        "schema_version": plan["schema_version"],
         "plan_hash": plan["plan_hash"],
         "approved_plan_hash": approved_hash,
         "recovery_helper_sha256": plan["recovery_helper_sha256"],
@@ -1713,6 +3757,8 @@ def _new_receipt(
             for stage in plan["stages"]
         ],
     }
+    if plan["schema_version"] == PLAN_SCHEMA_VERSION:
+        receipt["predecessor"] = copy.deepcopy(plan["predecessor"])
     receipt["receipt_hash"] = core._document_hash(receipt, "receipt_hash")
     return receipt
 
@@ -1790,25 +3836,46 @@ def _inspect_post_deploy_config(
     receipt["local_app_url_matches_verified_route"] = observed_url == expected["app_url"]
 
 
-def _validate_failed_app_config(root: Path, plan: dict[str, Any]) -> None:
-    document = _load_object(
-        root / core.APP_CONFIG_RELATIVE_PATH, "failed-release app config"
-    )
-    expected = plan["existing_deployment"]
-    candidate = plan["candidate"]
+def _validate_candidate_app_config(
+    path: Path,
+    *,
+    package_name: str,
+    app_name: str,
+    app_type: str,
+    version: str,
+    system_name: str,
+    deployment_id: str,
+    label: str,
+) -> None:
+    document = _load_object(path, label)
     comparisons = {
-        "appName": expected["package_name"],
-        "displayName": expected["app_name"],
-        "appType": expected["app_type"],
-        "appVersion": candidate["version"],
-        "systemName": expected["system_name"],
+        "appName": package_name,
+        "displayName": app_name,
+        "appType": app_type,
+        "appVersion": version,
+        "systemName": system_name,
         "personalWorkspace": False,
     }
     for field, value in comparisons.items():
         if document.get(field) != value:
-            core._fail(f"Failed-release app config {field} is not exactly bound.")
-    if document.get("deploymentId") not in (None, expected["deployment_id"]):
-        core._fail("Failed-release app config deploymentId conflicts with the target.")
+            core._fail(f"{label} {field} is not exactly bound to the candidate.")
+    if document.get("deploymentId") not in (None, deployment_id):
+        core._fail(f"{label} deploymentId conflicts with the recovery target.")
+
+
+def _validate_failed_app_config(root: Path, plan: dict[str, Any]) -> None:
+    expected = plan["existing_deployment"]
+    candidate = plan["candidate"]
+    _validate_candidate_app_config(
+        root / core.APP_CONFIG_RELATIVE_PATH,
+        package_name=expected["package_name"],
+        app_name=expected["app_name"],
+        app_type=expected["app_type"],
+        version=candidate["version"],
+        system_name=expected["system_name"],
+        deployment_id=expected["deployment_id"],
+        label="Failed-release app config",
+    )
 
 
 def _validate_remote_guard_output(
@@ -1986,6 +4053,16 @@ def _revalidate_runtime_barrier(
         "core_helper_sha256"
     ]:
         core._fail("Recovery core helper changed before the upgrade barrier.")
+    trust = plan["predecessor"]["trust"]
+    reopened = _load_bound_evidence(
+        plan["evidence"],
+        trusted_recovery_helper_sha256=trust.get(
+            "recovery_helper_sha256"
+        ),
+        trusted_core_helper_sha256=trust.get("core_helper_sha256"),
+    )
+    if reopened["predecessor_binding"] != plan["predecessor"]:
+        core._fail("Recovery predecessor closure changed before the upgrade barrier.")
     observed = _validate_runtime_manifest(
         context["runtime_manifest"],
         context["failed_plan"]["parameters"],
@@ -2237,6 +4314,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--prior-successful-plan")
     parser.add_argument("--prior-successful-receipt")
     parser.add_argument("--prior-successful-app-config")
+    parser.add_argument("--trusted-prior-recovery-helper-sha256")
+    parser.add_argument("--trusted-prior-core-helper-sha256")
     parser.add_argument("--failed-plan")
     parser.add_argument("--failed-receipt")
     parser.add_argument("--reconciliation-evidence")
@@ -2244,6 +4323,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--plan-output")
     parser.add_argument("--prepare-runtime-from-cli")
     parser.add_argument("--node-executable")
+    parser.add_argument("--runtime-app-config-source")
     parser.add_argument("--runtime-output")
     parser.add_argument("--runtime-manifest-output")
     parser.add_argument("--plan")
@@ -2255,7 +4335,10 @@ def _parser() -> argparse.ArgumentParser:
 
 def _planning_args(args: argparse.Namespace) -> bool:
     return any(getattr(args, label) for label in EVIDENCE_LABELS) or bool(
-        args.project_root or args.plan_output
+        args.project_root
+        or args.plan_output
+        or args.trusted_prior_recovery_helper_sha256
+        or args.trusted_prior_core_helper_sha256
     )
 
 
@@ -2291,6 +4374,7 @@ def main(argv: list[str] | None = None) -> int:
     prepare_values = (
         args.prepare_runtime_from_cli,
         args.node_executable,
+        args.runtime_app_config_source,
         args.runtime_output,
         args.runtime_manifest_output,
     )
@@ -2298,7 +4382,8 @@ def main(argv: list[str] | None = None) -> int:
         if not all(prepare_values):
             core._fail(
                 "Runtime preparation requires --prepare-runtime-from-cli, "
-                "--node-executable, --runtime-output, and --runtime-manifest-output."
+                "--node-executable, --runtime-app-config-source, --runtime-output, "
+                "and --runtime-manifest-output."
             )
         incompatible = (
             args.plan,
@@ -2306,6 +4391,8 @@ def main(argv: list[str] | None = None) -> int:
             args.approved_plan_hash,
             args.project_root,
             args.plan_output,
+            args.trusted_prior_recovery_helper_sha256,
+            args.trusted_prior_core_helper_sha256,
             *(getattr(args, label) for label in EVIDENCE_LABELS),
         )
         if any(incompatible):
@@ -2313,6 +4400,7 @@ def main(argv: list[str] | None = None) -> int:
         manifest = _prepare_runtime(
             Path(args.prepare_runtime_from_cli),
             Path(args.node_executable),
+            Path(args.runtime_app_config_source),
             Path(args.runtime_output),
             Path(args.runtime_manifest_output),
         )
