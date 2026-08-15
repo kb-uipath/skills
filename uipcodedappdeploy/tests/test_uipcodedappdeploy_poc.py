@@ -285,9 +285,14 @@ class UiPathCodedAppDeployPocTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "package-lock.json").write_text("{}\n", encoding="utf-8")
+            # The helper binds the resolved executable, so the expectation must
+            # resolve too: /bin/sh is itself on macOS but a symlink to dash on
+            # the Debian-based CI runner.
+            resolved = str(Path("/bin/sh").resolve())
             with mock.patch.object(self.poc.shutil, "which", return_value="/bin/sh"):
                 executable, command = self.poc._package_manager(root)
-            self.assertEqual(executable, "/bin/sh")
+            self.assertEqual(executable, resolved)
+            self.assertEqual(command[0], resolved)
             self.assertEqual(command[-2:], ["run", "build"])
             (root / "yarn.lock").write_text("\n", encoding="utf-8")
             with self.assertRaises(SystemExit):
