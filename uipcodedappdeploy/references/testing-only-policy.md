@@ -2,7 +2,7 @@
 
 This policy defines a deliberately separate deployment lane for internal,
 synthetic Coded App testing. It does not relax, supersede, or provide evidence
-for the governed v2.3 deployment or v1.2 recovery lanes.
+for the governed v2.3 deployment or v1.3 recovery lanes.
 
 ## Authorization
 

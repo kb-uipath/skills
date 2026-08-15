@@ -2,7 +2,7 @@
 """Execute an explicitly authorized, synthetic-only Coded App test deployment.
 
 This helper is intentionally separate from the governed v2.3 planner and the
-v1.2 exact-upgrade recovery helper. It has no planning or resume mode. A direct
+v1.3 exact-upgrade recovery helper. It has no planning or resume mode. A direct
 ``--testing-only --execute`` invocation creates an automatic redacted receipt
 before any external write. The receipt is never production release evidence.
 
@@ -14,7 +14,7 @@ The supported candidate matrix is deliberately narrow:
   proves its route and current version before publication, reconciles the
   newly published candidate, and performs one guarded in-place upgrade whose
   PATCH cannot carry ``routingName``.
-* ``reconciled`` + ``upgrade`` validates an existing v1.2 recovery plan and
+* ``reconciled`` + ``upgrade`` validates an existing v1.3 recovery plan and
   guarded runtime, then performs only its exact in-place deploy operation.
 * ``published-recovery`` + ``upgrade`` consumes one exact retained testing
   receipt whose publish outcome was indeterminate, proves the already-

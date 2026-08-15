@@ -10,6 +10,18 @@ fresh-deploy branch, and omits ``routingName`` only from the guarded PATCH.
 
 The script never packs, publishes, changes a version, or resumes an ambiguous
 external write. Planning and execution are separate exact-hash operations.
+
+Contract 1.3 adds chained recovery. The deployment being repaired may itself
+have been produced by an earlier recovery rather than by a governed release. In
+that case the ``prior_successful_*`` evidence is a historical schema 1.2
+recovery plan and receipt, which the governed loaders cannot read. Schema 1.2 is
+therefore accepted only by the dedicated historical predecessor validators in
+this module; it is never accepted as an active plan or receipt. Every
+predecessor is pinned to explicitly supplied trusted helper and core hashes, its
+evidence is validated recursively into a canonical raw-byte closure, and its
+guarded runtime is reconstructed allowing exactly one mutation: the workspace
+app config rewritten by its own successful upgrade. All of that completes before
+the first subprocess or network-capable call.
 """
 
 from __future__ import annotations
@@ -37,9 +49,33 @@ import uipcodedappdeploy as core  # noqa: E402
 
 
 PLAN_KIND = "uipcodedappdeploy.upgrade-recovery-plan"
-PLAN_SCHEMA_VERSION = "1.2"
+PLAN_SCHEMA_VERSION = "1.3"
 RECEIPT_KIND = "uipcodedappdeploy.upgrade-recovery-receipt"
-RECEIPT_SCHEMA_VERSION = "1.2"
+RECEIPT_SCHEMA_VERSION = "1.3"
+# Schema 1.2 is the immediately preceding recovery contract. It is readable only
+# as historical predecessor evidence, never as an active plan or receipt.
+PREDECESSOR_PLAN_SCHEMA_VERSION = "1.2"
+PREDECESSOR_RECEIPT_SCHEMA_VERSION = "1.2"
+PREDECESSOR_KINDS = ("governed", "recovery")
+# Depth 1 is the immediate predecessor. Deeper links are earlier recoveries that
+# the immediate predecessor itself repaired.
+MAX_PREDECESSOR_DEPTH = 8
+# The eight ordered stages a schema 1.2 recovery receipt must prove.
+PREDECESSOR_RECEIPT_STAGES = (
+    "execution_claim",
+    "reconcile",
+    "pre_upgrade_guard",
+    "runtime_barrier",
+    "upgrade",
+    "post_upgrade_guard",
+    "verify",
+    "post_deploy_metadata",
+)
+# Statuses that must fail closed before any subprocess or network-capable path.
+PREDECESSOR_REJECTED_STATUSES = ("failed", "in_progress", "deployed_unverified")
+# `shutil.copy2` from a governed release tree yields this mode. Pinning it makes
+# the single permitted workspace mutation reconstructable byte for byte.
+RECOVERY_WORKSPACE_CONFIG_MODE = 0o644
 RECONCILIATION_KIND = "uipcodedappdeploy.remote-reconciliation"
 RECONCILIATION_SCHEMA_VERSION = "1.0"
 RUNTIME_MANIFEST_KIND = "uipcodedappdeploy.guarded-runtime"
@@ -232,7 +268,7 @@ PATCH_EDITS = (
     ),
 )
 
-EVIDENCE_LABELS = (
+GOVERNED_EVIDENCE_LABELS = (
     "prior_successful_plan",
     "prior_successful_receipt",
     "prior_successful_app_config",
@@ -241,6 +277,25 @@ EVIDENCE_LABELS = (
     "reconciliation_evidence",
     "recovery_runtime_manifest",
 )
+# A recovery predecessor additionally binds the guarded runtime it executed in
+# and the pre-upgrade bytes of the one workspace file that upgrade rewrote.
+RECOVERY_PREDECESSOR_EVIDENCE_LABELS = (
+    "prior_successful_plan",
+    "prior_successful_receipt",
+    "prior_successful_app_config",
+    "predecessor_runtime_manifest",
+    "predecessor_pre_upgrade_workspace_config",
+    "failed_plan",
+    "failed_receipt",
+    "reconciliation_evidence",
+    "recovery_runtime_manifest",
+)
+EVIDENCE_LABELS_BY_KIND = {
+    "governed": GOVERNED_EVIDENCE_LABELS,
+    "recovery": RECOVERY_PREDECESSOR_EVIDENCE_LABELS,
+}
+# Every label the planner may be asked for, in argparse order.
+EVIDENCE_LABELS = RECOVERY_PREDECESSOR_EVIDENCE_LABELS
 
 
 def _load_object(path: Path, label: str) -> dict[str, Any]:
@@ -269,7 +324,9 @@ def _evidence_record(path: Path, label: str) -> dict[str, str]:
     }
 
 
-def _tree_digest(root: Path, label: str) -> str:
+def _tree_records(root: Path, label: str) -> list[dict[str, Any]]:
+    """Return the ordered per-file records a tree digest is computed over."""
+
     if root.is_symlink() or not root.is_dir():
         core._fail(f"{label} must be a real directory, not a symlink: {root}")
     records: list[dict[str, Any]] = []
@@ -290,7 +347,15 @@ def _tree_digest(root: Path, label: str) -> str:
         )
     if not records:
         core._fail(f"{label} contains no files: {root}")
+    return records
+
+
+def _tree_digest_from_records(records: list[dict[str, Any]]) -> str:
     return core._hash_json({"files": records})
+
+
+def _tree_digest(root: Path, label: str) -> str:
+    return _tree_digest_from_records(_tree_records(root, label))
 
 
 def _paths_overlap(first: Path, second: Path) -> bool:
@@ -1159,6 +1224,610 @@ def _validate_reconciliation(
     }
 
 
+def _require_hash(value: Any, label: str) -> str:
+    if not isinstance(value, str):
+        core._fail(f"{label} must be a sha256 string.")
+    core._validate_hash(value, label)
+    return value
+
+
+def _validate_trust_anchors(
+    helper_hashes: Any, core_hashes: Any
+) -> list[dict[str, str]]:
+    """Normalize the explicit trusted predecessor helper/core hash pairs.
+
+    A historical recovery plan records the digests of the helper bytes that
+    created it. Those bytes are by definition not the current bytes, so they can
+    never be re-derived; they must be supplied as explicit trust anchors and
+    approved with the plan hash.
+    """
+
+    helpers = list(helper_hashes or ())
+    cores = list(core_hashes or ())
+    if not helpers:
+        core._fail(
+            "A recovery predecessor requires at least one explicit "
+            "--trusted-predecessor-helper-sha256 anchor."
+        )
+    if len(helpers) != len(cores):
+        core._fail(
+            "Each --trusted-predecessor-helper-sha256 requires exactly one "
+            "matching --trusted-predecessor-core-helper-sha256."
+        )
+    anchors = [
+        {
+            "recovery_helper_sha256": _require_hash(
+                helper, "Trusted predecessor helper hash"
+            ),
+            "core_helper_sha256": _require_hash(
+                core_helper, "Trusted predecessor core helper hash"
+            ),
+        }
+        for helper, core_helper in zip(helpers, cores)
+    ]
+    distinct = {
+        (anchor["recovery_helper_sha256"], anchor["core_helper_sha256"])
+        for anchor in anchors
+    }
+    if len(distinct) != len(anchors):
+        core._fail("Trusted predecessor anchors must be unique.")
+    return anchors
+
+
+def _validate_bound_trust_anchors(value: Any) -> list[dict[str, str]]:
+    """Re-validate trust anchors read back from an immutable recovery plan."""
+
+    if not isinstance(value, list) or not value:
+        core._fail("Recovery plan predecessor trust anchors are invalid.")
+    for anchor in value:
+        if not isinstance(anchor, dict) or set(anchor) != {
+            "recovery_helper_sha256",
+            "core_helper_sha256",
+        }:
+            core._fail("Recovery plan predecessor trust anchor shape is invalid.")
+    return _validate_trust_anchors(
+        [anchor["recovery_helper_sha256"] for anchor in value],
+        [anchor["core_helper_sha256"] for anchor in value],
+    )
+
+
+def _predecessor_evidence_labels(document: dict[str, Any], depth: int) -> tuple[str, ...]:
+    """Return the evidence layout a historical recovery plan must carry."""
+
+    version = document.get("schema_version")
+    if version == PREDECESSOR_PLAN_SCHEMA_VERSION:
+        # Contract 1.2 had no chained mode, so its predecessor is always a
+        # governed release and its evidence layout is fixed at seven records.
+        return GOVERNED_EVIDENCE_LABELS
+    if version == PLAN_SCHEMA_VERSION:
+        predecessor = document.get("predecessor")
+        if (
+            not isinstance(predecessor, dict)
+            or predecessor.get("kind") not in PREDECESSOR_KINDS
+        ):
+            core._fail(
+                f"Predecessor recovery plan at depth {depth} has an invalid "
+                "predecessor block."
+            )
+        return EVIDENCE_LABELS_BY_KIND[predecessor["kind"]]
+    core._fail(
+        f"Predecessor recovery plan at depth {depth} is not an accepted "
+        "historical recovery contract version."
+    )
+
+
+def _validate_historical_predecessor_plan(
+    document: Any, *, anchors: list[dict[str, str]], depth: int
+) -> dict[str, Any]:
+    """Validate a schema 1.2 or 1.3 recovery plan as historical evidence only.
+
+    This is the only path that accepts schema 1.2. ``_validate_plan`` rejects it,
+    so a superseded contract can never be executed.
+    """
+
+    if not isinstance(document, dict):
+        core._fail(f"Predecessor recovery plan at depth {depth} must be a JSON object.")
+    if document.get("kind") != PLAN_KIND:
+        core._fail(f"Predecessor recovery plan at depth {depth} has an invalid kind.")
+    labels = _predecessor_evidence_labels(document, depth)
+    _require_iso8601(
+        document.get("created_at"), f"Predecessor recovery plan depth {depth} created_at"
+    )
+    helper_hash = _require_hash(
+        document.get("recovery_helper_sha256"),
+        f"Predecessor recovery plan depth {depth} helper hash",
+    )
+    core_helper_hash = _require_hash(
+        document.get("core_helper_sha256"),
+        f"Predecessor recovery plan depth {depth} core helper hash",
+    )
+    if {
+        "recovery_helper_sha256": helper_hash,
+        "core_helper_sha256": core_helper_hash,
+    } not in anchors:
+        core._fail(
+            f"Predecessor recovery plan at depth {depth} is not bound to a trusted "
+            "helper and core hash anchor."
+        )
+    plan_hash = _require_hash(
+        document.get("plan_hash"), f"Predecessor recovery plan depth {depth} hash"
+    )
+    if core._document_hash(document, "plan_hash") != plan_hash:
+        core._fail(f"Predecessor recovery plan at depth {depth} hash is invalid.")
+    evidence = document.get("evidence")
+    if not isinstance(evidence, list) or len(evidence) != len(labels):
+        core._fail(
+            f"Predecessor recovery plan at depth {depth} evidence set is incomplete."
+        )
+    if core._hash_json(evidence) != document.get("evidence_binding_hash"):
+        core._fail(
+            f"Predecessor recovery plan at depth {depth} evidence binding hash is invalid."
+        )
+    candidate = document.get("candidate")
+    existing = document.get("existing_deployment")
+    guard = document.get("upgrade_guard")
+    if not all(isinstance(item, dict) for item in (candidate, existing, guard)):
+        core._fail(
+            f"Predecessor recovery plan at depth {depth} is missing required sections."
+        )
+    if guard.get("fresh_deploy_prohibited") is not True or guard.get(
+        "routing_name_omitted_from_patch"
+    ) is not True:
+        core._fail(
+            f"Predecessor recovery plan at depth {depth} did not preserve the "
+            "fail-closed upgrade invariants."
+        )
+    execution = document.get("execution")
+    if not isinstance(execution, dict) or execution.get("resume_supported") is not False or execution.get(
+        "publishes_package"
+    ) is not False or execution.get("changes_route") is not False:
+        core._fail(
+            f"Predecessor recovery plan at depth {depth} did not preserve the "
+            "no-publish, no-resume, no-route-change invariants."
+        )
+    return {
+        "depth": depth,
+        "labels": labels,
+        "plan_hash": plan_hash,
+        "schema_version": document["schema_version"],
+        "recovery_helper_sha256": helper_hash,
+        "core_helper_sha256": core_helper_hash,
+        "deployed_version": candidate.get("version"),
+        "deployment_id": existing.get("deployment_id"),
+    }
+
+
+def _validate_retained_execution_claim(
+    receipt: dict[str, Any], plan_hash: str, depth: int
+) -> str:
+    """Verify the predecessor retained, and never released, its execution claim."""
+
+    if receipt.get("execution_claim_released") is not False:
+        core._fail(
+            f"Predecessor recovery receipt at depth {depth} released its execution "
+            "claim; a succeeded recovery must retain it."
+        )
+    claim_path_value = receipt.get("execution_claim_path")
+    if not isinstance(claim_path_value, str) or not Path(claim_path_value).is_absolute():
+        core._fail(
+            f"Predecessor recovery receipt at depth {depth} execution claim path is invalid."
+        )
+    claim_path = Path(claim_path_value)
+    if claim_path.is_symlink():
+        core._fail(
+            f"Predecessor recovery execution claim at depth {depth} must not be a symlink."
+        )
+    expected_file_hash = _require_hash(
+        receipt.get("execution_claim_sha256"),
+        f"Predecessor recovery execution claim depth {depth} file hash",
+    )
+    if core._hash_file(claim_path, "predecessor recovery execution claim") != expected_file_hash:
+        core._fail(
+            f"Predecessor recovery execution claim at depth {depth} bytes changed."
+        )
+    claim = _load_object(claim_path, "predecessor recovery execution claim")
+    claim_hash = _require_hash(
+        claim.get("claim_hash"), f"Predecessor recovery claim depth {depth} hash"
+    )
+    if core._document_hash(claim, "claim_hash") != claim_hash:
+        core._fail(f"Predecessor recovery execution claim at depth {depth} hash is invalid.")
+    if claim_hash != receipt.get("execution_claim_hash"):
+        core._fail(
+            f"Predecessor recovery execution claim at depth {depth} is not receipt-bound."
+        )
+    if claim.get("plan_hash") != plan_hash:
+        core._fail(
+            f"Predecessor recovery execution claim at depth {depth} is not plan-bound."
+        )
+    return claim_hash
+
+
+def _validate_historical_predecessor_receipt(
+    document: Any, plan_summary: dict[str, Any], *, depth: int
+) -> dict[str, Any]:
+    """Validate a schema 1.2 or 1.3 recovery receipt as historical evidence only."""
+
+    if not isinstance(document, dict):
+        core._fail(f"Predecessor recovery receipt at depth {depth} must be a JSON object.")
+    if document.get("kind") != RECEIPT_KIND:
+        core._fail(f"Predecessor recovery receipt at depth {depth} has an invalid kind.")
+    if document.get("schema_version") != plan_summary["schema_version"]:
+        core._fail(
+            f"Predecessor recovery receipt at depth {depth} does not share its plan "
+            "contract version."
+        )
+    receipt_hash = _require_hash(
+        document.get("receipt_hash"), f"Predecessor recovery receipt depth {depth} hash"
+    )
+    if core._document_hash(document, "receipt_hash") != receipt_hash:
+        core._fail(f"Predecessor recovery receipt at depth {depth} hash is invalid.")
+    if (
+        document.get("plan_hash") != plan_summary["plan_hash"]
+        or document.get("approved_plan_hash") != plan_summary["plan_hash"]
+    ):
+        core._fail(
+            f"Predecessor recovery receipt at depth {depth} is not bound to its approved plan."
+        )
+    status = document.get("status")
+    if status in PREDECESSOR_REJECTED_STATUSES:
+        core._fail(
+            f"Predecessor recovery at depth {depth} is {status}; a chained recovery "
+            "requires a fully verified succeeded predecessor."
+        )
+    if status != "succeeded":
+        core._fail(
+            f"Predecessor recovery receipt at depth {depth} has an unrecognized status."
+        )
+    stages = document.get("stages")
+    if not isinstance(stages, list) or len(stages) != len(PREDECESSOR_RECEIPT_STAGES):
+        core._fail(
+            f"Predecessor recovery receipt at depth {depth} does not carry the "
+            "eight-stage proof."
+        )
+    for stage, name in zip(stages, PREDECESSOR_RECEIPT_STAGES):
+        if not isinstance(stage, dict) or stage.get("name") != name:
+            core._fail(
+                f"Predecessor recovery receipt at depth {depth} stage order is invalid."
+            )
+        if stage.get("status") != "succeeded":
+            core._fail(
+                f"Predecessor recovery receipt at depth {depth} stage {name} did not succeed."
+            )
+    if document.get("local_app_url_matches_verified_route") is not True:
+        core._fail(
+            f"Predecessor recovery at depth {depth} did not verify its retained route."
+        )
+    post_config_digest = _require_hash(
+        document.get("post_deploy_app_config_digest"),
+        f"Predecessor recovery receipt depth {depth} post-deploy app config digest",
+    )
+    observation = document.get("post_upgrade_guard_observation")
+    if not isinstance(observation, dict) or observation.get("operation") != "recovery_verify":
+        core._fail(
+            f"Predecessor recovery receipt at depth {depth} has no read-only post-upgrade proof."
+        )
+    if observation.get("currentVersion") != plan_summary["deployed_version"]:
+        core._fail(
+            f"Predecessor recovery receipt at depth {depth} did not verify its own candidate version."
+        )
+    claim_hash = _validate_retained_execution_claim(
+        document, plan_summary["plan_hash"], depth
+    )
+    return {
+        "receipt_hash": receipt_hash,
+        "status": status,
+        "post_deploy_app_config_digest": post_config_digest,
+        "retained_claim_hash": claim_hash,
+    }
+
+
+def _collect_predecessor_chain(
+    *,
+    plan_path: Path,
+    receipt_path: Path,
+    anchors: list[dict[str, str]],
+    depth: int,
+    seen: set[str],
+    closure: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Recursively validate a predecessor recovery and its evidence closure.
+
+    Every historical recovery plan describes its own evidence by absolute path
+    and digest, so the chain is self-describing: no extra operator input is
+    needed to walk it. Each visited file contributes its raw-byte digest to the
+    canonical closure.
+    """
+
+    if depth > MAX_PREDECESSOR_DEPTH:
+        core._fail("Predecessor recovery chain exceeds the maximum reviewed depth.")
+    plan_document = _load_object(plan_path, f"predecessor recovery plan depth {depth}")
+    receipt_document = _load_object(
+        receipt_path, f"predecessor recovery receipt depth {depth}"
+    )
+    plan_summary = _validate_historical_predecessor_plan(
+        plan_document, anchors=anchors, depth=depth
+    )
+    if plan_summary["plan_hash"] in seen:
+        core._fail("Predecessor recovery chain contains a cycle.")
+    seen.add(plan_summary["plan_hash"])
+    receipt_summary = _validate_historical_predecessor_receipt(
+        receipt_document, plan_summary, depth=depth
+    )
+
+    by_label: dict[str, Path] = {}
+    for label, record in zip(plan_summary["labels"], plan_document["evidence"]):
+        # _validate_evidence_record re-hashes the raw bytes still on disk.
+        by_label[label] = _validate_evidence_record(record, label)
+        closure.append(
+            {
+                "depth": depth,
+                "label": label,
+                "path": str(by_label[label]),
+                "sha256": record["sha256"],
+            }
+        )
+
+    links = [
+        {
+            "depth": depth,
+            "schema_version": plan_summary["schema_version"],
+            "plan_hash": plan_summary["plan_hash"],
+            "receipt_hash": receipt_summary["receipt_hash"],
+            "status": receipt_summary["status"],
+            "deployed_version": plan_summary["deployed_version"],
+            "deployment_id": plan_summary["deployment_id"],
+            "recovery_helper_sha256": plan_summary["recovery_helper_sha256"],
+            "core_helper_sha256": plan_summary["core_helper_sha256"],
+            "retained_claim_hash": receipt_summary["retained_claim_hash"],
+            "post_deploy_app_config_digest": receipt_summary[
+                "post_deploy_app_config_digest"
+            ],
+        }
+    ]
+
+    nested_plan = _load_object(
+        by_label["prior_successful_plan"],
+        f"predecessor recovery depth {depth} prior plan",
+    )
+    nested_kind = nested_plan.get("kind")
+    if nested_kind == PLAN_KIND:
+        links.extend(
+            _collect_predecessor_chain(
+                plan_path=by_label["prior_successful_plan"],
+                receipt_path=by_label["prior_successful_receipt"],
+                anchors=anchors,
+                depth=depth + 1,
+                seen=seen,
+                closure=closure,
+            )
+        )
+    elif nested_kind != core.PLAN_KIND:
+        core._fail(
+            f"Predecessor recovery at depth {depth} references an unrecognized prior plan kind."
+        )
+    return links
+
+
+def _reconstruct_predecessor_runtime(
+    manifest: dict[str, Any],
+    *,
+    post_deploy_app_config_digest: str,
+    pre_upgrade_config_path: Path,
+) -> dict[str, Any]:
+    """Rebuild the predecessor guarded runtime's pre-upgrade tree digest.
+
+    A succeeded recovery rewrites exactly one file inside its isolated runtime:
+    the workspace app config, which its own upgrade stage updated to the newly
+    deployed version. That single mutation is permitted and reconstructable.
+    Every other byte of the runtime must still match the approved tree digest.
+
+    This is a pure filesystem comparison. It executes no subprocess and touches
+    no network-capable path, so it can gate everything that does.
+    """
+
+    if manifest.get("kind") != RUNTIME_MANIFEST_KIND:
+        core._fail("Predecessor recovery runtime manifest kind is invalid.")
+    if manifest.get("schema_version") != RUNTIME_MANIFEST_SCHEMA_VERSION:
+        core._fail("Predecessor recovery runtime manifest schema version is invalid.")
+    manifest_hash = _require_hash(
+        manifest.get("manifest_hash"), "Predecessor recovery runtime manifest hash"
+    )
+    if core._document_hash(manifest, "manifest_hash") != manifest_hash:
+        core._fail("Predecessor recovery runtime manifest hash is invalid.")
+    if manifest.get("patch_algorithm") != PATCH_ALGORITHM:
+        core._fail("Predecessor recovery runtime patch algorithm is not the approved contract.")
+    runtime = manifest.get("runtime")
+    if not isinstance(runtime, dict):
+        core._fail("Predecessor recovery runtime manifest is missing its runtime section.")
+    if runtime.get("self_test") != {
+        "node_syntax": "passed",
+        "dynamic_tool_resolution": "passed",
+        "unguarded_deploy": "blocked_before_network",
+        "verify_only_without_guard": "blocked_before_network",
+    }:
+        core._fail("Predecessor recovery runtime self-test evidence is invalid.")
+
+    runtime_root = Path(str(runtime.get("root", "")))
+    if not runtime_root.is_absolute() or runtime_root.is_symlink() or not runtime_root.is_dir():
+        core._fail("Predecessor recovery runtime root must be an absolute real directory.")
+    workspace = runtime_root / ISOLATED_WORKSPACE_RELATIVE
+    if Path(str(runtime.get("workspace", ""))) != workspace:
+        core._fail("Predecessor recovery workspace is not at the isolated approved path.")
+    config_relative = (
+        ISOLATED_WORKSPACE_RELATIVE / core.APP_CONFIG_RELATIVE_PATH
+    ).as_posix()
+    if Path(str(runtime.get("workspace_app_config", ""))) != runtime_root / config_relative:
+        core._fail("Predecessor recovery workspace app config path is invalid.")
+
+    approved_tree = _require_hash(
+        runtime.get("tree_sha256"), "Predecessor recovery runtime tree digest"
+    )
+    pre_upgrade_digest = _require_hash(
+        runtime.get("workspace_app_config_sha256"),
+        "Predecessor recovery workspace app config digest",
+    )
+    try:
+        pre_upgrade_bytes = pre_upgrade_config_path.read_bytes()
+    except OSError as exc:
+        core._fail(
+            "Could not read the predecessor pre-upgrade workspace app config: "
+            f"{type(exc).__name__}"
+        )
+    if core._hash_bytes(pre_upgrade_bytes) != pre_upgrade_digest:
+        core._fail(
+            "Predecessor pre-upgrade workspace app config bytes do not match the "
+            "approved runtime manifest digest."
+        )
+
+    observed = _tree_records(runtime_root, "predecessor recovery runtime")
+    matches = [record for record in observed if record["path"] == config_relative]
+    if len(matches) != 1:
+        core._fail(
+            "Predecessor recovery runtime does not contain exactly one workspace app config."
+        )
+    mutated = matches[0]
+    if mutated["sha256"] != post_deploy_app_config_digest:
+        core._fail(
+            "Predecessor recovery workspace app config is not the exact post-success "
+            "state recorded by its receipt."
+        )
+    if mutated["mode"] != RECOVERY_WORKSPACE_CONFIG_MODE:
+        core._fail("Predecessor recovery workspace app config mode drifted.")
+
+    reconstructed = [
+        {
+            "path": config_relative,
+            "mode": RECOVERY_WORKSPACE_CONFIG_MODE,
+            "size": len(pre_upgrade_bytes),
+            "sha256": pre_upgrade_digest,
+        }
+        if record["path"] == config_relative
+        else copy.deepcopy(record)
+        for record in observed
+    ]
+    if _tree_digest_from_records(reconstructed) != approved_tree:
+        core._fail(
+            "Predecessor recovery runtime drifted beyond the single permitted "
+            "post-success workspace app config mutation."
+        )
+    return {
+        "runtime_root": str(runtime_root),
+        "manifest_hash": manifest_hash,
+        "approved_tree_sha256": approved_tree,
+        "permitted_mutation": "workspace_app_config",
+        "pre_upgrade_workspace_app_config_sha256": pre_upgrade_digest,
+        "post_success_workspace_app_config_sha256": post_deploy_app_config_digest,
+    }
+
+
+def _normalized_recovery_predecessor(plan: dict[str, Any]) -> dict[str, Any]:
+    """Project a historical recovery plan onto the governed plan shape.
+
+    Downstream cross-validation compares the prior deployment against the failed
+    one field by field. Normalizing here keeps a single comparison path for both
+    predecessor kinds instead of branching through every check.
+    """
+
+    target = plan["target"]
+    existing = plan["existing_deployment"]
+    candidate = plan["candidate"]
+    return {
+        "plan_hash": plan["plan_hash"],
+        "project": {
+            "root": plan["project_root"],
+            "new_version": candidate["version"],
+        },
+        "parameters": {
+            "environment": target["environment"],
+            "control_plane_url": target["control_plane_url"],
+            "tenant_name": target["tenant_name"],
+            "tenant_id": target["tenant_id"],
+            "org_id": target["organization_id"],
+            "org_name": target["organization_name"],
+            "folder_key": target["folder_key"],
+            "client_id": target["client_id"],
+            "package_name": existing["package_name"],
+            "app_name": existing["app_name"],
+            "app_type": existing["app_type"],
+            "path_name": existing["route_name"],
+            "tags": candidate["tags"],
+            "cli_executable_sha256": candidate["source_cli_executable_sha256"],
+            "cli_version": candidate["cli_version"],
+            "cli_profile": candidate["cli_profile"],
+            "cli_profile_hash": candidate["cli_profile_hash"],
+        },
+    }
+
+
+def _validate_predecessor(
+    *,
+    kind: str,
+    anchors: list[dict[str, str]],
+    paths: dict[str, Path],
+) -> dict[str, Any]:
+    """Validate the predecessor deployment and return its bound plan block."""
+
+    if kind not in PREDECESSOR_KINDS:
+        core._fail("Recovery predecessor kind is invalid.")
+    if kind == "governed":
+        if anchors:
+            core._fail(
+                "Trusted predecessor anchors apply only to a recovery predecessor."
+            )
+        prior_plan = core._load_plan(paths["prior_successful_plan"])
+        prior_receipt = core._load_receipt(
+            paths["prior_successful_receipt"], prior_plan
+        )
+        block = {
+            "kind": "governed",
+            "depth": 0,
+            "trust_anchors": [],
+            "chain": [],
+            "evidence_closure": [],
+            "evidence_closure_sha256": core._hash_json([]),
+            "runtime_reconstruction": None,
+        }
+        return {"prior_plan": prior_plan, "prior_receipt": prior_receipt, "block": block}
+
+    validated_anchors = _validate_bound_trust_anchors(anchors)
+    closure: list[dict[str, str]] = []
+    chain = _collect_predecessor_chain(
+        plan_path=paths["prior_successful_plan"],
+        receipt_path=paths["prior_successful_receipt"],
+        anchors=validated_anchors,
+        depth=1,
+        seen=set(),
+        closure=closure,
+    )
+    prior_plan_document = _load_object(
+        paths["prior_successful_plan"], "predecessor recovery plan"
+    )
+    prior_receipt_document = _load_object(
+        paths["prior_successful_receipt"], "predecessor recovery receipt"
+    )
+    reconstruction = _reconstruct_predecessor_runtime(
+        _load_object(
+            paths["predecessor_runtime_manifest"], "predecessor recovery runtime manifest"
+        ),
+        post_deploy_app_config_digest=chain[0]["post_deploy_app_config_digest"],
+        pre_upgrade_config_path=paths["predecessor_pre_upgrade_workspace_config"],
+    )
+    block = {
+        "kind": "recovery",
+        "depth": len(chain),
+        "trust_anchors": validated_anchors,
+        "chain": chain,
+        "evidence_closure": closure,
+        "evidence_closure_sha256": core._hash_json(closure),
+        "runtime_reconstruction": reconstruction,
+    }
+    return {
+        "prior_plan": _normalized_recovery_predecessor(prior_plan_document),
+        "prior_receipt": {"status": prior_receipt_document["status"]},
+        "block": block,
+    }
+
+
 def _cross_validate_v23_evidence(
     *,
     prior_plan: dict[str, Any],
@@ -1268,15 +1937,26 @@ def _cross_validate_v23_evidence(
     }
 
 
-def _load_bound_evidence(evidence: list[dict[str, str]]) -> dict[str, Any]:
-    if not isinstance(evidence, list) or len(evidence) != len(EVIDENCE_LABELS):
+def _load_bound_evidence(
+    evidence: list[dict[str, str]],
+    *,
+    kind: str,
+    anchors: list[dict[str, str]],
+) -> dict[str, Any]:
+    labels = EVIDENCE_LABELS_BY_KIND.get(kind)
+    if labels is None:
+        core._fail("Recovery predecessor kind is invalid.")
+    if not isinstance(evidence, list) or len(evidence) != len(labels):
         core._fail("Recovery plan evidence set is incomplete.")
     by_label: dict[str, Path] = {}
-    for expected, record in zip(EVIDENCE_LABELS, evidence):
+    for expected, record in zip(labels, evidence):
         path = _validate_evidence_record(record, expected)
         by_label[expected] = path
-    prior_plan = core._load_plan(by_label["prior_successful_plan"])
-    prior_receipt = core._load_receipt(by_label["prior_successful_receipt"], prior_plan)
+    # The predecessor gate runs first and is pure filesystem work, so a broken
+    # chain fails before any subprocess or network-capable path is reachable.
+    predecessor = _validate_predecessor(kind=kind, anchors=anchors, paths=by_label)
+    prior_plan = predecessor["prior_plan"]
+    prior_receipt = predecessor["prior_receipt"]
     failed_plan = core._load_plan(by_label["failed_plan"])
     failed_receipt = core._load_receipt(by_label["failed_receipt"], failed_plan)
     prior_app_config = _load_object(by_label["prior_successful_app_config"], "prior app config")
@@ -1302,6 +1982,7 @@ def _load_bound_evidence(evidence: list[dict[str, str]]) -> dict[str, Any]:
         "prior_app_config": prior_app_config,
         "reconciliation": reconciliation,
         "runtime_manifest": runtime_manifest,
+        "predecessor": predecessor["block"],
         **derived,
     }
 
@@ -1313,6 +1994,7 @@ def _expected_projection(context: dict[str, Any]) -> dict[str, Any]:
     deployment = context["deployment"]
     return {
         "project_root": failed_plan["project"]["root"],
+        "predecessor": copy.deepcopy(context["predecessor"]),
         "target": {
             "environment": parameters["environment"],
             "control_plane_url": parameters["control_plane_url"],
@@ -1483,10 +2165,29 @@ def _expected_projection(context: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
+    kind = args.predecessor_kind
+    if kind not in PREDECESSOR_KINDS:
+        core._fail("--predecessor-kind must be governed or recovery.")
+    supplied_anchors = bool(
+        args.trusted_predecessor_helper_sha256
+        or args.trusted_predecessor_core_helper_sha256
+    )
+    if kind == "governed":
+        if supplied_anchors:
+            core._fail(
+                "Trusted predecessor anchors apply only to a recovery predecessor."
+            )
+        anchors: list[dict[str, str]] = []
+    else:
+        anchors = _validate_trust_anchors(
+            args.trusted_predecessor_helper_sha256,
+            args.trusted_predecessor_core_helper_sha256,
+        )
     evidence = [
-        _evidence_record(Path(getattr(args, label)), label) for label in EVIDENCE_LABELS
+        _evidence_record(Path(getattr(args, label)), label)
+        for label in EVIDENCE_LABELS_BY_KIND[kind]
     ]
-    context = _load_bound_evidence(evidence)
+    context = _load_bound_evidence(evidence, kind=kind, anchors=anchors)
     project_root = Path(args.project_root).expanduser().resolve()
     if str(project_root) != context["failed_plan"]["project"]["root"]:
         core._fail("--project-root must match the failed plan project root exactly.")
@@ -1501,6 +2202,7 @@ def _build_plan(args: argparse.Namespace) -> dict[str, Any]:
         **_expected_projection(context),
     }
     plan["evidence_binding_hash"] = core._hash_json(evidence)
+    plan["predecessor_binding_hash"] = core._hash_json(plan["predecessor"])
     plan["plan_hash"] = core._document_hash(plan, "plan_hash")
     return plan
 
@@ -1518,6 +2220,8 @@ def _validate_plan(document: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         "evidence",
         "evidence_binding_hash",
         "project_root",
+        "predecessor",
+        "predecessor_binding_hash",
         "target",
         "existing_deployment",
         "candidate",
@@ -1527,6 +2231,12 @@ def _validate_plan(document: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         "execution",
         "plan_hash",
     }
+    if document.get("schema_version") == PREDECESSOR_PLAN_SCHEMA_VERSION:
+        core._fail(
+            f"Recovery plan schema {PREDECESSOR_PLAN_SCHEMA_VERSION} is a superseded "
+            "contract. It is readable only as historical predecessor evidence; "
+            f"regenerate the plan under schema {PLAN_SCHEMA_VERSION}."
+        )
     if set(document) != required:
         core._fail(
             f"Recovery plan fields do not match schema {PLAN_SCHEMA_VERSION}."
@@ -1551,7 +2261,16 @@ def _validate_plan(document: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         core._fail("Recovery plan hash is invalid; regenerate the plan.")
     if core._hash_json(document["evidence"]) != document["evidence_binding_hash"]:
         core._fail("Recovery evidence binding hash is invalid.")
-    context = _load_bound_evidence(document["evidence"])
+    predecessor = document["predecessor"]
+    if not isinstance(predecessor, dict) or predecessor.get("kind") not in PREDECESSOR_KINDS:
+        core._fail("Recovery plan predecessor block is invalid.")
+    if core._hash_json(predecessor) != document["predecessor_binding_hash"]:
+        core._fail("Recovery predecessor binding hash is invalid.")
+    context = _load_bound_evidence(
+        document["evidence"],
+        kind=predecessor["kind"],
+        anchors=predecessor.get("trust_anchors") or [],
+    )
     expected = _expected_projection(context)
     for field, value in expected.items():
         if document[field] != value:
@@ -1684,6 +2403,8 @@ def _new_receipt(
         "core_helper_path": plan["core_helper_path"],
         "core_helper_sha256": plan["core_helper_sha256"],
         "evidence_binding_hash": plan["evidence_binding_hash"],
+        "predecessor": copy.deepcopy(plan["predecessor"]),
+        "predecessor_binding_hash": plan["predecessor_binding_hash"],
         "target": copy.deepcopy(plan["target"]),
         "existing_deployment": copy.deepcopy(plan["existing_deployment"]),
         "candidate": copy.deepcopy(plan["candidate"]),
@@ -2234,9 +2955,33 @@ def _parser() -> argparse.ArgumentParser:
         description="Create or execute an exact-hash deploy-only Coded App upgrade recovery."
     )
     parser.add_argument("--project-root")
+    parser.add_argument(
+        "--predecessor-kind",
+        choices=PREDECESSOR_KINDS,
+        default="governed",
+        help=(
+            "Whether the currently deployed version came from a governed release "
+            "or from an earlier recovery."
+        ),
+    )
+    parser.add_argument(
+        "--trusted-predecessor-helper-sha256",
+        action="append",
+        help=(
+            "Explicit trusted digest of a historical recovery helper. Repeat once "
+            "per chain link, paired with --trusted-predecessor-core-helper-sha256."
+        ),
+    )
+    parser.add_argument(
+        "--trusted-predecessor-core-helper-sha256",
+        action="append",
+        help="Explicit trusted digest of the matching historical core helper.",
+    )
     parser.add_argument("--prior-successful-plan")
     parser.add_argument("--prior-successful-receipt")
     parser.add_argument("--prior-successful-app-config")
+    parser.add_argument("--predecessor-runtime-manifest")
+    parser.add_argument("--predecessor-pre-upgrade-workspace-config")
     parser.add_argument("--failed-plan")
     parser.add_argument("--failed-receipt")
     parser.add_argument("--reconciliation-evidence")
@@ -2268,9 +3013,12 @@ def _render(plan: dict[str, Any], plan_path: Path | None) -> str:
         for stage in plan["stages"]
     )
     location = str(plan_path) if plan_path else "[not persisted]"
+    predecessor = plan["predecessor"]
     return (
         "Deploy-only upgrade recovery plan; no pack, publish, version, or route change.\n"
         f"Plan schema: {plan['schema_version']}\n"
+        f"Predecessor: {predecessor['kind']} (chain depth {predecessor['depth']})\n"
+        f"Predecessor evidence closure: {predecessor['evidence_closure_sha256']}\n"
         f"Plan hash: {plan['plan_hash']}\n"
         f"Persisted plan: {location}\n"
         f"App: {plan['existing_deployment']['app_name']}\n"
@@ -2352,9 +3100,22 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.execute or args.approved_plan_hash:
         core._fail("Execution requires an immutable --plan and exact approval hash.")
+    if args.predecessor_kind not in PREDECESSOR_KINDS:
+        core._fail("--predecessor-kind must be governed or recovery.")
+    required_labels = EVIDENCE_LABELS_BY_KIND[args.predecessor_kind]
+    unexpected = [
+        label
+        for label in EVIDENCE_LABELS
+        if label not in required_labels and getattr(args, label)
+    ]
+    if unexpected:
+        core._fail(
+            "These inputs apply only to a recovery predecessor: "
+            + ", ".join("--" + item.replace("_", "-") for item in unexpected)
+        )
     missing = [
         name
-        for name in ("project_root", *EVIDENCE_LABELS, "plan_output")
+        for name in ("project_root", *required_labels, "plan_output")
         if not getattr(args, name)
     ]
     if missing:

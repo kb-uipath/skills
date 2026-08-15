@@ -50,9 +50,10 @@ Use exactly one lane:
 
 1. **Governed release** — use `uipcodedappdeploy.py` v2.3. This remains the
    default whenever intent, data classification, or environment is ambiguous.
-2. **Exact route-collision recovery** — use `uipcodedappdeploy_recover.py` v1.2
+2. **Exact route-collision recovery** — use `uipcodedappdeploy_recover.py` v1.3
    only for an already-published candidate and an exactly reconciled existing
-   deployment.
+   deployment. v1.3 also covers a chained recovery, where the currently
+   deployed version was itself produced by an earlier recovery.
 3. **Testing-only** — use `uipcodedappdeploy_testing.py` v1.2 only when the user
    explicitly requests an internal, synthetic test deployment to Alpha or
    Staging and accepts that it is not release evidence.
@@ -79,7 +80,7 @@ Schema 1.2 supports only these combinations:
 - `--candidate-mode dist --intent upgrade`: copy and hash an exact built dist,
   pack and publish it once, verify the newly published system/deploy identity,
   and upgrade only the pre-reconciled deployment while preserving its route.
-- `--candidate-mode reconciled --intent upgrade`: validate an exact v1.2
+- `--candidate-mode reconciled --intent upgrade`: validate an exact v1.3
   recovery plan/runtime; skip build, pack, and publish; guard and upgrade only
   its bound deployment while preserving its route.
 - `--candidate-mode published-recovery --intent upgrade`: consume one exact
@@ -465,6 +466,7 @@ paths and SHA-256 digests, then generate an exact-upgrade plan:
 ```bash
 python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_recover.py \
   --project-root /absolute/path/to/failed-release/source \
+  --predecessor-kind governed \
   --prior-successful-plan /absolute/evidence/prior-plan.json \
   --prior-successful-receipt /absolute/evidence/prior-plan.json.receipt.json \
   --prior-successful-app-config /absolute/evidence/prior-source/.uipath/app.config.json \
@@ -475,6 +477,76 @@ python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_recover.py \
   --plan-output /absolute/evidence/upgrade-recovery-plan.json \
   --format json
 ```
+
+### Chained Recovery: A Recovery Predecessor
+
+`--predecessor-kind governed` is the default and asserts that the currently
+deployed version came from a governed v2.3 release. When that version was
+instead produced by an earlier recovery, the prior evidence is a historical
+schema 1.2 recovery plan and receipt, which the governed loaders cannot read.
+Declare `--predecessor-kind recovery` and supply four extra inputs:
+
+```bash
+python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_recover.py \
+  --project-root /absolute/path/to/failed-release/source \
+  --predecessor-kind recovery \
+  --trusted-predecessor-helper-sha256 'sha256:<exact-historical-recovery-helper-digest>' \
+  --trusted-predecessor-core-helper-sha256 'sha256:<exact-historical-core-helper-digest>' \
+  --prior-successful-plan /absolute/evidence/predecessor-recovery-plan.json \
+  --prior-successful-receipt /absolute/evidence/predecessor-recovery-plan.json.receipt.json \
+  --prior-successful-app-config /absolute/evidence/predecessor-source/.uipath/app.config.json \
+  --predecessor-runtime-manifest /absolute/evidence/predecessor-guarded-runtime.manifest.json \
+  --predecessor-pre-upgrade-workspace-config /absolute/evidence/predecessor-pre-upgrade-app.config.json \
+  --failed-plan /absolute/evidence/failed-plan.json \
+  --failed-receipt /absolute/evidence/failed-plan.json.receipt.json \
+  --reconciliation-evidence /absolute/evidence/reconciliation-evidence.json \
+  --recovery-runtime-manifest /absolute/evidence/guarded-runtime.manifest.json \
+  --plan-output /absolute/evidence/upgrade-recovery-plan.json \
+  --format json
+```
+
+Schema 1.2 is accepted **only** by the historical predecessor validator. An
+active `--plan` at schema 1.2 is rejected outright; regenerate it under 1.3.
+
+A historical plan records the digests of the helper bytes that created it.
+Those bytes are by definition not the current bytes and can never be
+re-derived, so they must be supplied as explicit trust anchors and approved
+with the plan hash. Repeat both anchor flags once per chain link, in matching
+order; every link must match one supplied pair exactly.
+
+The predecessor gate is pure filesystem work and runs before any subprocess or
+network-capable call. It fails closed when:
+
+- the predecessor receipt is `failed`, `in_progress`, or `deployed_unverified`
+  — an incomplete predecessor is never treated as a usable baseline;
+- any of its eight stages did not succeed, or it did not verify its retained
+  route or its own candidate version;
+- it released its execution claim, or the retained claim is missing, altered,
+  or not bound to its plan and receipt;
+- any evidence file in the recursive closure is missing or its raw bytes
+  changed since that plan was approved;
+- the supplied trust anchors do not cover every link in the chain; or
+- the predecessor's guarded runtime drifted.
+
+Each historical plan describes its own evidence by absolute path and digest, so
+the chain is self-describing and needs no extra operator input to walk. Every
+visited file contributes its raw-byte digest to the canonical closure recorded
+in `predecessor.evidence_closure` and hashed into
+`predecessor.evidence_closure_sha256`.
+
+A succeeded recovery rewrites exactly one file inside its isolated runtime: the
+workspace `.uipath/app.config.json` that its own upgrade stage updated to the
+newly deployed version. Reconstruction substitutes the retained pre-upgrade
+bytes back into the observed tree and requires the result to equal the approved
+`tree_sha256`. The observed file must match the digest its receipt recorded, so
+the permitted mutation is pinned to exactly the expected one. Any other byte,
+size, or mode difference anywhere in the runtime fails closed. This is why the
+pre-upgrade workspace config must be retained as evidence: without those bytes
+the pre-upgrade tree state is not reconstructable and the plan cannot be built.
+
+Chained plans and receipts carry a `predecessor` block and a
+`predecessor_binding_hash`. Review the block's kind, depth, anchors, chain, and
+closure hash before approving the plan hash.
 
 Review that the plan contains only an atomic execution claim, reconciliation,
 a pre-upgrade read-only guard, a last-moment runtime hash barrier, one upgrade,

@@ -5,7 +5,7 @@ Deploy UiPath Coded Apps through one of three deliberately separate lanes.
 | Lane | Contract | Authorization | Intended use |
 | --- | --- | --- | --- |
 | Governed release | Plan/receipt v2.3 | Exact reviewed `plan_hash` | Reviewable Alpha/Staging release candidate |
-| Exact upgrade recovery | Plan/receipt v1.2 | Exact reviewed recovery hash | Reconciled route-collision repair |
+| Exact upgrade recovery | Plan/receipt v1.3 | Exact reviewed recovery hash | Reconciled route-collision repair, including a chained recovery predecessor |
 | Testing-only | Automatic receipt v1.1 | Explicit request plus `--testing-only --execute` | Internal synthetic Alpha/Staging testing |
 
 Production targets are rejected in every current lane. Testing receipts are
@@ -30,10 +30,14 @@ names, route, public client ID, CLI path/version/profile, and an ignored output
 path. Governed release additionally requires exact source and package evidence;
 recovery requires its exact reconciliation plan/runtime; testing requires a
 plain-language synthetic testing purpose plus either exact built distribution
-bytes or an exact recovery plan.
+bytes or an exact recovery plan. A recovery whose predecessor was itself a
+recovery additionally requires explicit trusted helper/core hash anchors, the
+predecessor's guarded-runtime manifest, and the retained pre-upgrade workspace
+app config.
 
 The versioned input/output contracts are plan/receipt v2.3 for governed release,
-plan/receipt v1.2 for recovery, and automatic receipt v1.1 for testing-only.
+plan/receipt v1.3 for recovery, and automatic receipt v1.1 for testing-only.
+Recovery schema 1.2 is readable only as historical predecessor evidence.
 
 ## Prompt
 
@@ -107,7 +111,7 @@ python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy.py \
 Interrupted or nonzero external writes are indeterminate. Governed resume is
 allowed only for determinate local stages; it is blocked for publish/deploy.
 
-## Exact route-collision recovery v1.2
+## Exact route-collision recovery v1.3
 
 UiPath CLI 1.198.0 can resend an unchanged `routingName` on an existing-app
 PATCH, which some environments reject as `routing name must be unique`. Never
@@ -121,9 +125,25 @@ current version, route, and published deploy version; prevents the fresh-create
 branch; and omits `routingName` only from the one guarded PATCH. A second guard
 proves the same deployment now reports the candidate version.
 
-Recovery requires its own reviewed v1.2 plan and exact approval hash. It has no
+Recovery requires its own reviewed v1.3 plan and exact approval hash. It has no
 resume. The complete preparation, evidence, plan, and execution commands are in
 `uipcodedappdeploy/SKILL.md`.
+
+### Chained recovery
+
+When the currently deployed version was itself produced by a recovery, declare
+`--predecessor-kind recovery`. The prior evidence is then a historical schema
+1.2 recovery plan and receipt, accepted only by the dedicated historical
+predecessor validator; schema 1.2 is never accepted as an active plan.
+
+Chained recovery binds explicit trusted helper and core hashes for every link,
+validates the predecessor's evidence recursively into a canonical raw-byte
+closure, and reconstructs the predecessor's guarded runtime while permitting
+exactly one mutation — the workspace app config its own successful upgrade
+rewrote. Predecessor failure, an incomplete or `deployed_unverified` state,
+runtime drift, missing evidence, and trust-anchor mismatch all fail before any
+subprocess or network-capable path. The result is recorded in the plan's
+`predecessor` block and hashed into `predecessor_binding_hash`.
 
 ## Testing-only v1.1
 
@@ -149,7 +169,7 @@ Supported matrices:
   candidate once, verifies its system/deploy identity, and performs one guarded
   in-place upgrade of the pre-reconciled deployment without sending the route
   in the PATCH.
-- `reconciled/upgrade` consumes an exact v1.2 recovery plan/runtime, skips pack
+- `reconciled/upgrade` consumes an exact v1.3 recovery plan/runtime, skips pack
   and publish, and upgrades only the named deployment in place.
 
 Example fresh test deployment from exact built distribution bytes:

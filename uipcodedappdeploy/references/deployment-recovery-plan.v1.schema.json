@@ -1,40 +1,34 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://kb-uipath.github.io/skills/uipcodedappdeploy/deployment-recovery-plan.v1.schema.json",
-  "title": "UiPath Coded App Exact-Upgrade Recovery Plan v1.2",
+  "title": "UiPath Coded App Exact-Upgrade Recovery Plan v1.3",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "kind", "schema_version", "created_at", "recovery_helper_sha256",
     "core_helper_path", "core_helper_sha256", "evidence",
-    "evidence_binding_hash", "project_root", "target", "existing_deployment",
+    "evidence_binding_hash", "project_root", "predecessor",
+    "predecessor_binding_hash", "target", "existing_deployment",
     "candidate", "upgrade_guard", "failed_attempt", "stages", "execution",
     "plan_hash"
   ],
   "properties": {
     "kind": { "const": "uipcodedappdeploy.upgrade-recovery-plan" },
-    "schema_version": { "const": "1.2" },
+    "schema_version": { "const": "1.3" },
     "created_at": { "type": "string", "format": "date-time" },
     "recovery_helper_sha256": { "$ref": "#/$defs/hash" },
     "core_helper_path": { "$ref": "#/$defs/absolutePath" },
     "core_helper_sha256": { "$ref": "#/$defs/hash" },
     "evidence": {
-      "type": "array",
-      "minItems": 7,
-      "maxItems": 7,
-      "prefixItems": [
-        { "$ref": "#/$defs/priorPlan" },
-        { "$ref": "#/$defs/priorReceipt" },
-        { "$ref": "#/$defs/priorConfig" },
-        { "$ref": "#/$defs/failedPlan" },
-        { "$ref": "#/$defs/failedReceipt" },
-        { "$ref": "#/$defs/reconciliation" },
-        { "$ref": "#/$defs/runtimeManifest" }
-      ],
-      "items": false
+      "oneOf": [
+        { "$ref": "#/$defs/governedEvidenceSet" },
+        { "$ref": "#/$defs/recoveryEvidenceSet" }
+      ]
     },
     "evidence_binding_hash": { "$ref": "#/$defs/hash" },
     "project_root": { "$ref": "#/$defs/absolutePath" },
+    "predecessor": { "$ref": "#/$defs/predecessor" },
+    "predecessor_binding_hash": { "$ref": "#/$defs/hash" },
     "target": { "$ref": "#/$defs/target" },
     "existing_deployment": { "$ref": "#/$defs/existingDeployment" },
     "candidate": { "$ref": "#/$defs/candidate" },
@@ -284,11 +278,150 @@
         "sha256": { "$ref": "#/$defs/hash" }
       }
     },
+    "governedEvidenceSet": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "prefixItems": [
+        { "$ref": "#/$defs/priorPlan" },
+        { "$ref": "#/$defs/priorReceipt" },
+        { "$ref": "#/$defs/priorConfig" },
+        { "$ref": "#/$defs/failedPlan" },
+        { "$ref": "#/$defs/failedReceipt" },
+        { "$ref": "#/$defs/reconciliation" },
+        { "$ref": "#/$defs/runtimeManifest" }
+      ],
+      "items": false
+    },
+    "recoveryEvidenceSet": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "prefixItems": [
+        { "$ref": "#/$defs/priorPlan" },
+        { "$ref": "#/$defs/priorReceipt" },
+        { "$ref": "#/$defs/priorConfig" },
+        { "$ref": "#/$defs/predecessorRuntimeManifest" },
+        { "$ref": "#/$defs/predecessorWorkspaceConfig" },
+        { "$ref": "#/$defs/failedPlan" },
+        { "$ref": "#/$defs/failedReceipt" },
+        { "$ref": "#/$defs/reconciliation" },
+        { "$ref": "#/$defs/runtimeManifest" }
+      ],
+      "items": false
+    },
+    "trustAnchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recovery_helper_sha256", "core_helper_sha256"],
+      "properties": {
+        "recovery_helper_sha256": { "$ref": "#/$defs/hash" },
+        "core_helper_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "predecessorLink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "depth", "schema_version", "plan_hash", "receipt_hash", "status",
+        "deployed_version", "deployment_id", "recovery_helper_sha256",
+        "core_helper_sha256", "retained_claim_hash",
+        "post_deploy_app_config_digest"
+      ],
+      "properties": {
+        "depth": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "schema_version": { "enum": ["1.2", "1.3"] },
+        "plan_hash": { "$ref": "#/$defs/hash" },
+        "receipt_hash": { "$ref": "#/$defs/hash" },
+        "status": { "const": "succeeded" },
+        "deployed_version": { "$ref": "#/$defs/semver" },
+        "deployment_id": { "$ref": "#/$defs/guid" },
+        "recovery_helper_sha256": { "$ref": "#/$defs/hash" },
+        "core_helper_sha256": { "$ref": "#/$defs/hash" },
+        "retained_claim_hash": { "$ref": "#/$defs/hash" },
+        "post_deploy_app_config_digest": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "closureRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["depth", "label", "path", "sha256"],
+      "properties": {
+        "depth": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "label": { "$ref": "#/$defs/nonEmpty" },
+        "path": { "$ref": "#/$defs/absolutePath" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "runtimeReconstruction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime_root", "manifest_hash", "approved_tree_sha256",
+        "permitted_mutation", "pre_upgrade_workspace_app_config_sha256",
+        "post_success_workspace_app_config_sha256"
+      ],
+      "properties": {
+        "runtime_root": { "$ref": "#/$defs/absolutePath" },
+        "manifest_hash": { "$ref": "#/$defs/hash" },
+        "approved_tree_sha256": { "$ref": "#/$defs/hash" },
+        "permitted_mutation": { "const": "workspace_app_config" },
+        "pre_upgrade_workspace_app_config_sha256": { "$ref": "#/$defs/hash" },
+        "post_success_workspace_app_config_sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "predecessor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind", "depth", "trust_anchors", "chain", "evidence_closure",
+        "evidence_closure_sha256", "runtime_reconstruction"
+      ],
+      "properties": {
+        "kind": { "enum": ["governed", "recovery"] },
+        "depth": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "trust_anchors": { "type": "array", "items": { "$ref": "#/$defs/trustAnchor" } },
+        "chain": { "type": "array", "items": { "$ref": "#/$defs/predecessorLink" } },
+        "evidence_closure": { "type": "array", "items": { "$ref": "#/$defs/closureRecord" } },
+        "evidence_closure_sha256": { "$ref": "#/$defs/hash" },
+        "runtime_reconstruction": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/runtimeReconstruction" }]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "governed" } } },
+          "then": {
+            "properties": {
+              "depth": { "const": 0 },
+              "trust_anchors": { "maxItems": 0 },
+              "chain": { "maxItems": 0 },
+              "evidence_closure": { "maxItems": 0 },
+              "runtime_reconstruction": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "recovery" } } },
+          "then": {
+            "properties": {
+              "depth": { "minimum": 1 },
+              "trust_anchors": { "minItems": 1 },
+              "chain": { "minItems": 1 },
+              "evidence_closure": { "minItems": 7 },
+              "runtime_reconstruction": { "$ref": "#/$defs/runtimeReconstruction" }
+            }
+          }
+        }
+      ]
+    },
     "priorPlan": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "prior_successful_plan" } } }] },
     "priorReceipt": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "prior_successful_receipt" } } }] },
     "priorConfig": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "prior_successful_app_config" } } }] },
     "failedPlan": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "failed_plan" } } }] },
     "failedReceipt": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "failed_receipt" } } }] },
+    "predecessorRuntimeManifest": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "predecessor_runtime_manifest" } } }] },
+    "predecessorWorkspaceConfig": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "predecessor_pre_upgrade_workspace_config" } } }] },
     "reconciliation": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "reconciliation_evidence" } } }] },
     "runtimeManifest": { "allOf": [{ "$ref": "#/$defs/evidence" }, { "properties": { "label": { "const": "recovery_runtime_manifest" } } }] }
   }
