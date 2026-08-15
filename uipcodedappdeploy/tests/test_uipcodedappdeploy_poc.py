@@ -245,7 +245,7 @@ class UiPathCodedAppDeployPocTests(unittest.TestCase):
         ), self.assertRaises(SystemExit):
             self.poc._authorize(self.args(), "production", "customer")
 
-    def test_public_parser_exposes_only_explicit_three_command_interface(self):
+    def test_public_parser_exposes_only_explicit_four_command_interface(self):
         parser = self.poc._parser()
         configure = parser.parse_args([
             "configure", "--project-root", "/project", "--environment", "production",
@@ -260,6 +260,11 @@ class UiPathCodedAppDeployPocTests(unittest.TestCase):
         self.assertEqual(deploy.intent, "upgrade")
         recovery = parser.parse_args(["recover-published", "--receipt", "/receipt", "--execute"])
         self.assertEqual(recovery.command, "recover-published")
+        deploy_recovery = parser.parse_args([
+            "recover-deploy-indeterminate", "--receipt", "/receipt",
+            "--source-helper", "/source-helper", "--execute",
+        ])
+        self.assertEqual(deploy_recovery.command, "recover-deploy-indeterminate")
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
             parser.parse_args(["deploy", "--project-root", "/project", "--intent", "create"])
 
@@ -436,6 +441,43 @@ class UiPathCodedAppDeployPocTests(unittest.TestCase):
             self.assertIsNone(self.poc._app_url(action))
             self.assertEqual(self.poc._app_url(web), "https://agenticgtm.alpha.uipath.host/example-poc")
 
+    def test_inspect_accepts_cli_pascal_case_nested_observations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self.config(root)
+            envelope = {
+                "Result": "Success",
+                "Code": "DeployCompleted",
+                "Data": {
+                    "Message": "POC remote state inspected.",
+                    "AppType": "Web",
+                    "AppName": "Example POC",
+                    "RouteName": "example-poc",
+                    "AppUrl": "https://agenticgtm.alpha.uipath.host/example-poc",
+                    "RouteAvailable": False,
+                    "Deployment": {
+                        "Id": DEPLOYMENT_ID,
+                        "Title": "example-poc",
+                        "RoutingName": "example-poc",
+                        "SemVersion": "1.0.0",
+                    },
+                    "PublishedVersions": [{
+                        "Version": "1.0.1",
+                        "SystemName": SYSTEM_NAME,
+                        "DeployVersion": 2,
+                    }],
+                    "Operation": "poc_inspect",
+                },
+            }
+            with mock.patch.object(self.poc, "_run_read", return_value=json.dumps(envelope)):
+                observed = self.poc._inspect(
+                    self.runtime(), {"executable": "/node"}, config, root, "1.0.1"
+                )
+            self.assertEqual(observed["deployment"]["id"], DEPLOYMENT_ID)
+            self.assertEqual(observed["deployment"]["semVersion"], "1.0.0")
+            self.assertEqual(observed["published_versions"][0]["version"], "1.0.1")
+            self.assertEqual(observed["published_versions"][0]["deploy_version"], 2)
+
     def test_create_and_upgrade_preconditions_fail_closed(self):
         with tempfile.TemporaryDirectory() as temporary:
             config = self.config(Path(temporary))
@@ -524,6 +566,189 @@ class UiPathCodedAppDeployPocTests(unittest.TestCase):
             self.poc._atomic_private_json(path, receipt, overwrite=True)
             with self.assertRaises(SystemExit):
                 self.poc._load_source_receipt(path)
+
+    def test_deploy_recovery_accepts_only_unrecovered_indeterminate_receipts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "source.json"
+            receipt = self.receipt(root)
+            receipt["status"] = "deploy_indeterminate"
+            receipt["external_write_started"] = True
+            receipt["receipt_hash"] = self.core._document_hash(receipt, "receipt_hash")
+            self.poc._atomic_private_json(path, receipt, overwrite=False)
+            loaded = self.poc._load_source_receipt(
+                path,
+                allowed_statuses=frozenset({"deploy_indeterminate"}),
+                command_name="recover-deploy-indeterminate",
+            )
+            self.assertEqual(loaded["status"], "deploy_indeterminate")
+            receipt["status"] = "succeeded_poc_deploy"
+            receipt["receipt_hash"] = self.core._document_hash(receipt, "receipt_hash")
+            self.poc._atomic_private_json(path, receipt, overwrite=True)
+            with self.assertRaises(SystemExit):
+                self.poc._load_source_receipt(
+                    path,
+                    allowed_statuses=frozenset({"deploy_indeterminate"}),
+                    command_name="recover-deploy-indeterminate",
+                )
+
+    def test_deploy_recovery_validates_original_retained_claim_namespace_and_hash(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            poc_root = Path(temporary) / ".poc"
+            claims = poc_root / "claims"
+            claims.mkdir(parents=True)
+            root = Path(temporary) / "project"
+            root.mkdir()
+            config = self.config(root)
+            candidate = self.candidate(intent="upgrade")
+            source = {"claim": {"retained": True}, "candidate": candidate}
+            expected_key = self.core._hash_json({
+                "environment": config["environment"], "organization_id": config["organization_id"],
+                "tenant_id": config["tenant_id"], "folder_key": config["folder_key"],
+                "app_name": config["app_name"], "intent": candidate["intent"],
+                "version": candidate["version"], "source_hash": None,
+            })
+            path = claims / f"{expected_key.removeprefix('sha256:')}.json"
+            document = {
+                "kind": "uipcodedappdeploy.poc-claim", "schema_version": "1.0",
+                "key": expected_key, "created_at": "2026-08-12T00:00:00+00:00",
+            }
+            document["claim_hash"] = self.core._document_hash(document, "claim_hash")
+            self.poc._atomic_private_json(path, document, overwrite=False)
+            source["claim"]["path"] = str(path)
+            with mock.patch.object(self.poc, "_poc_root", return_value=poc_root):
+                evidence = self.poc._validate_retained_source_claim(source, config)
+            self.assertEqual(Path(evidence["path"]), path.resolve())
+            document["key"] = self.core._hash_bytes(b"drift")
+            document["claim_hash"] = self.core._document_hash(document, "claim_hash")
+            self.poc._atomic_private_json(path, document, overwrite=True)
+            with mock.patch.object(self.poc, "_poc_root", return_value=poc_root), self.assertRaises(SystemExit):
+                self.poc._validate_retained_source_claim(source, config)
+
+    def test_deploy_recovery_observation_requires_exact_prior_and_candidate_identity(self):
+        root = Path("/project")
+        config = self.config(root)
+        candidate = self.candidate(intent="upgrade")
+        observation = {
+            "route_available": False,
+            "deployment": {
+                "id": DEPLOYMENT_ID, "title": config["app_name"],
+                "routingName": config["path_name"], "semVersion": "1.0.0",
+            },
+            "published_versions": [{
+                "version": "1.0.1", "system_name": SYSTEM_NAME, "deploy_version": 2,
+            }],
+        }
+        self.assertEqual(
+            self.poc._validate_deploy_recovery_observation(observation, config, candidate)["deploy_version"],
+            2,
+        )
+        observation["deployment"]["semVersion"] = "1.0.1"
+        with self.assertRaises(SystemExit):
+            self.poc._validate_deploy_recovery_observation(observation, config, candidate)
+
+    def test_deploy_recovery_executes_one_guarded_upgrade_without_rebuild_or_publish(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "project"
+            workspace = root / "retained-workspace"
+            (workspace / "dist").mkdir(parents=True)
+            app_config = workspace / self.core.APP_CONFIG_RELATIVE_PATH
+            app_config.parent.mkdir(parents=True, exist_ok=True)
+            app_config.write_bytes(b"retained-app-config")
+            package = workspace / "example-poc.1.0.1.nupkg"
+            package.write_bytes(b"retained-package")
+            source_helper = root / "source-helper.py"
+            source_helper.write_bytes(b"source-helper")
+
+            config = self.config(root)
+            runtime = self.runtime()
+            candidate = self.candidate(intent="upgrade")
+            candidate["package_path"] = str(package)
+            candidate["evidence"]["app_config_sha256"] = self.core._hash_file(
+                app_config, "fixture app config"
+            )
+            source = self.receipt(root)
+            source["status"] = "deploy_indeterminate"
+            source["external_write_started"] = True
+            source["candidate"] = copy.deepcopy(candidate)
+            source["runtime"] = copy.deepcopy(runtime)
+            source["evidence"]["project_root"] = str(root)
+            source["evidence"]["workspace"] = str(workspace)
+            source["receipt_hash"] = self.core._document_hash(source, "receipt_hash")
+            source_path = root / "source-receipt.json"
+            self.poc._atomic_private_json(source_path, source, overwrite=False)
+
+            before = {
+                "route_available": False,
+                "deployment": {
+                    "id": DEPLOYMENT_ID,
+                    "title": config["app_name"],
+                    "routingName": config["path_name"],
+                    "semVersion": candidate["current_version"],
+                },
+                "published_versions": [{
+                    "version": candidate["version"],
+                    "system_name": SYSTEM_NAME,
+                    "deploy_version": 2,
+                }],
+            }
+            after = copy.deepcopy(before)
+            after["deployment"]["semVersion"] = candidate["version"]
+            output = root / "recovery-receipt.json"
+            claim_path = root / "transition-claim.json"
+            args = self.args(
+                receipt=str(source_path),
+                source_helper=str(source_helper),
+                receipt_output=str(output),
+                verify_timeout=15,
+            )
+
+            with (
+                mock.patch.object(self.poc, "_load_source_receipt", return_value=source),
+                mock.patch.object(self.poc, "_project_root", return_value=root),
+                mock.patch.object(self.poc, "_load_config", return_value=(root / "target.json", config)),
+                mock.patch.object(self.poc, "_configured_node", return_value={"executable": "/node"}),
+                mock.patch.object(self.poc, "_validate_runtime", return_value=runtime),
+                mock.patch.object(self.poc, "_revalidate_target"),
+                mock.patch.object(
+                    self.poc, "_validate_source_helper",
+                    return_value={"path": str(source_helper), "sha256": self.core._hash_file(source_helper, "fixture helper")},
+                ),
+                mock.patch.object(
+                    self.poc, "_validate_retained_source_claim",
+                    return_value={"path": str(root / "source-claim.json"), "file_sha256": self.core._hash_bytes(b"claim")},
+                ),
+                mock.patch.object(self.poc.testing, "_directory_digest", return_value=candidate["evidence"]["dist_sha256"]),
+                mock.patch.object(
+                    self.poc.core, "_package_evidence",
+                    return_value=(candidate["evidence"]["package_content_sha256"], candidate["evidence"]["package_file_sha256"]),
+                ),
+                mock.patch.object(self.poc, "_inspect", side_effect=[before, before, after]),
+                mock.patch.object(
+                    self.poc, "_reserve",
+                    return_value={"path": str(root / "reservation"), "sha256": self.core._hash_bytes(b"reservation")},
+                ),
+                mock.patch.object(self.poc, "_claim", return_value=(claim_path, {"claim": "fixture"})),
+                mock.patch.object(self.poc, "_run_write", return_value={"Result": "Success"}) as write,
+                mock.patch.object(self.poc.core, "_verify_url", return_value={"status": 200}),
+                mock.patch.object(self.poc, "_verify_config", return_value=candidate["evidence"]["app_config_sha256"]),
+                mock.patch.object(self.poc, "_build") as build,
+                mock.patch.object(self.poc, "_pack") as pack,
+                mock.patch.object(self.poc, "_publish") as publish,
+            ):
+                self.assertEqual(self.poc._recover_deploy_indeterminate(args), output.resolve())
+
+            write.assert_called_once()
+            command = write.call_args.args[0]
+            self.assertEqual(command[command.index("--poc-mode") + 1], "upgrade-execute")
+            build.assert_not_called()
+            pack.assert_not_called()
+            publish.assert_not_called()
+            recovered = self.poc._load_private_json(output, "recovery receipt")
+            self.assertEqual(recovered["status"], "succeeded_poc_deploy")
+            self.assertEqual(recovered["candidate"], candidate)
+            self.assertTrue(recovered["verification"]["route_verified"])
+            self.assertEqual(list(self.validator.iter_errors(recovered)), [])
 
     def test_existing_governed_and_testing_contract_versions_are_unchanged(self):
         self.assertEqual(self.core.PLAN_SCHEMA_VERSION, "2.3")

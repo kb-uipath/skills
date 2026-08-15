@@ -85,7 +85,11 @@ configuring or invoking this lane. The helper provides:
   upgrade state, publish once, and perform one guarded deployment; and
 - `recover-published`: deploy one exactly reconciled candidate from a retained
   `publish_indeterminate` or `published_not_deployed` POC receipt without
-  rebuilding, packing, or publishing.
+  rebuilding, packing, or publishing; and
+- `recover-deploy-indeterminate`: after read-only reconciliation proves the
+  original upgrade did not apply, recover one exact retained upgrade candidate
+  without rebuilding, packing, publishing, modifying the source receipt, or
+  removing its original replay-protection claim.
 
 The POC runtime is pinned to UiPath CLI and coded-app tooling `1.199.0`, sets
 `UIPATH_CLI_DISABLE_VERSION_SYNC=1`, blocks unguarded use, rejects the stock

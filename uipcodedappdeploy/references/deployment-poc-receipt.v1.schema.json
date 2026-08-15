@@ -150,7 +150,11 @@
           "properties": {
             "path": { "type": "string", "minLength": 1 },
             "receipt_hash": { "$ref": "#/$defs/hash" },
-            "file_sha256": { "$ref": "#/$defs/hash" }
+            "file_sha256": { "$ref": "#/$defs/hash" },
+            "source_helper_path": { "type": "string", "minLength": 1 },
+            "source_helper_sha256": { "$ref": "#/$defs/hash" },
+            "retained_claim_path": { "type": "string", "minLength": 1 },
+            "retained_claim_sha256": { "$ref": "#/$defs/hash" }
           }
         }
       ]

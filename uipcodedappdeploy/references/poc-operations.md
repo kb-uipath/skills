@@ -64,6 +64,29 @@ Repeat the Production and customer-data authorization flags when applicable.
 Recovery never builds, packs, or publishes. It refuses chained recovery,
 changed evidence, changed target state, and replayed candidate claims.
 
+## Deploy-indeterminate recovery
+
+Never repeat `deploy` after `deploy_indeterminate`. First reconcile that the
+exact deployment still reports the source receipt's prior version and that the
+published candidate resolves uniquely. Preserve a copy of the exact source
+helper whose digest is recorded in the failed receipt, then run:
+
+```bash
+python3.12 uipcodedappdeploy/scripts/uipcodedappdeploy_poc.py recover-deploy-indeterminate \
+  --receipt /absolute/deploy-indeterminate-receipt.json \
+  --source-helper /absolute/source-uipcodedappdeploy-poc.py \
+  --receipt-output /absolute/new-deploy-recovery-receipt.json \
+  --execute
+```
+
+This command supports exact upgrades only. It revalidates the source receipt,
+source helper, original retained claim, package, dist, app configuration,
+runtime, target, deployment ID/current version/route, and published system and
+deploy-version identity. It creates a separate atomic transition claim and
+performs one route-omitting guarded upgrade. It never rewrites the source
+receipt or original claim and never rebuilds, packs, or publishes. If this
+recovery becomes indeterminate, do not retry it.
+
 ## Evidence boundary
 
 Receipts follow `deployment-poc-receipt.v1.schema.json`, omit commands,

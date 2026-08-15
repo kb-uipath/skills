@@ -958,7 +958,16 @@ def _inspect(runtime: dict[str, Any], node: dict[str, str], config: dict[str, An
         core._fail("POC remote inspection does not match the configured app.")
     deployment = data.get("Deployment")
     if deployment is not None:
-        if not isinstance(deployment, dict) or set(deployment) != {"id", "title", "routingName", "semVersion"}:
+        if not isinstance(deployment, dict):
+            core._fail("POC remote deployment observation is invalid.")
+        if set(deployment) == {"Id", "Title", "RoutingName", "SemVersion"}:
+            deployment = {
+                "id": deployment["Id"],
+                "title": deployment["Title"],
+                "routingName": deployment["RoutingName"],
+                "semVersion": deployment["SemVersion"],
+            }
+        elif set(deployment) != {"id", "title", "routingName", "semVersion"}:
             core._fail("POC remote deployment observation is invalid.")
         deployment["id"] = _require_guid(deployment["id"], "remote deployment ID")
         core._parse_semver(_require_text(deployment["semVersion"], "remote deployed version"), "remote deployed version")
@@ -968,7 +977,15 @@ def _inspect(runtime: dict[str, Any], node: dict[str, str], config: dict[str, An
     normalized = []
     seen = set()
     for item in versions:
-        if not isinstance(item, dict) or set(item) != {"version", "systemName", "deployVersion"}:
+        if not isinstance(item, dict):
+            core._fail("POC published candidate observation is invalid.")
+        if set(item) == {"Version", "SystemName", "DeployVersion"}:
+            item = {
+                "version": item["Version"],
+                "systemName": item["SystemName"],
+                "deployVersion": item["DeployVersion"],
+            }
+        elif set(item) != {"version", "systemName", "deployVersion"}:
             core._fail("POC published candidate observation is invalid.")
         version_value = _require_text(item["version"], "published version")
         core._parse_semver(version_value, "published version")
@@ -1355,7 +1372,12 @@ def _execute_deploy(args: argparse.Namespace) -> Path:
     return receipt_path
 
 
-def _load_source_receipt(path: Path) -> dict[str, Any]:
+def _load_source_receipt(
+    path: Path,
+    *,
+    allowed_statuses: frozenset[str] = frozenset({"publish_indeterminate", "published_not_deployed"}),
+    command_name: str = "recover-published",
+) -> dict[str, Any]:
     receipt = _load_private_json(path, "source POC receipt")
     required = {
         "kind", "schema_version", "helper_sha256", "policy_version", "authorization",
@@ -1367,9 +1389,73 @@ def _load_source_receipt(path: Path) -> dict[str, Any]:
         core._fail("Source POC receipt shape is unsupported.")
     if core._document_hash(receipt, "receipt_hash") != receipt.get("receipt_hash"):
         core._fail("Source POC receipt hash is invalid.")
-    if receipt["recovery_source"] is not None or receipt["status"] not in {"publish_indeterminate", "published_not_deployed"}:
-        core._fail("recover-published requires one unrecovered publish-stage POC receipt.")
+    if receipt["recovery_source"] is not None or receipt["status"] not in allowed_statuses:
+        core._fail(f"{command_name} requires one unrecovered POC receipt in an allowed state.")
     return receipt
+
+
+def _validate_retained_source_claim(source: dict[str, Any], config: dict[str, Any]) -> dict[str, str]:
+    claim = source.get("claim")
+    candidate = source.get("candidate")
+    if not isinstance(claim, dict) or claim.get("retained") is not True or not isinstance(candidate, dict):
+        core._fail("Deploy-indeterminate recovery requires the original retained candidate claim.")
+    raw_path = Path(_require_text(claim.get("path"), "source retained claim")).expanduser()
+    if raw_path.is_symlink() or not raw_path.is_file():
+        core._fail("The original retained candidate claim is unavailable or unsafe.")
+    path = raw_path.resolve(strict=True)
+    claims_root = (_poc_root() / "claims").resolve(strict=True)
+    expected_key = core._hash_json({
+        "environment": config["environment"], "organization_id": config["organization_id"],
+        "tenant_id": config["tenant_id"], "folder_key": config["folder_key"],
+        "app_name": config["app_name"], "intent": candidate["intent"],
+        "version": candidate["version"], "source_hash": None,
+    })
+    expected_path = claims_root / f"{expected_key.removeprefix('sha256:')}.json"
+    if path.parent != claims_root or path != expected_path:
+        core._fail("The original retained claim does not match the exact POC candidate namespace.")
+    document = _load_private_json(path, "source retained claim")
+    if (
+        set(document) != {"kind", "schema_version", "key", "created_at", "claim_hash"}
+        or document.get("kind") != "uipcodedappdeploy.poc-claim"
+        or document.get("schema_version") != "1.0"
+        or document.get("key") != expected_key
+        or core._document_hash(document, "claim_hash") != document.get("claim_hash")
+    ):
+        core._fail("The original retained candidate claim is invalid or drifted.")
+    return {"path": str(path), "file_sha256": core._hash_file(path, "source retained claim")}
+
+
+def _validate_source_helper(source: dict[str, Any], value: str) -> dict[str, str]:
+    raw_path = Path(_require_text(value, "--source-helper")).expanduser()
+    if raw_path.is_symlink() or not raw_path.is_file():
+        core._fail("The source POC helper evidence is unavailable or unsafe.")
+    path = raw_path.resolve(strict=True)
+    digest = core._hash_file(path, "source POC helper")
+    if digest != source.get("helper_sha256"):
+        core._fail("The source POC helper bytes do not match the failed receipt.")
+    return {"path": str(path), "sha256": digest}
+
+
+def _validate_deploy_recovery_observation(
+    observation: dict[str, Any],
+    config: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    if candidate.get("intent") != "upgrade":
+        core._fail("Deploy-indeterminate recovery supports exact upgrades only.")
+    identity = _validate_intent(observation, config, "upgrade")
+    if (
+        identity["deployment_id"] != candidate.get("deployment_id")
+        or identity["current_version"] != candidate.get("current_version")
+    ):
+        core._fail("The existing deployment changed after the indeterminate attempt.")
+    published = _published_for(observation, candidate["version"])
+    if (
+        published["system_name"] != candidate.get("system_name")
+        or published["deploy_version"] != candidate.get("deploy_version")
+    ):
+        core._fail("The published candidate identity changed after the indeterminate attempt.")
+    return published
 
 
 def _recover_published(args: argparse.Namespace) -> Path:
@@ -1456,6 +1542,139 @@ def _recover_published(args: argparse.Namespace) -> Path:
     return receipt_path
 
 
+def _recover_deploy_indeterminate(args: argparse.Namespace) -> Path:
+    source_path = Path(_require_text(args.receipt, "--receipt")).expanduser().resolve(strict=True)
+    source = _load_source_receipt(
+        source_path,
+        allowed_statuses=frozenset({"deploy_indeterminate"}),
+        command_name="recover-deploy-indeterminate",
+    )
+    if source.get("external_write_started") is not True:
+        core._fail("Deploy-indeterminate recovery requires an attempted external deployment write.")
+    root = _project_root(source["evidence"].get("project_root"))
+    _, config = _load_config(root)
+    if any(source["target"].get(key) != config.get(key) for key in source["target"]):
+        core._fail("Current POC target configuration does not match the source receipt.")
+    classification = source["authorization"]["data_classification"]
+    authorization = _authorize(args, config["environment"], classification)
+    node = _configured_node(config)
+    runtime = _validate_runtime(_poc_root(), node)
+    if (
+        runtime["manifest"] != config["runtime_manifest"]
+        or runtime["manifest_sha256"] != config["runtime_manifest_sha256"]
+        or source.get("runtime") != runtime
+    ):
+        core._fail("Configured POC runtime does not match the indeterminate source receipt.")
+    _revalidate_target(root, config, runtime, node)
+    source_helper = _validate_source_helper(source, args.source_helper)
+    source_claim = _validate_retained_source_claim(source, config)
+    workspace = Path(source["evidence"]["workspace"])
+    if workspace.is_symlink() or not workspace.is_dir():
+        core._fail("Retained POC evidence workspace is unavailable.")
+    candidate = copy.deepcopy(source["candidate"])
+    if candidate.get("intent") != "upgrade" or not candidate.get("system_name") or not candidate.get("deploy_version"):
+        core._fail("The indeterminate receipt does not bind a complete exact-upgrade candidate.")
+    retained_dist = workspace / "dist"
+    if (
+        retained_dist.is_symlink()
+        or not retained_dist.is_dir()
+        or testing._directory_digest(retained_dist) != candidate["evidence"]["dist_sha256"]
+    ):
+        core._fail("Retained POC dist bytes changed.")
+    package_path = Path(candidate["package_path"])
+    content_digest, file_digest = core._package_evidence(
+        package_path, package_name=config["package_name"], main_file="index.html",
+    )
+    if content_digest != candidate["evidence"]["package_content_sha256"] or file_digest != candidate["evidence"]["package_file_sha256"]:
+        core._fail("Retained POC package bytes changed.")
+    app_config = workspace / core.APP_CONFIG_RELATIVE_PATH
+    if core._hash_file(app_config, "retained POC app config") != candidate["evidence"]["app_config_sha256"]:
+        core._fail("Retained POC app configuration changed.")
+    observation = _inspect(runtime, node, config, workspace, candidate["version"])
+    published = _validate_deploy_recovery_observation(observation, config, candidate)
+    receipt_path = _receipt_path(root, args.receipt_output, suffix="-deploy-recovery")
+    reservation = _reserve(receipt_path)
+    transition_hash = core._hash_json({
+        "operation": "recover-deploy-indeterminate",
+        "source_receipt_hash": source["receipt_hash"],
+        "source_claim_file_sha256": source_claim["file_sha256"],
+    })
+    claim_path, _ = _claim(config, candidate, transition_hash)
+    recovery_source = {
+        "path": str(source_path),
+        "receipt_hash": source["receipt_hash"],
+        "file_sha256": core._hash_file(source_path, "source POC receipt"),
+        "source_helper_path": source_helper["path"],
+        "source_helper_sha256": source_helper["sha256"],
+        "retained_claim_path": source_claim["path"],
+        "retained_claim_sha256": source_claim["file_sha256"],
+    }
+    receipt = _new_receipt(
+        config, authorization, candidate, runtime, receipt_path, reservation,
+        workspace, claim_path, recovery_source=recovery_source,
+    )
+    receipt["observations"]["prewrite"] = observation
+    receipt["observations"]["published_candidate"] = published
+    _write_receipt(receipt_path, receipt)
+    try:
+        prewrite = _stage(
+            receipt, receipt_path, "pre_deploy_guard", "external_read",
+            lambda: _inspect(runtime, node, config, workspace, candidate["version"]),
+            failure_status="failed_prewrite", failure_code="PRE_DEPLOY_GUARD_FAILED",
+        )
+        published = _validate_deploy_recovery_observation(prewrite, config, candidate)
+        receipt["observations"]["prewrite"] = prewrite
+        receipt["observations"]["published_candidate"] = published
+        _write_receipt(receipt_path, receipt)
+        _stage(
+            receipt, receipt_path, "deploy", "external_write",
+            lambda: _run_write(
+                _guard_command(runtime, node, config, candidate, "upgrade-execute", published),
+                workspace, _safe_environment(), "DEPLOY_INDETERMINATE",
+            ),
+            external_write=True, failure_status="deploy_indeterminate", failure_code="DEPLOY_INDETERMINATE",
+        )
+        receipt["status"] = "deployed_unverified"
+        _write_receipt(receipt_path, receipt)
+        post = _stage(
+            receipt, receipt_path, "post_deploy_guard", "external_read",
+            lambda: _inspect(runtime, node, config, workspace, candidate["version"]),
+            failure_status="deployed_unverified", failure_code="POST_DEPLOY_GUARD_FAILED",
+        )
+        deployed = post["deployment"]
+        if (
+            deployed is None
+            or deployed["id"] != candidate["deployment_id"]
+            or deployed["routingName"] != config["path_name"]
+            or deployed["semVersion"] != candidate["version"]
+            or _published_for(post, candidate["version"]) != published
+        ):
+            core._fail("Recovered deployment post-state does not match the exact candidate.")
+        receipt["observations"]["postwrite"] = post
+        if config["app_type"] == "web":
+            _stage(
+                receipt, receipt_path, "route_verify", "external_read",
+                lambda: core._verify_url(_app_url(config), args.verify_timeout),
+                failure_status="deployed_unverified", failure_code="ROUTE_VERIFY_FAILED",
+            )
+            receipt["verification"]["route_verified"] = True
+        receipt["verification"]["post_deploy_app_config_sha256"] = _stage(
+            receipt, receipt_path, "config_verify", "local_read",
+            lambda: _verify_config(workspace, config, candidate),
+            failure_status="deployed_unverified", failure_code="CONFIG_VERIFY_FAILED",
+        )
+        receipt["verification"]["configuration_verified"] = True
+        receipt["status"] = "succeeded_poc_deploy"
+        _write_receipt(receipt_path, receipt)
+    except (Exception, SystemExit, KeyboardInterrupt):
+        if not receipt["external_write_started"]:
+            _release_prewrite_claim(claim_path)
+            receipt["claim"]["retained"] = False
+            _write_receipt(receipt_path, receipt)
+        raise
+    return receipt_path
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Configure and execute fast, non-release UiPath Coded App POC deployments.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1490,6 +1709,15 @@ def _parser() -> argparse.ArgumentParser:
     recover_parser.add_argument("--customer-data-approved", action="store_true")
     recover_parser.add_argument("--receipt-output")
     recover_parser.add_argument("--verify-timeout", type=int, default=15)
+
+    deploy_recovery = subparsers.add_parser("recover-deploy-indeterminate")
+    deploy_recovery.add_argument("--receipt", required=True)
+    deploy_recovery.add_argument("--source-helper", required=True)
+    deploy_recovery.add_argument("--execute", action="store_true")
+    deploy_recovery.add_argument("--production-execute", action="store_true")
+    deploy_recovery.add_argument("--customer-data-approved", action="store_true")
+    deploy_recovery.add_argument("--receipt-output")
+    deploy_recovery.add_argument("--verify-timeout", type=int, default=15)
     return parser
 
 
@@ -1502,7 +1730,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"status": "configured", "target": str(path), "production_eligible": False, "release_evidence": False}, sort_keys=True))
         return 0
     try:
-        path = _execute_deploy(args) if args.command == "deploy" else _recover_published(args)
+        if args.command == "deploy":
+            path = _execute_deploy(args)
+        elif args.command == "recover-published":
+            path = _recover_published(args)
+        else:
+            path = _recover_deploy_indeterminate(args)
     except (Exception, SystemExit, KeyboardInterrupt) as exc:
         if isinstance(exc, SystemExit):
             raise
