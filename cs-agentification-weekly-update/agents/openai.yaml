@@ -1,0 +1,4 @@
+interface:
+  display_name: "CS Agentification Weekly Update"
+  short_description: "Drafts CS Agentification Slack program updates"
+  default_prompt: "Use $cs-agentification-weekly-update to draft this week's CS Agentification program update as Slack drafts for #cs-agentification and #cs-agentification-program-leads. Never send -- create drafts only."
