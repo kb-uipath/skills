@@ -43,8 +43,15 @@ Schema-1.4 documents and the retired Salesforce-first flow: use `legacy/` unchan
 - **Non-fabrication.** Fill only what a message, email, note, document, or call summary
   actually states. Empty stays empty — the deck renders gaps deliberately. Never write
   `Unknown`, `TBD`, or placeholder rows.
-- **Recency wins.** Default evidence window ~180 days. Per-field conflicts resolve to the
-  most recent authoritative statement. Only these fields may come from documents older
+- **Salesforce is the system of record.** For basic account data — pipeline
+  stage/amount/close date/owner, `background.region`, `accountTeam.*` — take the value
+  from the Salesforce MCP, not from chat, email or notes. Resolve the Account exactly and
+  stop if the name is ambiguous rather than guessing between candidates.
+- **Recency wins, except against Salesforce.** Default evidence window ~180 days.
+  Per-field conflicts resolve to the most recent authoritative statement — but on the
+  fields SFDC owns (above), SFDC wins over a more recent Slack or email mention, and the
+  disagreement is noted in the report rather than silently resolved. Only these fields
+  may come from documents older
   than the window, and only when nothing newer supersedes them: `renewalDate`,
   `renewalEconomics.currentArrUsd`, consumption `soldQuantity`/`purchased`
   entitlements, and `timeline` history. Nothing else qualifies as "foundational."
@@ -98,12 +105,20 @@ Confirm with the user before sweeping: which Slack channels, mailbox window, not
 SharePoint location, and whether Tribble Scribe is in scope (every run). Record the date
 window (default 180 days).
 
-### 3. Evidence sweep — newest first
+### 3. Evidence sweep — Salesforce first, then newest first
+
+**Start with Salesforce.** It is the system of record for basic account data: resolve
+the Account exactly (stopping if the name is ambiguous) and fill everything SFDC can
+authoritatively answer — pipeline stage, amount, close date, owner, region, account-team
+names — before touching any other source. Then sweep the remaining sources newest first
+for what SFDC does not hold, which is the judgment and narrative material.
 
 Follow the per-source recipes in
 [references/source-playbooks.md](references/source-playbooks.md). Write findings to a
 scratchpad `<account>-findings.md`: per schema field → candidate value → source → as-of
-date, with conflicts resolved by recency and noted.
+date, with conflicts resolved by recency and noted — except against Salesforce, where
+SFDC wins on the fields it owns regardless of how recent a Slack or email mention is,
+and the disagreement is worth noting in the provenance report.
 
 ### 4. Build and validate
 

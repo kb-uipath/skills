@@ -4,22 +4,50 @@ Per-source recipes for the evidence sweep. All access is read-only. Sweep newest
 stamp every extracted fact with its date and locator (channel + ts, message subject +
 date, page title, meeting title + date).
 
-## Salesforce (SFDC)
+## Salesforce (SFDC) — system of record, query it first
 
-Use the **`salesforce-account-profile`** skill's `pipeline` preset — read-only by
-construction, with exact Account resolution and an explicit disambiguation stop when the
-account name is ambiguous:
+**Salesforce is the system of record for basic account data. Query the Salesforce MCP
+for every field it can authoritatively answer before sweeping Slack, Outlook, OneNote or
+call notes.** Those sources carry judgment and narrative; they are not where a region,
+an account-team name, a pipeline stage or a close date should come from. A Day 2 review
+that disagrees with SFDC on basics is wrong in the way most likely to be noticed in
+front of a customer or an exec.
+
+Use these read tools on the Salesforce MCP, and only these — nothing in this flow writes
+to Salesforce:
+
+- `getObjectSchema` — call with no parameters for the object index, then with
+  `Account,Opportunity` (etc.) for field detail. **Read its admin-authored guidance
+  before choosing a field**: the org annotates which field is actually authoritative
+  (for example "use `Calculated_ACV__c` instead of `Amount` for accurate forecasting").
+  Taking the obvious-looking field over the annotated one is a silent accuracy bug.
+- `soqlQuery` — the primary read. Always include `WHERE` and `LIMIT`, and filter on
+  indexed fields (`Id`, `Name`, foreign keys, External IDs).
+- `getRelatedRecords`, `listRecentSobjectRecords`, `find` — for child records, recent
+  activity, and locating a record when the exact name is unknown.
+
+**Resolve the account exactly, and stop if it is ambiguous.** Raw SOQL will happily
+match the wrong account or several at once, so this guarantee is yours to enforce now
+rather than something the tooling provides: query candidates by name, and if more than
+one plausible Account comes back, stop and ask the user which one — never pick the first
+row, and never merge two candidates' data. Record the resolved Account `Id` in the
+findings file and filter every subsequent query on it.
+
+The **`salesforce-account-profile`** skill's `pipeline` preset remains available as a
+secondary convenience when a packaged snapshot is wanted (it returns the Account
+overview, open Opportunities and owner hierarchy, with its own disambiguation stop):
 
 ```
 $salesforce-account-profile Give me a pipeline snapshot for <account name> in Production.
 ```
 
-It returns the selected Account overview, open Opportunities, and owner hierarchy. Do not
-use Glean's `salescloud` app filter for authoritative field values — that surface is
-summarized, not schema-validated, and is secondary/discovery only (e.g. to spot an
-account name variant before running the profile skill). Do not use
-`salesforce-meddpicc-update` (write-capable, wrong shape for this read-only flow) or the
-retired `sf`-CLI schema-1.4-era flow in `legacy/` — do not port that machinery here.
+Prefer the MCP for basic account data; reach for the profile skill when you want that
+curated shape or a second read on account resolution. Do not use Glean's `salescloud`
+app filter for authoritative field values — that surface is summarized, not
+schema-validated, and is secondary/discovery only (e.g. to spot an account name variant
+before resolving the Account). Do not use `salesforce-meddpicc-update` (write-capable,
+wrong shape for this read-only flow) or the retired `sf`-CLI schema-1.4-era flow in
+`legacy/` — do not port that machinery here.
 
 SFDC is strong for: Sales Plan pipeline `stage`/`estimatedIarrUsd`/`nextGateDate`, the
 account team names for `background.region` and `accountTeam.*`, and confirming

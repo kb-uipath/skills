@@ -8,7 +8,7 @@ tab. When this table and `llm.md` disagree, `llm.md` wins.
 
 | Field | Evidence that may fill it |
 | --- | --- |
-| `accountTeam.*`, `background.region` | Org announcements, intro emails/messages naming the role holder ("X is your new CSM"), signatures, the SFDC account team |
+| `accountTeam.*`, `background.region` | **The SFDC account team first — system of record.** Only where SFDC is silent: org announcements, intro emails/messages naming the role holder ("X is your new CSM"), signatures |
 | `renewalDate`, `renewalEconomics.currentArrUsd`, `supportTier`, `deploymentType` | Contract documents, renewal-confirmation messages, deal-desk threads |
 | `background.metricCheckpoints[]` (`label`, `arrUsd`, `arrIncrementalUsd`, `consumptionValue`, `consumptionIncrementalUsd`) | Dated ARR/consumption snapshots from QBR decks, telemetry exports, or a stated figure — never interpolated between two points |
 | `background.partners`, `background.competitor`, `background.threatOfCompetition` | Explicit team statements naming the partner/competitor and assessing the threat; never inferred from a competitor merely being mentioned |
@@ -26,7 +26,7 @@ tab. When this table and `llm.md` disagree, `llm.md` wins.
 | Field | Evidence that may fill it |
 | --- | --- |
 | `pipelineOpportunities[]`: `name`, `businessProblem`, `motionLabel`, `stage`, `personaTarget` | Named pursuits in team channels/notes/SFDC: the deal name, the customer problem it solves, its motion, sales stage, and buyer persona |
-| `pipelineOpportunities[].estimatedIarrUsd` | Contract/validated statements or SFDC amount only — never derived from hours-saved claims |
+| `pipelineOpportunities[].estimatedIarrUsd` | SFDC amount first (check `getObjectSchema`'s admin guidance for which amount field the org treats as authoritative, e.g. `Calculated_ACV__c` over `Amount`), else contract/validated statements — never derived from hours-saved claims |
 | `pipelineOpportunities[].key`, `.status`, `.owner`, `.motions[]`, `.consumptionRowIds[]`, `.nextGate`/`.nextGateDate` | 1.8-era governance fields, still present behind a disclosure — same sourcing rules as before: `key` unique per pursuit, `motions[]` from `M1`/`M2`/`M3` only when explicitly mapped, `consumptionRowIds[]` only for rows the pursuit actually references |
 | `relationships[].roleCategory` | A named person's stated role, mapped into one of the deck's five groups (Economic Buyer, Executive Sponsor, Champion, Technical Decision Maker, Blocker or Detractor) only when the evidence supports that categorization — leave unmapped rather than guess |
 | `salesPlan.executionPlan` (`day30`/`day60`/`day90`), `salesPlan.notes` | Team-stated execution plan bullets and general notes; these are near-term commitments, not aspirations |
