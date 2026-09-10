@@ -1,9 +1,9 @@
 ---
 name: enrich-day2-dashboard
-description: Use when asked to build, fill out, enrich, or update a Day 2 Review dashboard (schema 1.9, the /day2-v6 slide app's Background/Sales Plan/Consumption Plan/Stakeholders & Actions tabs) for a named account from real evidence — Salesforce, Slack public channels, Outlook mail/calendar, OneNote/SharePoint, or Tribble Scribe call notes. Also use when a Day 2 draft has gaps ("Not measured", unranked risks, missing stakeholders) that should be filled from the most recent account activity.
+description: Use when asked to build, fill out, enrich, or update a Day 2 Review dashboard (schema 1.10, the /day2-v6 slide app's Background/Sales Plan/Consumption Plan/Stakeholders & Actions tabs) for a named account from real evidence — Salesforce, Slack public channels, Outlook mail/calendar, OneNote/SharePoint, or Tribble Scribe call notes. Also use when a Day 2 draft has gaps ("Not measured", unranked risks, missing stakeholders) that should be filled from the most recent account activity.
 ---
 
-# Enrich Day 2 Dashboard (schema 1.9)
+# Enrich Day 2 Dashboard (schema 1.10)
 
 Fill a Day 2 Review account document from evidence, newest first, without inventing
 anything. Deliver into the browser draft store so archive lineage is preserved, and hand
@@ -15,8 +15,8 @@ route (default `https://agenticgtm.alpha.uipath.host/day2-v6/`):
 | Asset | Path |
 | --- | --- |
 | Authoring guide (field semantics, non-fabrication rules) | `llm.md` |
-| Blank template | `llm-guide/day2-dashboard-template-v1.9.json` |
-| Field instructions (machine-readable) | `llm-guide/day2-dashboard-field-instructions-v1.9.json` |
+| Blank template | `llm-guide/day2-dashboard-template-v1.10.json` |
+| Field instructions (machine-readable) | `llm-guide/day2-dashboard-field-instructions-v1.10.json` |
 | Worked example | `llm-guide/sonic-automotive-illustrative.day2.json` |
 
 Fetch these with `curl` (the host's WAF rejects Python urllib's default user agent).
@@ -86,7 +86,7 @@ Pick one, in order of preference:
    uip orchestrator bucket-files download <bucketId> "archive/v1/<accountKey>/<revisionId>.day2.json" --folder-key <folderKey> --profile <profile>
    ```
 2. **Exported JSON** — the app's Export JSON of the current draft.
-3. **Blank template** — `llm-guide/day2-dashboard-template-v1.9.json` for a brand-new
+3. **Blank template** — `llm-guide/day2-dashboard-template-v1.10.json` for a brand-new
    account.
 
 Then build the gap inventory: walk the slide→field table in `llm.md` and list every
