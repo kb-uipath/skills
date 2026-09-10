@@ -289,14 +289,55 @@ class UiPathCodedAppDeployPocTests(unittest.TestCase):
             # resolve too: /bin/sh is itself on macOS but a symlink to dash on
             # the Debian-based CI runner.
             resolved = str(Path("/bin/sh").resolve())
-            with mock.patch.object(self.poc.shutil, "which", return_value="/bin/sh"):
+            # The native-arch prefix is stubbed out rather than left live: it
+            # calls shutil.which itself, so the mock above would answer that
+            # lookup too and command[0] would be the prefix rather than the
+            # package manager -- passing for the wrong reason, and only on a
+            # translated macOS host. _native_arch_prefix has its own test.
+            with mock.patch.object(self.poc.shutil, "which", return_value="/bin/sh"), \
+                    mock.patch.object(self.poc, "_native_arch_prefix", return_value=[]):
                 executable, command = self.poc._package_manager(root)
             self.assertEqual(executable, resolved)
             self.assertEqual(command[0], resolved)
             self.assertEqual(command[-2:], ["run", "build"])
+
+            # With a prefix present the manager still runs, one slot along.
+            with mock.patch.object(self.poc.shutil, "which", return_value="/bin/sh"), \
+                    mock.patch.object(self.poc, "_native_arch_prefix", return_value=["/usr/bin/arch", "-arm64"]):
+                executable, command = self.poc._package_manager(root)
+            self.assertEqual(executable, resolved)
+            self.assertEqual(command, ["/usr/bin/arch", "-arm64", resolved, "run", "build"])
             (root / "yarn.lock").write_text("\n", encoding="utf-8")
             with self.assertRaises(SystemExit):
                 self.poc._package_manager(root)
+
+    def test_native_arch_prefix_engages_only_under_rosetta_translation(self):
+        """The prefix exists to stop a translated interpreter spawning an x86_64
+        Node that cannot load an arm64-only native addon. Everywhere else it must
+        stay empty, or it would wrap every build in an unnecessary exec."""
+        def run_translated(value):
+            return mock.patch.object(
+                self.poc.subprocess, "run",
+                return_value=argparse.Namespace(stdout=value),
+            )
+
+        with mock.patch.object(self.poc.sys, "platform", "linux"):
+            self.assertEqual(self.poc._native_arch_prefix(), [])
+
+        with mock.patch.object(self.poc.sys, "platform", "darwin"), \
+                mock.patch.object(self.poc.shutil, "which", return_value=None):
+            self.assertEqual(self.poc._native_arch_prefix(), [])
+
+        with mock.patch.object(self.poc.sys, "platform", "darwin"), \
+                mock.patch.object(self.poc.shutil, "which", return_value="/usr/bin/arch"):
+            for translated in ("0", "", "  "):
+                with self.subTest(translated=translated), run_translated(translated):
+                    self.assertEqual(self.poc._native_arch_prefix(), [])
+            with run_translated("1\n"):
+                self.assertEqual(self.poc._native_arch_prefix(), ["/usr/bin/arch", "-arm64"])
+            # A machine that cannot answer the question is not assumed translated.
+            with mock.patch.object(self.poc.subprocess, "run", side_effect=OSError):
+                self.assertEqual(self.poc._native_arch_prefix(), [])
 
     def test_private_config_is_mode_0600_hash_bound_and_strict(self):
         with tempfile.TemporaryDirectory() as temporary:

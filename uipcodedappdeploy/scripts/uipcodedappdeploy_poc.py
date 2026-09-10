@@ -760,6 +760,31 @@ def _authorize(args: argparse.Namespace, environment: str, classification: str) 
     }
 
 
+def _native_arch_prefix() -> list[str]:
+    """Force the native CPU slice for a universal binary child on macOS.
+
+    When this interpreter itself runs under Rosetta 2 translation, macOS
+    spawns a universal-binary child (e.g. Node) as x86_64 by default. Some
+    projects only install the arm64 native addon (e.g. rolldown's binding),
+    so the translated child fails with a misleading MODULE_NOT_FOUND. A
+    plain shell invocation never hits this because the shell itself already
+    runs natively. Only engage when this exact condition is detected.
+    """
+    if sys.platform != "darwin":
+        return []
+    arch_bin = shutil.which("arch")
+    if not arch_bin:
+        return []
+    try:
+        translated = subprocess.run(
+            ["sysctl", "-in", "sysctl.proc_translated"],
+            capture_output=True, text=True, check=False,
+        ).stdout.strip()
+    except OSError:
+        return []
+    return [arch_bin, "-arm64"] if translated == "1" else []
+
+
 def _package_manager(root: Path) -> tuple[str, list[str]]:
     candidates = []
     for filename, executable in (
@@ -776,7 +801,7 @@ def _package_manager(root: Path) -> tuple[str, list[str]]:
     path = Path(executable).resolve(strict=True)
     if path.is_symlink() or not path.is_file() or not os.access(path, os.X_OK):
         core._fail("Package manager must be an executable regular file.")
-    return str(path), [str(path), "run", "build"]
+    return str(path), [*_native_arch_prefix(), str(path), "run", "build"]
 
 
 def _build(root: Path) -> Path:
