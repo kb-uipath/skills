@@ -21,6 +21,17 @@ MANIFEST_PATH = ROOT / ".beads" / "history-manifest.json"
 HISTORY_TYPE = "beads_issue_history"
 MANIFEST_TYPE = "beads_history_manifest"
 COMMIT_HASH_RE = re.compile(r"^[0-9a-z]+$")
+REDACTION_PLACEHOLDER = "<redacted-local-path>"
+# Home-directory absolute paths are the publication boundary for the tracked
+# projection: the native Dolt ref may carry them, the reviewable artifact may
+# not. Two deliberate narrowings keep prose about paths out of the match: the
+# lookbehind leaves URL segments such as "https://example.com/home/page" intact
+# (while still catching "file:///Users/..."), and the segment after the home
+# directory must look like a real user name, so an elided "/Users/..." or a bare
+# "/Users/" written in an issue note is not mistaken for a leak.
+LOCAL_PATH_RE = re.compile(
+    r"(?<![\w.\-])/(?:Users|home)/(?![./])[A-Za-z0-9._-]+(?:/[^\s\"'\\]*)*"
+)
 REQUIRED_ISSUE_FIELDS = {
     "id",
     "title",
@@ -34,6 +45,35 @@ REQUIRED_ISSUE_FIELDS = {
 
 class HistoryValidationError(ValueError):
     """Raised when a Beads history artifact violates its public contract."""
+
+
+def redact_text(value: str) -> str:
+    """Replace home-directory absolute paths with a stable placeholder."""
+    return LOCAL_PATH_RE.sub(REDACTION_PLACEHOLDER, value)
+
+
+def redact_value(value: Any) -> Any:
+    """Recursively redact local absolute paths in any JSON-compatible value."""
+    if isinstance(value, str):
+        return redact_text(value)
+    if isinstance(value, dict):
+        return {key: redact_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redact_value(item) for item in value]
+    return value
+
+
+def assert_redacted(path: Path, label: str) -> None:
+    """Refuse to publish a tracked artifact that still names a local path."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise HistoryValidationError(f"{path}: file does not exist") from exc
+    found = sorted(set(LOCAL_PATH_RE.findall(text)))
+    if found:
+        raise HistoryValidationError(
+            f"{label} contains an unredacted local path: {', '.join(found[:3])}"
+        )
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -141,7 +181,7 @@ def normalize_issue_history(
                 "_type": HISTORY_TYPE,
                 "commit_date": commit_date,
                 "commit_hash": commit_hash,
-                "issue": issue,
+                "issue": redact_value(issue),
                 "issue_id": issue_id,
             }
         )
@@ -280,10 +320,14 @@ def validate_history_records(
         )
     for issue_id, current in current_issues.items():
         terminal = latest[issue_id]
+        # History snapshots are redacted on the way in, so the current issue has
+        # to be compared through the same filter or every issue that ever named a
+        # local path would read as a terminal-state mismatch.
+        redacted_current = redact_value(current)
         mismatches = [
             key
             for key, value in terminal.items()
-            if key not in current or current[key] != value
+            if key not in redacted_current or redacted_current[key] != value
         ]
         if mismatches:
             raise HistoryValidationError(
@@ -441,6 +485,9 @@ def export_history(
 ) -> int:
     """Export current authoritative history without bootstrapping or importing."""
     current_issues = load_current_issues(issues_path)
+    # bd owns issues.jsonl, so this tool refuses rather than silently rewriting it:
+    # a local path there means a note in the database still needs redacting.
+    assert_redacted(issues_path, "the tracked issue snapshot")
     issue_ids = set(current_issues)
     if history_path.exists():
         for record in load_jsonl(history_path):
@@ -480,6 +527,7 @@ def export_history(
     )
     if history_changed:
         history_path.write_text(rendered, encoding="utf-8")
+    assert_redacted(history_path, "the regenerated history projection")
     manifest = build_manifest(
         dolt_head,
         issues_path,
@@ -514,6 +562,8 @@ def verify_history(
 ) -> int:
     """Validate tracked artifacts without requiring Beads or a local database."""
     current_issues = load_current_issues(issues_path)
+    assert_redacted(issues_path, "the tracked issue snapshot")
+    assert_redacted(history_path, "the tracked history projection")
     records = load_jsonl(history_path)
     validate_history_records(current_issues, records)
     manifest = validate_manifest(

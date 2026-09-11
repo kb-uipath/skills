@@ -38,6 +38,110 @@ def raw_history(
     }
 
 
+LEAKED_PATH = "/Users/keith.born/.codex/skills/uipcodedappdeploy"
+
+
+class RedactionTests(unittest.TestCase):
+    def test_redacts_home_absolute_path_from_history_snapshot(self) -> None:
+        snapshot = issue("open", "2026-07-24T12:00:00Z")
+        snapshot["notes"] = f"Installed helper at {LEAKED_PATH} and byte-verified."
+
+        normalized = beads_history.normalize_issue_history(
+            "skills-test", [raw_history("aaaa", "2026-07-24T12:00:01Z", snapshot)]
+        )
+
+        notes = normalized[0]["issue"]["notes"]
+        self.assertNotIn("/Users/", notes)
+        self.assertIn(beads_history.REDACTION_PLACEHOLDER, notes)
+        self.assertIn("byte-verified", notes)
+
+    def test_redaction_collapses_snapshots_differing_only_by_local_path(self) -> None:
+        first = issue("open", "2026-07-24T12:00:00Z")
+        first["notes"] = f"Installed at {LEAKED_PATH}"
+        second = issue("open", "2026-07-24T12:00:00Z")
+        second["notes"] = "Installed at /Users/someone-else/elsewhere"
+
+        normalized = beads_history.normalize_issue_history(
+            "skills-test",
+            [
+                raw_history("aaaa", "2026-07-24T12:00:01Z", first),
+                raw_history("bbbb", "2026-07-24T12:00:02Z", second),
+            ],
+        )
+
+        self.assertEqual(1, len(normalized))
+
+    def test_redaction_ignores_urls_containing_a_home_segment(self) -> None:
+        url = "https://example.com/home/page"
+
+        self.assertEqual(url, beads_history.redact_text(url))
+
+    def test_redaction_ignores_prose_about_paths(self) -> None:
+        # Issue notes legitimately discuss the redaction rule itself; an elided
+        # or bare home prefix names no one and must not be treated as a leak.
+        for prose in (
+            "home-directory paths (/Users/... and /home/...) are redacted",
+            "check with 'grep -c /Users/ .beads/history.jsonl'",
+        ):
+            with self.subTest(prose=prose):
+                self.assertEqual(prose, beads_history.redact_text(prose))
+
+    def test_redaction_still_catches_a_real_username_segment(self) -> None:
+        redacted = beads_history.redact_text("under /Users/keith.born and done")
+
+        self.assertNotIn("keith.born", redacted)
+        self.assertIn("and done", redacted)
+
+    def test_redaction_catches_file_scheme_absolute_path(self) -> None:
+        redacted = beads_history.redact_text(f"see file://{LEAKED_PATH}")
+
+        self.assertNotIn("keith.born", redacted)
+
+    def test_validate_compares_terminal_against_redacted_current_issue(self) -> None:
+        current = issue("open", "2026-07-24T12:00:00Z")
+        current["notes"] = f"Installed at {LEAKED_PATH}"
+        records = beads_history.normalize_issue_history(
+            "skills-test", [raw_history("aaaa", "2026-07-24T12:00:01Z", current)]
+        )
+
+        beads_history.validate_history_records({"skills-test": current}, records)
+
+    def test_verify_rejects_unredacted_path_in_history_artifact(self) -> None:
+        snapshot = issue("open", "2026-07-24T12:00:00Z")
+        snapshot["notes"] = f"Installed at {LEAKED_PATH}"
+        leaking_record = {
+            "_type": beads_history.HISTORY_TYPE,
+            "commit_date": "2026-07-24T12:00:01Z",
+            "commit_hash": "aaaa",
+            "issue": snapshot,
+            "issue_id": "skills-test",
+        }
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            issues_path = root / "issues.jsonl"
+            history_path = root / "history.jsonl"
+            manifest_path = root / "history-manifest.json"
+            issues_path.write_text(
+                beads_history.render_jsonl([{"_type": "issue", **snapshot}]),
+                encoding="utf-8",
+            )
+            history_path.write_text(
+                beads_history.render_jsonl([leaking_record]), encoding="utf-8"
+            )
+            manifest = beads_history.build_manifest(
+                "abc123", issues_path, history_path, 1, 1
+            )
+            manifest_path.write_text(
+                beads_history.json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                beads_history.HistoryValidationError, "unredacted local path"
+            ):
+                beads_history.verify_history(issues_path, history_path, manifest_path)
+
+
 class BeadsHistoryTests(unittest.TestCase):
     def test_parse_timestamp_accepts_dolt_fraction_widths(self) -> None:
         parsed = beads_history.parse_timestamp(
