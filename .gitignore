@@ -13,3 +13,9 @@ work/day2/
 .dolt/
 *.db
 .beads-credential-key
+
+# consumption-plan outputs are confidential customer artifacts
+*.day2.json
+*_Consumption_Plan*.json
+*_Consumption_Plan_DRAFT.xlsx
+*-merge.md

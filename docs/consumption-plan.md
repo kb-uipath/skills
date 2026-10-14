@@ -43,9 +43,14 @@ Consumption Plan tab.`
 
 ## Runnable Example
 
-    node consumption-plan/scripts/resolve-quarters.mjs 2026-08-01
-    node consumption-plan/scripts/to-day2.mjs consumption-plan/tests/fixtures/illustrative-plan.json \
-      --repo "<dashboard repo>" --out example.day2.json
+From the repository root, where `<skill root>` is `consumption-plan`. The illustrative
+fixture is safe to run from the checkout, but the outputs go to a scratch folder outside
+it, never into the repository:
+
+    node "<skill root>/scripts/resolve-quarters.mjs" 2026-08-01
+    node "<skill root>/scripts/to-day2.mjs" "<skill root>/tests/fixtures/illustrative-plan.json" \
+      --repo "<dashboard repo>" \
+      --out "<scratch folder>/example.day2.json" --report "<scratch folder>/example-merge.md"
 
 ## Failure Recovery
 

@@ -17,7 +17,9 @@ This skill owns that tab. `enrich-day2-dashboard` owns the rest of the document 
 leaves the tab to this skill.
 
 Two anchors used throughout:
-- **Skill root** — this directory; `scripts/…` and `references/…` are relative to it.
+- **Skill root** — this directory. `references/…` links are relative to it, and every
+  command names its script as `"<skill root>/scripts/…"`, so none depends on the
+  directory it runs from.
 - **Dashboard repo** — the Day 2 app's checkout (on this machine it has lived at
   `~/Documents/Day 2 Review Dashboard Generator`; ask if it is not there). Its
   `llm.md` and `src/data/day2-dashboard-field-instructions-v1.11.json` are the contract;
@@ -116,8 +118,9 @@ ORDER BY OpportunityId, Product2.Name
 line and confirms segmentation; follow
 [references/entitlement-resolution.md](references/entitlement-resolution.md) for the
 current-row predicate. On an Enterprise License Agreement every line's quantity is `1`
-and the real volume is in the product name: run
-`node scripts/decode-entitlements.mjs <rows.json> --pricebook <dashboard repo>/src/data/uipath-pricebook.json`
+and the real volume is in the product name: save the subscription rows in the working
+folder (Step 4) and run
+`node "<skill root>/scripts/decode-entitlements.mjs" "<working folder>/<account>-subscriptions.json" --pricebook "<dashboard repo>/src/data/uipath-pricebook.json"`
 rather than summing quantity, and look at every line it flags.
 
 **Reconcile before moving on:** sum each contract's line-item `TotalPrice` and confirm
@@ -139,6 +142,10 @@ tracked against total units of a consumable, not package counts.
 
 One file per account, `<Account Name>_Consumption_Plan.json`, in the user's working
 folder. Every later step reads it; edit it, never the outputs, when a figure changes.
+
+`<working folder>` in every command below is that folder: the user's working folder,
+never the skill directory. The skill root is, or links into, a checkout of a public git
+repository, and the plan file, workbook, Day 2 JSON and merge report are confidential.
 
 ```json
 {
@@ -177,7 +184,7 @@ folder. Every later step reads it; edit it, never the outputs, when a figure cha
 ## Step 5 — Fix the quarter window
 
 ```bash
-node scripts/resolve-quarters.mjs <asOf>
+node "<skill root>/scripts/resolve-quarters.mjs" <asOf>
 ```
 
 It prints the four fiscal quarters the forecast covers — UiPath's fiscal year ends
@@ -223,7 +230,7 @@ pipeline Opportunities, and utilization exports or customer trackers. Follow
 wins.
 
 - Write units, not percentages: "80 of 100 seats allocated" is `consumedQuantity: 80`.
-  `soldQuantity`, `consumedQuantity` and `forecastUnits` share the row's unit.
+  `purchasedQuantity`, `consumedQuantity` and `forecastUnits` share the row's unit.
 - **Name the artifact in `notes`**: its title and date, and the fact driving the figure
   (a milestone, a go-live, a program expansion).
 - **Foot a customer tracker's own totals** before trusting them: a running-subtotal
@@ -239,9 +246,13 @@ wins.
    baseline, start from the dashboard repo's blank template.
 2. **Merge.**
    ```bash
-   node scripts/to-day2.mjs <plan.json> --baseline <doc.day2.json> --out <account>.day2.json --report <account>-merge.md
+   node "<skill root>/scripts/to-day2.mjs" "<working folder>/<Account Name>_Consumption_Plan.json" \
+     --baseline "<working folder>/<account>-baseline.day2.json" \
+     --out "<working folder>/<account>.day2.json" --report "<working folder>/<account>-merge.md"
    # or, for a new account:
-   node scripts/to-day2.mjs <plan.json> --repo "<dashboard repo>" --out <account>.day2.json --report <account>-merge.md
+   node "<skill root>/scripts/to-day2.mjs" "<working folder>/<Account Name>_Consumption_Plan.json" \
+     --repo "<dashboard repo>" \
+     --out "<working folder>/<account>.day2.json" --report "<working folder>/<account>-merge.md"
    ```
    Read the report: rows matched, added, or kept from the baseline, every figure that
    changed, a Current ARR it left alone, and any use case pointing at a row the plan
@@ -252,13 +263,25 @@ wins.
    clear them with the account team's agreement — and tell the user, before delivering.
 3. **Validate** against the app's real importer, then reconcile attribution:
    ```bash
-   node <enrich-day2-dashboard skill root>/scripts/validate-day2-json.mjs <account>.day2.json --repo "<dashboard repo>"
-   node scripts/reconcile.mjs <account>.day2.json
+   node "<enrich-day2-dashboard skill root>/scripts/validate-day2-json.mjs" "<working folder>/<account>.day2.json" --repo "<dashboard repo>"
+   node "<skill root>/scripts/reconcile.mjs" "<working folder>/<account>.day2.json"
    ```
    Use-case attribution (`primaryUseCases[].allocations[]`) is separate work: follow
    [references/allocation-rules.md](references/allocation-rules.md), and never force
    allocations to tie to a row.
-4. **Deliver** through `enrich-day2-dashboard` Step 5 — the in-place browser draft
+4. **Deliver** — first confirm the app reads schema 1.11. An older build imports a 1.11
+   document without complaint but drops what 1.11 added inside each row. Fetch the
+   release manifest of the route `enrich-day2-dashboard` delivers to (`<route>`, without
+   its trailing slash), with a curl-style User-Agent (the host's WAF rejects script
+   defaults):
+   ```bash
+   curl -fsS -A "curl/8.7.1" "<route>/release-manifest.json" | grep -o 'llm-guide/day2-dashboard-field-instructions-v[0-9.]*\.json'
+   ```
+   Its `documentation` must list `llm-guide/day2-dashboard-field-instructions-v1.11.json`
+   or a later version (compare the minor as a number: `v1.9` and `v1.10` are earlier).
+   If the route still serves 1.10, **stop** and tell the user: a 1.10 app drops every
+   row's `discountPercent` on import, so delivery waits for the dashboard deploy.
+   Otherwise deliver through `enrich-day2-dashboard` Step 5 — the in-place browser draft
    update when a lineage exists, Import JSON for a genuinely new account — and verify as
    its Step 6 describes. The archive save is the user's call.
 5. **Hand off** the workbook, the Day 2 JSON and the merge report, with a provenance note
