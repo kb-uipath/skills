@@ -18,6 +18,7 @@
  * references/entitlement-resolution.md for the query).
  */
 import { readFileSync } from "node:fs";
+import { isMain } from "./cli.mjs";
 
 const SUFFIX_SCALE = { K: 1e3, M: 1e6, B: 1e9 };
 
@@ -93,7 +94,7 @@ export function decodeEntitlements(rows, skus) {
   });
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url)) {
   const args = process.argv.slice(2);
   const input = args.find((value) => !value.startsWith("--"));
   const pricebookPath = args[args.indexOf("--pricebook") + 1];

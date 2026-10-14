@@ -15,6 +15,7 @@
  * Usage: node reconcile.mjs <document.json> [--json]
  */
 import { readFileSync } from "node:fs";
+import { isMain } from "./cli.mjs";
 
 const QUARTERS = ["q1", "q2", "q3", "q4"];
 const exact = (value) => (value === null || value === undefined ? "—" : Number(value).toLocaleString("en-US"));
@@ -82,7 +83,7 @@ export function reconcile(account) {
   return { rows: rows.length, useCases: useCases.length, attribution, dangling, blockers };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url)) {
   const args = process.argv.slice(2);
   const input = args.find((value) => !value.startsWith("--"));
   if (!input) {

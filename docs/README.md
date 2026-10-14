@@ -27,6 +27,7 @@ Run `make validate` from the repo root before sharing changes. Use a Python runt
 | Skill | Category | Docs |
 | --- | --- | --- |
 | account-meeting-availability | Customer operations | [account-meeting-availability.md](./account-meeting-availability.md) |
+| consumption-plan | Consumption planning | [consumption-plan.md](./consumption-plan.md) |
 | cs-agentification-weekly-update | Internal program operations | [cs-agentification-weekly-update.md](./cs-agentification-weekly-update.md) |
 | enrich-day2-dashboard | Customer operations | [enrich-day2-dashboard.md](./enrich-day2-dashboard.md) |
 | estimate-du-units | Consumption planning | [estimate-du-units.md](./estimate-du-units.md) |

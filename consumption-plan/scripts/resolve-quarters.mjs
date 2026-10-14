@@ -9,6 +9,7 @@
  *
  * Usage: node resolve-quarters.mjs [YYYY-MM-DD] [--json]
  */
+import { isMain } from "./cli.mjs";
 
 /** Fiscal quarter containing a date. Feb is fiscal month 0. */
 export function fiscalQuarterOf(date) {
@@ -57,7 +58,7 @@ export function resolveForecastWindow(asOf) {
   };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url)) {
   const args = process.argv.slice(2);
   const asOfArg = args.find((value) => !value.startsWith("--"));
   const asOf = asOfArg ? new Date(`${asOfArg}T00:00:00Z`) : new Date();
