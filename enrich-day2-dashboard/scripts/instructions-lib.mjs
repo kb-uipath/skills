@@ -1,4 +1,4 @@
-// Shared helpers for the schema 1.10 field instructions: loading them, addressing a document with
+// Shared helpers for the Day 2 field instructions: loading them, addressing a document with
 // their JSON-Pointer wildcards, and asking "who may write this field?".
 //
 // The instructions JSON is the contract (llm.md says so too). Its `writePolicy` decides who may
@@ -8,19 +8,51 @@ import path from "node:path";
 
 const DEFAULT_BASE_URL = "https://agenticgtm.alpha.uipath.host/day2-v6/";
 
+const FALLBACK_SCHEMA_VERSION = "1.11";
+// The host's WAF rejects generic script user agents; a curl-style UA passes.
+const FETCH_OPTIONS = { headers: { "User-Agent": "curl/8.7.1" } };
+
+/** The schema version a dashboard checkout ships, read the way its own release scripts read it. */
+export function repoSchemaVersion(repo) {
+  const source = readFileSync(path.join(repo, "src/schema/account.ts"), "utf8");
+  const declaration = /^export const SCHEMA_VERSION\s*=\s*"([^"]+)"/m.exec(source);
+  if (!declaration) throw new Error(`${repo}: src/schema/account.ts declares no exported SCHEMA_VERSION`);
+  return declaration[1];
+}
+
+/**
+ * The field-instructions URL a deployed route serves. Its release manifest lists
+ * the guide under `documentation`, so a schema bump on the route needs no change
+ * here; a route without a manifest falls back to the current file name.
+ */
+async function routeInstructionsUrl(root) {
+  try {
+    const res = await fetch(`${root}release-manifest.json`, FETCH_OPTIONS);
+    if (res.ok) {
+      const manifest = await res.json();
+      const entry = (manifest.documentation ?? []).find((item) => (
+        /^llm-guide\/day2-dashboard-field-instructions-v[\d.]+\.json$/.test(item?.path ?? "")
+      ));
+      if (entry) return `${root}${entry.path}`;
+    }
+  } catch {
+    // An unreachable or malformed manifest falls through to the known file name.
+  }
+  return `${root}llm-guide/day2-dashboard-field-instructions-v${FALLBACK_SCHEMA_VERSION}.json`;
+}
+
 /** Load the field instructions: --instructions, else the dashboard repo's copy, else the deployed route. */
 export async function loadInstructions({ instructions, repo, baseUrl } = {}) {
   if (instructions && !/^https?:/.test(instructions)) {
     return { json: JSON.parse(readFileSync(instructions, "utf8")), from: instructions };
   }
   if (!instructions && repo) {
-    const p = path.join(repo, "src/data/day2-dashboard-field-instructions-v1.10.json");
+    const p = path.join(repo, `src/data/day2-dashboard-field-instructions-v${repoSchemaVersion(repo)}.json`);
     if (existsSync(p)) return { json: JSON.parse(readFileSync(p, "utf8")), from: p };
   }
   const root = (baseUrl ?? DEFAULT_BASE_URL).replace(/\/?$/, "/");
-  const url = instructions ?? `${root}llm-guide/day2-dashboard-field-instructions-v1.10.json`;
-  // The host's WAF rejects generic script user agents; a curl-style UA passes.
-  const res = await fetch(url, { headers: { "User-Agent": "curl/8.7.1" } });
+  const url = instructions ?? await routeInstructionsUrl(root);
+  const res = await fetch(url, FETCH_OPTIONS);
   if (!res.ok) throw new Error(`fetch ${url} -> ${res.status}`);
   return { json: await res.json(), from: url };
 }

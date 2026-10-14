@@ -39,7 +39,7 @@ exactly and record each Id; use the primary account for the cover and account-te
 and group consumption rows by contract. Opportunities from every account feed the same
 pipeline, so de-duplicate by name and close date before assigning `key`s. Entitlement and
 subscription queries (`SBQQ__Subscription__c`, contracts, `ProductUsage__c`) belong to
-`generate-consumption-plan`, not to this sweep.
+`consumption-plan`, not to this sweep.
 
 The **`salesforce-account-profile`** skill's `pipeline` preset remains available as a
 secondary convenience when a packaged snapshot is wanted (it returns the Account

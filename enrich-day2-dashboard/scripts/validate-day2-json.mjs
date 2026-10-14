@@ -1,18 +1,19 @@
 #!/usr/bin/env node
-// Structural validator for schema 1.10 Day 2 dashboard JSON.
+// Structural validator for Day 2 dashboard JSON.
 //
 //   node validate-day2-json.mjs <file> [--instructions <path-or-url>] [--repo <dashboard-repo>]
 //                               [--base-url <deployed-route-url>]
 //
 // Validates against the app's machine-readable field instructions
-// (llm-guide/day2-dashboard-field-instructions-v1.10.json). Instruction source, in
+// (the route's release manifest names the current llm-guide field-instructions file). Instruction source, in
 // order: --instructions, --repo's src/data copy, the deployed route (--base-url,
 // default the alpha host). With --repo it additionally runs the app's real
 // importAccount/toPortableAccount round-trip via a temporary vitest test, which is the
 // authoritative check.
-import { readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { loadInstructions } from "./instructions-lib.mjs";
 
 const args = process.argv.slice(2);
 const file = args.find((a) => !a.startsWith("--"));
@@ -27,22 +28,8 @@ if (!file) {
 const repo = opt("--repo");
 const baseUrl = (opt("--base-url") ?? "https://agenticgtm.alpha.uipath.host/day2-v6/").replace(/\/?$/, "/");
 
-async function loadInstructions() {
-  const src = opt("--instructions");
-  if (src && !/^https?:/.test(src)) return { json: JSON.parse(readFileSync(src, "utf8")), from: src };
-  if (!src && repo) {
-    const p = path.join(repo, "src/data/day2-dashboard-field-instructions-v1.10.json");
-    if (existsSync(p)) return { json: JSON.parse(readFileSync(p, "utf8")), from: p };
-  }
-  const url = src ?? `${baseUrl}llm-guide/day2-dashboard-field-instructions-v1.10.json`;
-  // The host's WAF rejects generic script user agents; a curl-style UA passes.
-  const res = await fetch(url, { headers: { "User-Agent": "curl/8.7.1" } });
-  if (!res.ok) throw new Error(`fetch ${url} -> ${res.status}`);
-  return { json: await res.json(), from: url };
-}
-
 const doc = JSON.parse(readFileSync(file, "utf8"));
-const { json: instructions, from } = await loadInstructions();
+const { json: instructions, from } = await loadInstructions({ instructions: opt("--instructions"), repo, baseUrl });
 const errors = [];
 const warnings = [];
 

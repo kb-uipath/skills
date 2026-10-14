@@ -1,9 +1,9 @@
 ---
 name: enrich-day2-dashboard
-description: Use when asked to build, fill out, enrich, or update a Day 2 Review dashboard (schema 1.10, the /day2-v6 slide app's Background/Sales Plan/Consumption Plan/Stakeholders & Actions tabs) for a named account from real evidence — Salesforce, Slack public channels, Outlook mail/calendar, OneNote/SharePoint, the local Second-brain vault, or Tribble Scribe call notes. Also use when a Day 2 draft has gaps ("Not measured", unranked risks, missing stakeholders) that should be filled from the most recent account activity.
+description: Use when asked to build, fill out, enrich, or update a Day 2 Review dashboard (schema 1.11, the /day2-v6 slide app's Background/Sales Plan/Consumption Plan/Stakeholders & Actions tabs) for a named account from real evidence — Salesforce, Slack public channels, Outlook mail/calendar, OneNote/SharePoint, the local Second-brain vault, or Tribble Scribe call notes. Also use when a Day 2 draft has gaps ("Not measured", unranked risks, missing stakeholders) that should be filled from the most recent account activity.
 ---
 
-# Enrich Day 2 Dashboard (schema 1.10)
+# Enrich Day 2 Dashboard (schema 1.11)
 
 Fill a Day 2 Review account document from evidence, newest first, without inventing
 anything. Deliver into the browser draft store so archive lineage is preserved, and hand
@@ -15,8 +15,8 @@ route (default `https://agenticgtm.alpha.uipath.host/day2-v6/`):
 | Asset | Path |
 | --- | --- |
 | Authoring guide (field semantics, non-fabrication rules) | `llm.md` |
-| Blank template | `llm-guide/day2-dashboard-template-v1.10.json` |
-| Field instructions (machine-readable; wins over `llm.md`) | `llm-guide/day2-dashboard-field-instructions-v1.10.json` |
+| Blank template | `llm-guide/day2-dashboard-template-v1.11.json` |
+| Field instructions (machine-readable; wins over `llm.md`) | `llm-guide/day2-dashboard-field-instructions-v1.11.json` |
 | Worked example | `llm-guide/sonic-automotive-illustrative.day2.json` |
 
 Fetch these with `curl` (the host's WAF rejects Python urllib's default user agent). The
@@ -81,7 +81,7 @@ Schema-1.4 documents and the retired Salesforce-first flow: use `legacy/` unchan
 - **The Consumption Plan tab has its own skill.** Entitlement is not consumption, and its
   rows, ids and forecasts carry decisions the account owner already made. When the baseline
   has a filled `consumptionPlan`, do not write to `consumptionPlan.*`; refresh it with
-  `generate-consumption-plan` instead. From here you may add only the evidence-backed
+  `consumption-plan` instead. From here you may add only the evidence-backed
   `renewalEconomics.*` fields.
 - **Confidential handling.** Evidence notes, the enriched JSON, and the provenance
   report are confidential customer artifacts: keep findings notes in the session scratchpad,
@@ -117,7 +117,7 @@ Pick the baseline, in order of preference:
    ```
 2. **Exported JSON** — the app's Export JSON of the current draft, or the working file the
    user already has (check the working folder first: a prior run's JSON is the baseline).
-3. **Blank template** — `llm-guide/day2-dashboard-template-v1.10.json` for a brand-new
+3. **Blank template** — `llm-guide/day2-dashboard-template-v1.11.json` for a brand-new
    account.
 
 Then run the gap inventory; it is the scope of the sweep:
@@ -239,7 +239,7 @@ Edit UI (slower, same lineage).
 | Writing dollar figures derived from hours-saved claims | Money only from contract/validated statements; leave null otherwise |
 | Marking health/severity from meeting tone, or copying severities from a deck an assistant drafted | Judgment fields need explicit team statements from a person |
 | Importing again to "update" a draft | Import makes a new draft each time; update in place, or tell the user which card is newest |
-| Overwriting existing Consumption Plan rows from an enrichment sweep | That tab belongs to `generate-consumption-plan`; leave its rows and ids alone |
+| Overwriting existing Consumption Plan rows from an enrichment sweep | That tab belongs to `consumption-plan`; leave its rows and ids alone |
 | Treating a `draft` Second-brain account page as evidence | Zero compiled sources means the vault knows nothing; report it and use other sources |
 | Filling "empty-looking" fields with placeholders | Gaps are a feature; the deck renders them deliberately |
 | Attributing a quote to "Mel"/first names | Verify identity via signature or role context first |

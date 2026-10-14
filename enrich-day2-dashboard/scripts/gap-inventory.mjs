@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Gap inventory for a schema 1.10 Day 2 dashboard JSON: step 1 of the enrichment process.
+// Gap inventory for a schema 1.11 Day 2 dashboard JSON: step 1 of the enrichment process.
 //
 //   node gap-inventory.mjs <file> [--repo <dashboard-repo>] [--instructions <path-or-url>]
 //                          [--base-url <deployed-route-url>] [--who evidence,attest,human] [--all] [--json]

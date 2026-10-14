@@ -1,6 +1,6 @@
-# Evidence → field mapping (schema 1.10)
+# Evidence → field mapping (schema 1.11)
 
-**The field instructions JSON (`llm-guide/day2-dashboard-field-instructions-v1.10.json`) is
+**The field instructions JSON (`llm-guide/day2-dashboard-field-instructions-v1.11.json`) is
 the source of truth** for field semantics, enums, formats and — above all — who may write
 each field (`writePolicy`). `llm.md` narrates it. This table only maps *kinds of evidence*
 to the fields they may fill, per tab. Where this table and the instructions disagree, the
@@ -41,7 +41,7 @@ The one `not_used` field the UI edits without that limit is `relationships`, whi
 | `functionalNeeds[]` (renders as "Asks") | evidence for `need`/`whyItMatters`; **`function`, `accountableOwner`, `dueDate` are `human_only`; `status` is attest** | A need is only publishable once a person supplies the human-only fields, so add one only when the user authors them |
 | `background.coreMotions[]` (`label`, `active`) | attest | Explicit statements of which named motions are actively pursued for this account |
 | `bottomLineStatus` | attest | Judgment field — explicit team statement only ("Watch"/"At risk"/"Healthy") |
-| `health.*` (nine fixed keys) | `evidence` text is evidence; `status`, `owner`, `mitigation` are `human_only` | Renders on no schema-1.10 tab; leave alone |
+| `health.*` (nine fixed keys) | `evidence` text is evidence; `status`, `owner`, `mitigation` are `human_only` | Renders on no schema-1.11 tab; leave alone |
 
 ## Sales Plan tab
 
@@ -57,7 +57,7 @@ The one `not_used` field the UI edits without that limit is `relationships`, whi
 
 ## Consumption Plan tab
 
-Owned by `generate-consumption-plan`. When the baseline already carries a filled
+Owned by `consumption-plan`. When the baseline already carries a filled
 `consumptionPlan`, an enrichment run does not write to it. For a blank plan, use that skill.
 
 | Field | Policy | Evidence that may fill it |
@@ -91,7 +91,7 @@ risk with no new evidence keeps its previous state. The apply script does both.
 `workstreams`, `timeline`, `programClock`, `consumptionHeadline`, `consumptionDrivers`,
 `keyActivities`, `customerSignals`, `health`, `statusSummary`, `segment`, `useCases`,
 `deliveryModel`, `discountRatePercent` and `annualizedValueToDateUsd` are preserved
-through import/export but render on no schema-1.10 tab (the app's slide code never reads
+through import/export but render on no schema-1.11 tab (the app's slide code never reads
 `consumptionHeadline` or `consumptionDrivers`). Do not spend a sweep pass filling them —
 if evidence for one surfaces incidentally, note it in the findings file as "no current
 home" rather than writing it, so nothing is silently lost if a future tab adopts it.

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Apply an evidence findings file to a schema 1.10 Day 2 document, with the app's write policy enforced.
+// Apply an evidence findings file to a schema 1.11 Day 2 document, with the app's write policy enforced.
 //
 //   node apply-findings.mjs <baseline.json> <findings.json> [--out <file>] [--report <file>] [--dry-run]
 //                           [--repo <dashboard-repo>] [--instructions <path-or-url>] [--base-url <url>]
