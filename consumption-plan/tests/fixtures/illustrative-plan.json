@@ -1,0 +1,9 @@
+{
+  "account": { "name": "Example Corp (Illustrative)", "salesforceId": "" },
+  "asOf": "2026-08-01",
+  "rows": [
+    { "category": "Users", "product": "Automation Developer", "productCode": "", "unit": "users", "licensingModel": "capped", "arrUsd": 60000, "discountPercent": 25, "purchasedQuantity": 20, "consumedQuantity": null, "forecastUnits": { "q1": null, "q2": null, "q3": null, "q4": null }, "notes": "" },
+    { "category": "Robots", "product": "Unattended Robot", "productCode": "UIFDUR00000", "unit": "robots", "licensingModel": "capped", "arrUsd": 300000, "discountPercent": 32.5, "purchasedQuantity": 100, "consumedQuantity": 60, "forecastUnits": { "q1": 65, "q2": 80, "q3": null, "q4": null }, "notes": "Illustrative: a Q3 program review puts 40 more robots live in November." },
+    { "category": "Consumables", "product": "AI Units", "productCode": "", "unit": "units", "licensingModel": "capped", "arrUsd": 40000, "discountPercent": 20, "purchasedQuantity": 1000000, "consumedQuantity": null, "forecastUnits": { "q1": null, "q2": null, "q3": null, "q4": null }, "notes": "" }
+  ]
+}
