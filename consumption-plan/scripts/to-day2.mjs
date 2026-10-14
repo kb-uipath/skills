@@ -115,6 +115,23 @@ function setReported(target, key, value, where, report) {
 }
 
 /**
+ * A refresh measured in a later fiscal quarter re-labels every quarter column, but
+ * the baseline's consumption and Q+1-Q+4 figures were measured against the old
+ * window. They are not shifted or cleared here -- whether each still holds is a
+ * judgment about what it meant -- so the move is reported for the agent to resolve
+ * in the plan file.
+ */
+function reportWindowShift(previousAsOf, asOf, report) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(previousAsOf)) return;
+  const previous = new Date(`${previousAsOf}T00:00:00Z`);
+  if (Number.isNaN(previous.getTime())) return;
+  const before = resolveForecastWindow(previous).currentPeriod;
+  const after = resolveForecastWindow(new Date(`${asOf}T00:00:00Z`)).currentPeriod;
+  if (before === after) return;
+  report.push(`consumptionPlan.asOf moves from ${before} to ${after}: the baseline's actualConsumed and forecastUnits were measured against the old quarter window. Re-express them in the plan file (or clear them) before delivering.`);
+}
+
+/**
  * Pairs plan rows with baseline rows. Every SKU is matched across the whole plan
  * before any name is, so a SKU-less plan row cannot take, by name, the row a later
  * plan row's SKU identifies; and a name never pairs two rows whose SKUs disagree.
@@ -206,6 +223,7 @@ export function toDay2(plan, baseline) {
     document.customerName = accountName;
     report.push(`customerName set to "${accountName}", the Salesforce account name.`);
   }
+  reportWindowShift(typeof consumptionPlan.asOf === "string" ? consumptionPlan.asOf.trim() : "", asOf, report);
   setReported(consumptionPlan, "asOf", asOf, "consumptionPlan.asOf", report);
   setReported(
     consumptionPlan,

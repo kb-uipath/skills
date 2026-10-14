@@ -246,7 +246,10 @@ wins.
    Read the report: rows matched, added, or kept from the baseline, every figure that
    changed, a Current ARR it left alone, and any use case pointing at a row the plan
    does not have. A matched row keeps its label and category; an empty plan field never
-   erases what the account team entered.
+   erases what the account team entered. If the baseline's `asOf` falls in an earlier
+   fiscal quarter than the plan's, the report says so: the baseline's consumption and
+   forecast figures describe the old window, so re-express them in the plan file — or
+   clear them with the account team's agreement — and tell the user, before delivering.
 3. **Validate** against the app's real importer, then reconcile attribution:
    ```bash
    node <enrich-day2-dashboard skill root>/scripts/validate-day2-json.mjs <account>.day2.json --repo "<dashboard repo>"

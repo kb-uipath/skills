@@ -176,3 +176,21 @@ test("refuses placeholder values but keeps notes and names that merely start wit
     assert.throws(() => toDay2(draft, blank()), PlanError, value);
   }
 });
+
+test("reports a refresh that moves into a later fiscal quarter, without shifting the team's figures", () => {
+  const baseline = toDay2(plan(), blank()).document;
+  const later = plan();
+  later.asOf = "2026-11-10";
+  later.rows[1].consumedQuantity = null;
+  later.rows[1].forecastUnits = { q1: null, q2: null, q3: null, q4: null };
+  const { document, report } = toDay2(later, baseline);
+  assert.equal(document.consumptionPlan.groups[1].rows[0].actualConsumed, 60);
+  assert.ok(report.some((line) => line.startsWith("consumptionPlan.asOf moves from FY27 Q3 to FY27 Q4")), report.join("\n"));
+});
+
+test("says nothing about the window when the quarter is unchanged", () => {
+  const baseline = toDay2(plan(), blank()).document;
+  const sameQuarter = plan();
+  sameQuarter.asOf = "2026-09-15";
+  assert.ok(!toDay2(sameQuarter, baseline).report.some((line) => line.includes("moves from")));
+});
