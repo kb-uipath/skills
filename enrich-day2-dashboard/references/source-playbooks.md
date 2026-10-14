@@ -33,6 +33,14 @@ one plausible Account comes back, stop and ask the user which one — never pick
 row, and never merge two candidates' data. Record the resolved Account `Id` in the
 findings file and filter every subsequent query on it.
 
+**One customer, several accounts.** A Day 2 document can span more than one Salesforce
+account (one customer can hold two accounts on two contracts). Resolve each
+exactly and record each Id; use the primary account for the cover and account-team fields,
+and group consumption rows by contract. Opportunities from every account feed the same
+pipeline, so de-duplicate by name and close date before assigning `key`s. Entitlement and
+subscription queries (`SBQQ__Subscription__c`, contracts, `ProductUsage__c`) belong to
+`generate-consumption-plan`, not to this sweep.
+
 The **`salesforce-account-profile`** skill's `pipeline` preset remains available as a
 secondary convenience when a packaged snapshot is wanted (it returns the Account
 overview, open Opportunities and owner hierarchy, with its own disambiguation stop):
@@ -104,6 +112,40 @@ Tools: Glean `search` (app filters `o365sharepoint`/`o365onedrive`), `sharepoint
 3. Spreadsheets and decks in the account folder are often the richest source for
    entitlements, consumption plans, and pipeline inventories — record the file's
    last-modified date as the as-of date.
+
+## Owner-authored working documents
+
+Check the owner's own working folder for the account before the external sources: status
+pages, weekly updates, planning workbooks and decks the account owner wrote. A dated
+document the owner authored is an attributable account-team statement, which is what
+`attest` fields need — but only for the sentences the owner wrote. A deck or tracker an
+assistant drafted ("severities drafted for X to confirm") is not. Record the file's
+last-modified date as the as-of date, and note who authored each part when it is mixed.
+
+## Second-brain vault (local)
+
+The owner's local LLM wiki, at the path the owner gives you.
+Read-only in this flow; its `AGENTS.md` is its own schema, so skim the ownership and
+page-contract sections before relying on a page.
+
+1. Find the account page at `wiki/accounts/<id>.md` and the `wiki/people/`,
+   `wiki/decisions/` and `wiki/contracts/` pages that link to it (`wiki/index.md` is the
+   catalog; `python3 scripts/wiki.py search "<question>"` is a read-only ranked lookup).
+2. **Check what it holds before using it.** Frontmatter `status: draft`, `sources: []` or a
+   "No approved evidence has been compiled" body means the vault knows nothing about the
+   account yet. That is a finding for the report, not evidence; its `health: unknown` is
+   not a statement about the account.
+3. What counts as evidence: compiled `wiki/` claims that cite a raw source (digest-bound
+   `type: source` pages). Read the raw source for anything decisive. `ops/` pages are
+   pointers and measurements, and `briefs/` are generated, disposable outputs: neither is
+   ever cited. The `briefs/*-telemetry-*.md` files are the practical exception for
+   locating the latest Power BI readings; cite the dashboard and its data-updated date, and
+   say the brief is generated.
+4. The vault is local-only by owner decision and forbids record-level content for some
+   accounts (it can bar patient, beneficiary, member, claim, case and medical-record
+   material). Keep to program-level facts, and treat a claim sourced from
+   `call-notes://` as Tribble-derived: it needs the Tribble consent.
+5. Never write to the vault from this flow.
 
 ## Tribble Scribe (local call notes)
 

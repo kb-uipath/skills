@@ -27,10 +27,32 @@ tokens, no message bodies.
 
 ## Deliberately left empty
 
+Take this from `gap-inventory.mjs` run on the delivered JSON: every row still listed is
+either here or under the next two tables.
+
 | Field | Why |
 | --- | --- |
 | supportTier | No statement found in window |
 | pipelineOpportunities[].estimatedIarrUsd | Hours evidence only; no dollar statement |
+
+## For the account team to author (human_only; suggestions, not written)
+
+| Field | Suggested value | Basis |
+| --- | --- | --- |
+| pipelineOpportunities[0].owner | <Name> | Salesforce opportunity owner, <ISO date> |
+| background.accountStrategy | (none; human-authored) | |
+
+## Waiting on a named person's statement (attestation_allowed, not written)
+
+| Field | Evidence available | What the statement must say |
+| --- | --- | --- |
+| risks[0].severity | Risk is documented; no ranking stated | High / Medium / Low from an account-team member |
+
+## Sources that held nothing
+
+| Source | What was checked | Result |
+| --- | --- | --- |
+| Second-brain `wiki/accounts/<id>.md` | Frontmatter and sources | `status: draft`, zero compiled sources |
 
 ## Recency conflicts resolved
 
