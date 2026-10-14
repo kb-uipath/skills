@@ -19,7 +19,10 @@ import { isMain } from "./cli.mjs";
 import { resolveForecastWindow } from "./resolve-quarters.mjs";
 
 const QUARTERS = ["q1", "q2", "q3", "q4"];
-const PLACEHOLDER = /^(?:tbd|tba|n\/?a|unknown|placeholder|pending)\b/i;
+/** Tokens that make any value a placeholder, wherever they start it ("TBD - team to provide"). */
+const PLACEHOLDER_PREFIX = /^(?:tbd|tba|tbc|n\/a)\b/i;
+/** Words that are a placeholder only when they are the whole value ("Pending" is; "Pending Q3 review" is a note). */
+const PLACEHOLDER_WHOLE = /^(?:unknown|pending|placeholder|none|null|n\.?a\.?|to be (?:determined|confirmed)|not (?:available|known|stated)|-+|—+|\?+)$/i;
 const LICENSING_MODELS = new Set(["", "unlimited", "capped"]);
 /** Fields a refresh may update on a matched row. The label and category stay the team's. */
 const MERGED_FIELDS = ["unit", "skuCode", "licensingModel", "soldQuantity", "soldArrUsd", "discountPercent", "actualConsumed", "comments"];
@@ -29,11 +32,15 @@ export class PlanError extends Error {}
 const normalizeName = (value) => String(value ?? "").normalize("NFKC").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 const label = (row) => row.offering || row.product || "Unnamed row";
 
-function text(value, where) {
+function isPlaceholder(value, { prefix = true } = {}) {
+  return PLACEHOLDER_WHOLE.test(value) || (prefix && PLACEHOLDER_PREFIX.test(value));
+}
+
+function text(value, where, options) {
   if (value === undefined || value === null) return "";
   if (typeof value !== "string") throw new PlanError(`${where} must be a string`);
   const trimmed = value.trim();
-  if (PLACEHOLDER.test(trimmed)) {
+  if (isPlaceholder(trimmed, options)) {
     throw new PlanError(`${where} is placeholder text (${JSON.stringify(trimmed)}); leave it empty instead`);
   }
   return trimmed;
@@ -107,14 +114,30 @@ function setReported(target, key, value, where, report) {
   target[key] = value;
 }
 
-/** The first unmatched baseline row with the plan row's SKU, else its name. Removed from the pool. */
-function takeMatch(candidates, fields) {
-  const bySku = fields.skuCode ? candidates.findIndex(({ row }) => row.skuCode === fields.skuCode) : -1;
-  const name = normalizeName(fields.offering);
-  const index = bySku >= 0
-    ? bySku
-    : candidates.findIndex(({ row }) => [row.offering, row.product].some((value) => normalizeName(value) === name));
-  return index < 0 ? null : candidates.splice(index, 1)[0];
+/**
+ * Pairs plan rows with baseline rows. Every SKU is matched across the whole plan
+ * before any name is, so a SKU-less plan row cannot take, by name, the row a later
+ * plan row's SKU identifies; and a name never pairs two rows whose SKUs disagree.
+ * Matched baseline rows leave the pool, which afterwards holds the unmatched ones.
+ */
+function pairRows(planRows, candidates) {
+  const pairs = planRows.map(() => null);
+  planRows.forEach(({ fields }, index) => {
+    if (!fields.skuCode) return;
+    const at = candidates.findIndex(({ row }) => row.skuCode === fields.skuCode);
+    if (at >= 0) pairs[index] = candidates.splice(at, 1)[0];
+  });
+  planRows.forEach(({ fields }, index) => {
+    if (pairs[index]) return;
+    const name = normalizeName(fields.offering);
+    const at = candidates.findIndex(({ row }) => (
+      name !== ""
+      && !(fields.skuCode && row.skuCode && row.skuCode !== fields.skuCode)
+      && [row.offering, row.product].some((value) => normalizeName(value) === name)
+    ));
+    if (at >= 0) pairs[index] = candidates.splice(at, 1)[0];
+  });
+  return pairs;
 }
 
 function mergeRow(row, fields, report) {
@@ -178,7 +201,7 @@ export function toDay2(plan, baseline) {
   const consumptionPlan = (document.consumptionPlan ??= {});
   const groups = (consumptionPlan.groups ??= []);
 
-  const accountName = text(plan.account?.name, "account.name");
+  const accountName = text(plan.account?.name, "account.name", { prefix: false });
   if (!String(document.customerName ?? "").trim() && accountName) {
     document.customerName = accountName;
     report.push(`customerName set to "${accountName}", the Salesforce account name.`);
@@ -193,8 +216,9 @@ export function toDay2(plan, baseline) {
   );
 
   const unmatched = groups.flatMap((group) => (group.rows ??= []).map((row) => ({ group, row })));
-  for (const { category, fields } of planRows) {
-    const match = takeMatch(unmatched, fields);
+  const pairs = pairRows(planRows, unmatched);
+  planRows.forEach(({ category, fields }, index) => {
+    const match = pairs[index];
     if (match) {
       mergeRow(match.row, fields, report);
       if (category && normalizeName(category) !== normalizeName(match.group.element)) {
@@ -204,7 +228,7 @@ export function toDay2(plan, baseline) {
       groupFor(groups, category).rows.push({ ...fields, forecastUnits: { ...fields.forecastUnits } });
       report.push(`${fields.offering}: added under "${category || "Uncategorized"}".`);
     }
-  }
+  });
   for (const { row } of unmatched) report.push(`${label(row)}: in the baseline but not in the plan; kept unchanged.`);
 
   reportDanglingAllocations(document, report);
