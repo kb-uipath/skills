@@ -57,9 +57,12 @@ before resolving the Account). Do not use `salesforce-meddpicc-update` (write-ca
 wrong shape for this read-only flow) or the retired `sf`-CLI schema-1.4-era flow in
 `legacy/` — do not port that machinery here.
 
-SFDC is strong for: Sales Plan pipeline `stage`/`estimatedIarrUsd`/`nextGateDate`, the
-account team names for `background.region` and `accountTeam.*`, and confirming
-`pipelineOpportunities[].owner`. It is weak or unusable for anything judgment- or
+SFDC is strong for: the pipeline (`name`, `key`, owner, close date — v7's pursuit cards and
+`liveBy`; v6's Sales Plan `stage`/`estimatedIarrUsd`/`nextGateDate`), the account team
+names for `accountTeam.*` (and v6's `background.region`), the contract dates behind v7's
+`snapshot.contractStartDate` and `renewalDate`, and confirming
+`pipelineOpportunities[].owner`. An opportunity amount is new sales: it never becomes a v7
+pursuit's unit draw or Est. rev. It is weak or unusable for anything judgment- or
 narrative-based: `background.accountStrategy`, `salesPlan.executionPlan`
 (`day30`/`day60`/`day90`), `salesPlan.nextExecutiveMove`, `background.coreMotions[]`,
 `renewalEconomics.assurance`, and any `relationships[].relationshipStatus` or MEDDPICC-style

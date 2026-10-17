@@ -1,23 +1,30 @@
 ---
 name: enrich-day2-dashboard
-description: Use when asked to build, fill out, enrich, or update a Day 2 Review dashboard (schema 1.11, the /day2-v6 slide app's Background/Sales Plan/Consumption Plan/Stakeholders & Actions tabs) for a named account from real evidence — Salesforce, Slack public channels, Outlook mail/calendar, OneNote/SharePoint, the local Second-brain vault, or Tribble Scribe call notes. Also use when a Day 2 draft has gaps ("Not measured", unranked risks, missing stakeholders) that should be filled from the most recent account activity.
+description: Use when asked to build, fill out, enrich, or update a Day 2 Review dashboard (schema 1.12, the /day2-v7 app's AMER CS Day 2 Template tabs - Snapshot, Renewal Test, Strategic Initiatives; or schema 1.11 on /day2-v6's Tier A tabs) for a named account from real evidence — Salesforce, Slack public channels, Outlook mail/calendar, OneNote/SharePoint, the local Second-brain vault, or Tribble Scribe call notes. Also use when a Day 2 draft has gaps ("Not measured", unranked risks, missing stakeholders) that should be filled from the most recent account activity.
 ---
 
-# Enrich Day 2 Dashboard (schema 1.11)
+# Enrich Day 2 Dashboard (schema 1.12, /day2-v7)
 
 Fill a Day 2 Review account document from evidence, newest first, without inventing
 anything. Deliver into the browser draft store so archive lineage is preserved, and hand
 the user a provenance report. The archive save itself is always the user's call.
 
 The deployed app is the contract. Its guide and machine-readable schema live at the
-route (default `https://agenticgtm.alpha.uipath.host/day2-v6/`):
+route (default `https://agenticgtm.alpha.uipath.host/day2-v7/`):
 
 | Asset | Path |
 | --- | --- |
 | Authoring guide (field semantics, non-fabrication rules) | `llm.md` |
-| Blank template | `llm-guide/day2-dashboard-template-v1.11.json` |
-| Field instructions (machine-readable; wins over `llm.md`) | `llm-guide/day2-dashboard-field-instructions-v1.11.json` |
+| Blank template | `llm-guide/day2-dashboard-template-v1.12.json` |
+| Field instructions (machine-readable; wins over `llm.md`) | `llm-guide/day2-dashboard-field-instructions-v1.12.json` |
 | Worked example | `llm-guide/sonic-automotive-illustrative.day2.json` |
+
+`/day2-v7` renders the AMER CS Day 2 Template: the cover plus **Snapshot** (account play,
+bottom line, the ARR equation, three top-pursuit cards with their unit draw, the CS Day 2
+Priorities), **Renewal Test** (a verdict band and, per consumption row, the pipeline that
+consumes it) and **Strategic Initiatives** (five fixed rows). A schema 1.11 document for
+`/day2-v6`'s Tier A tabs still works: pass `--base-url https://agenticgtm.alpha.uipath.host/day2-v6/`
+and the scripts follow that route's own guide, including its tab map.
 
 Fetch these with `curl` (the host's WAF rejects Python urllib's default user agent). The
 field instructions are ~350 KB: filter them by pointer prefix instead of reading them whole.
@@ -78,11 +85,24 @@ Schema-1.4 documents and the retired Salesforce-first flow: use `legacy/` unchan
 - **Preserve ids and existing content.** When enriching an existing document, keep every
   existing `id` unchanged; new collection entries get fresh UUIDs (the apply script mints
   them). Never overwrite a non-empty value without a stated reason in the finding.
-- **The Consumption Plan tab has its own skill.** Entitlement is not consumption, and its
+- **The consumption rows have their own skill.** Entitlement is not consumption, and the
   rows, ids and forecasts carry decisions the account owner already made. When the baseline
   has a filled `consumptionPlan`, do not write to `consumptionPlan.*`; refresh it with
-  `consumption-plan` instead. From here you may add only the evidence-backed
-  `renewalEconomics.*` fields.
+  `consumption-plan` instead. From here you may add the evidence-backed
+  `renewalEconomics.*` fields and the v7 containers that *refer* to rows — `renewalTest.rows`
+  and a pursuit's `draw` — naming each row as `ref:row:<offering>`. The apply script
+  resolves the reference and, when a row has no id yet, gives it a deterministic one: the
+  only thing it ever writes on a row.
+- **Est. rev. is derived, never entered.** A pursuit card's Est. rev. is its unit draw
+  priced at the account's contracted unit prices. Fill `snapshot.pursuits[].draw[]` (units
+  per row) only from a sizing — a solution design, a sizing workbook, a stated estimate —
+  and never back-solve units from a Salesforce opportunity amount, which is new sales, not
+  entitlement being consumed. `renewalTest.rows[].demand6MoUnits`/`demand12MoUnits` come
+  only from a stated forecast.
+- **The five strategic initiatives are fixed.** Update a row by its `initiative`
+  (`agentification`, `codingAgents`, `orchestration`, `applicationTesting`,
+  `verticalSolutions`); the apply script refuses to add one. A milestone needs a date, an
+  outcome needs a number, and a status needs the row owner's statement.
 - **Confidential handling.** Evidence notes, the enriched JSON, and the provenance
   report are confidential customer artifacts: keep findings notes in the session scratchpad,
   never commit anything to a repo, and keep verbatim customer quotes and transcript
@@ -117,7 +137,7 @@ Pick the baseline, in order of preference:
    ```
 2. **Exported JSON** — the app's Export JSON of the current draft, or the working file the
    user already has (check the working folder first: a prior run's JSON is the baseline).
-3. **Blank template** — `llm-guide/day2-dashboard-template-v1.11.json` for a brand-new
+3. **Blank template** — `llm-guide/day2-dashboard-template-v1.12.json` for a brand-new
    account.
 
 Then run the gap inventory; it is the scope of the sweep:
@@ -173,6 +193,16 @@ quietly dropping it.
   and aborts the whole run on any refusal. New records get deterministic ids (the same
   finding gets the same id on every rebuild), so keep the findings file as the durable
   evidence record and rebuild from baseline + findings rather than patching the output.
+  v7 entries name the records they refer to: `ref:row:<offering>` (or
+  `ref:row:<category>|<offering>` when two categories share an offering) for
+  `renewalTest.rows[].rowId` and `snapshot.pursuits[].draw[].rowId`, and
+  `ref:opportunity:<key>` for `snapshot.pursuits[].opportunityId` and
+  `snapshot.topPursuitIds[]`. A reference that matches nothing, or more than one record,
+  or that names the wrong kind of record for its field, refuses the run.
+  Add a draw line with `add` (to `snapshot.pursuits`, or to one pursuit's `draw`): lines
+  merge by row, so a line for a row the pursuit already draws on is patched and the lines
+  the team added in the app are kept. `set` writes one field or a list of strings, never a
+  list of records.
   Fix the finding, never the guard. `--dry-run` previews.
 - Map evidence types to fields with
   [references/field-mapping.md](references/field-mapping.md), deferring to the field
@@ -191,8 +221,10 @@ Two modes — pick deliberately, the difference is archive lineage:
 - **In-place draft update (default when a draft/archive lineage exists).** Replace the
   account JSON inside the existing browser draft so the next archive save becomes the
   next revision with the correct parent. The draft store is a single localStorage
-  envelope on the app origin (`uipath-day2-v3-browser-repository:v1:day2-v6:<principalId>`,
-  holding `currentDrafts[{accountKey, revisionId}]` and `draftRevisions[]`); replicate
+  envelope on the app origin, keyed by route slug
+  (`uipath-day2-v3-browser-repository:v1:day2-v7:<principalId>` for `/day2-v7`; `day2-v6`
+  for `/day2-v6`), holding `currentDrafts[{accountKey, revisionId}]` and
+  `draftRevisions[]`. Replicate
   `saveMyDraft` exactly (canonical JSON → SHA-256 draft token, predecessor token,
   generation bump, retention of current + last 24).
   Read the envelope contract in the dashboard repo's
@@ -219,9 +251,11 @@ Edit UI (slower, same lineage).
 
 ### 6. Verify and hand off
 
-- Reload the app; confirm all four slides render the enriched content and the console is
-  clean. The read-only view shows each forecast quarter as a percentage of the row's own
-  sold quantity; the editing view shows raw quantities.
+- Reload the app; confirm the cover and the three tabs render the enriched content and the
+  console is clean. On the Snapshot, every top-pursuit card should show an Est. rev. (a gap
+  there means a draw is unsized or on an unpriced row) and the Known pipeline demand card
+  should equal the total column. On the Renewal Test, a "Set the healthy threshold" gap
+  means the account team has not agreed `healthyAtPercent` yet — that is theirs to set.
 - Confirm lineage: open the Save to Shared Archive dialog and check its "Parent
   revision" line equals the account's latest archived revision id (none is shown for a
   brand-new account). The Save button stays disabled until the attestation checkbox is
@@ -239,7 +273,11 @@ Edit UI (slower, same lineage).
 | Writing dollar figures derived from hours-saved claims | Money only from contract/validated statements; leave null otherwise |
 | Marking health/severity from meeting tone, or copying severities from a deck an assistant drafted | Judgment fields need explicit team statements from a person |
 | Importing again to "update" a draft | Import makes a new draft each time; update in place, or tell the user which card is newest |
-| Overwriting existing Consumption Plan rows from an enrichment sweep | That tab belongs to `consumption-plan`; leave its rows and ids alone |
+| Overwriting existing Consumption Plan rows from an enrichment sweep | Rows belong to `consumption-plan`; leave them alone and refer to them with `ref:row:` |
+| Entering the Salesforce opportunity amount as a pursuit's Est. rev., or back-solving units from it | Est. rev. is derived from a sized unit draw; leave the draw empty until a sizing states it |
+| Setting the healthy threshold from an example (70%, 85%) | `renewalTest.healthyAtPercent` is `human_only`: the account team agrees it for this account |
+| Adding a sixth strategic initiative | The five are fixed; record other work as a CS Day 2 Priority |
+| Writing a raw row or opportunity id into a finding | Name it with `ref:row:` / `ref:opportunity:`; ids are minted and resolved by the script |
 | Treating a `draft` Second-brain account page as evidence | Zero compiled sources means the vault knows nothing; report it and use other sources |
 | Filling "empty-looking" fields with placeholders | Gaps are a feature; the deck renders them deliberately |
 | Attributing a quote to "Mel"/first names | Verify identity via signature or role context first |

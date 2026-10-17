@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Gap inventory for a schema 1.11 Day 2 dashboard JSON: step 1 of the enrichment process.
+// Gap inventory for a schema 1.11 or 1.12 Day 2 dashboard JSON: step 1 of the enrichment process.
 //
 //   node gap-inventory.mjs <file> [--repo <dashboard-repo>] [--instructions <path-or-url>]
 //                          [--base-url <deployed-route-url>] [--who evidence,attest,human] [--all] [--json]
@@ -12,7 +12,7 @@
 //   skip      system-managed, preserve-only, constant or unused (shown only with --all)
 // BLOCKS marks a field the publication rules require. Read-only: nothing is modified.
 import { readFileSync } from "node:fs";
-import { loadInstructions, resolve, whoMayFill, tabOf, isEmpty, recordLabel } from "./instructions-lib.mjs";
+import { loadInstructions, resolve, whoMayFill as policyOf, tabOf, tabOrder, isEmpty, recordLabel } from "./instructions-lib.mjs";
 
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
@@ -25,6 +25,8 @@ if (!file) {
 
 const doc = JSON.parse(readFileSync(file, "utf8"));
 const { json: instructions, from } = await loadInstructions({ instructions: opt("--instructions"), repo: opt("--repo"), baseUrl: opt("--base-url") });
+const schemaVersion = instructions.targetSchemaVersion;
+const whoMayFill = (spec, pointer) => policyOf(spec, pointer, schemaVersion);
 const wanted = new Set((opt("--who") ?? "evidence,attest,human").split(","));
 if (flag("--all")) wanted.add("skip");
 
@@ -56,7 +58,7 @@ for (const [pointer, spec] of Object.entries(instructions.fields ?? {})) {
           .map(([p, s]) => `${whoMayFill(s, p)}: ${p.slice(pointer.length + 3)}`)
       : [];
     rows.push({
-      tab: tabOf(pointer),
+      tab: tabOf(pointer, schemaVersion),
       pointer: at,
       generic: pointer,
       who,
@@ -78,7 +80,7 @@ if (flag("--json")) {
 }
 
 function printReport() {
-  const TAB_ORDER = ["Cover", "Background", "Sales Plan", "Consumption Plan", "Stakeholders & Actions", "No tab today"];
+  const TAB_ORDER = tabOrder(schemaVersion);
   const WHO_ORDER = ["evidence", "attest", "human", "skip"];
   console.log(`Gap inventory: ${file}  (schema ${doc.schemaVersion}; instructions: ${from})`);
   console.log("who: evidence = skill, from a dated source | attest = only an explicit named statement | human = account team only | BLOCKS = required for publication\n");

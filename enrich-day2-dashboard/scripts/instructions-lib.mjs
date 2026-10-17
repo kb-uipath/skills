@@ -6,9 +6,9 @@
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 
-const DEFAULT_BASE_URL = "https://agenticgtm.alpha.uipath.host/day2-v6/";
+const DEFAULT_BASE_URL = "https://agenticgtm.alpha.uipath.host/day2-v7/";
 
-const FALLBACK_SCHEMA_VERSION = "1.11";
+const FALLBACK_SCHEMA_VERSION = "1.12";
 // The host's WAF rejects generic script user agents; a curl-style UA passes.
 const FETCH_OPTIONS = { headers: { "User-Agent": "curl/8.7.1" } };
 
@@ -95,7 +95,7 @@ export function descriptorFor(fields, concretePointer) {
  *   human     -> never the skill; the account team authors it (the report may offer a suggestion)
  *   skip      -> system-managed, preserve-only, constant or unused: leave exactly as found
  */
-export function whoMayFill(spec, pointer = "") {
+export function whoMayFill(spec, pointer = "", schemaVersion) {
   if (!spec) return "skip";
   // `requirement: not_used` means "no publication requirement", not "never rendered". Three cases:
   //  - no tab reads the field: skip;
@@ -103,7 +103,7 @@ export function whoMayFill(spec, pointer = "") {
   //  - the slides draw it and the UI edits it, but its instructions allow only approved or verified legacy content
   //    (`goals`, `cadenceGoals`): a person approves the content, so the skill proposes it and never writes it unasked.
   if (spec.requirement === "not_used") {
-    if (tabOf(pointer) === "No tab today") return "skip";
+    if (tabOf(pointer, schemaVersion) === "No tab today") return "skip";
     if (spec.uiVisibility !== "editable") return ["evidence_required", "attestation_allowed"].includes(spec.writePolicy) ? "human" : "skip";
   }
   switch (spec.writePolicy) {
@@ -114,21 +114,53 @@ export function whoMayFill(spec, pointer = "") {
   }
 }
 
-/** Which deck surface reads a top-level key (llm.md, "How your JSON becomes the deck"). */
-const TAB_BY_TOP_KEY = {
-  schemaVersion: "Cover", customerName: "Cover", reviewTier: "Cover", reviewAsOfDate: "Cover", dataClassification: "Cover",
-  accountTeam: "Background", supportTier: "Background", renewalDate: "Background", deploymentType: "Background",
-  bottomLineStatus: "Background", background: "Background", goals: "Background", risks: "Background",
-  functionalNeeds: "Background", renewalEconomics: "Background",
-  pipelineOpportunities: "Sales Plan", salesPlan: "Sales Plan",
-  consumptionPlan: "Consumption Plan",
-  cadenceGoals: "Stakeholders & Actions", stakeholdersActions: "Stakeholders & Actions",
-  relationships: "Stakeholders & Actions", stakeholderGaps: "Stakeholders & Actions",
+/**
+ * Which deck surface reads a top-level key (llm.md, "How your JSON becomes the deck"). Schema 1.9-1.11
+ * documents render the Tier A tabs (/day2-v6); 1.12 and later render the AMER CS Day 2 Template
+ * (/day2-v7). The map follows the contract's own version, so one skill serves both routes.
+ */
+const TABS_1_11 = {
+  order: ["Cover", "Background", "Sales Plan", "Consumption Plan", "Stakeholders & Actions", "No tab today"],
+  byTopKey: {
+    schemaVersion: "Cover", customerName: "Cover", reviewTier: "Cover", reviewAsOfDate: "Cover", dataClassification: "Cover",
+    accountTeam: "Background", supportTier: "Background", renewalDate: "Background", deploymentType: "Background",
+    bottomLineStatus: "Background", background: "Background", goals: "Background", risks: "Background",
+    functionalNeeds: "Background", renewalEconomics: "Background",
+    pipelineOpportunities: "Sales Plan", salesPlan: "Sales Plan",
+    consumptionPlan: "Consumption Plan",
+    cadenceGoals: "Stakeholders & Actions", stakeholdersActions: "Stakeholders & Actions",
+    relationships: "Stakeholders & Actions", stakeholderGaps: "Stakeholders & Actions",
+  },
 };
-export function tabOf(pointer) {
-  if (pointer === "/renewalEconomics/assurance") return "Consumption Plan"; // the Consumption Plan's assurance card
+const TABS_1_12 = {
+  order: ["Cover", "Snapshot", "Renewal Test", "Strategic Initiatives", "No tab today"],
+  byTopKey: {
+    schemaVersion: "Cover", customerName: "Cover", reviewTier: "Cover", reviewAsOfDate: "Cover", dataClassification: "Cover",
+    accountTeam: "Cover",
+    snapshot: "Snapshot", pipelineOpportunities: "Snapshot", renewalEconomics: "Snapshot", supportTier: "Snapshot",
+    renewalDate: "Snapshot", statusSummary: "Snapshot", programClock: "Snapshot",
+    renewalTest: "Renewal Test", consumptionPlan: "Renewal Test",
+    strategicInitiatives: "Strategic Initiatives",
+  },
+};
+
+function tabsFor(schemaVersion) {
+  const minor = /^1\.(\d+)/.exec(String(schemaVersion ?? ""))?.[1];
+  return minor !== undefined && Number(minor) >= 12 ? TABS_1_12 : TABS_1_11;
+}
+
+/** The deck surface a pointer renders on, for the given contract version (1.11 when unstated). */
+export function tabOf(pointer, schemaVersion) {
+  const tabs = tabsFor(schemaVersion);
+  // The Tier A Consumption Plan tab showed renewal assurance on its own card.
+  if (tabs === TABS_1_11 && pointer === "/renewalEconomics/assurance") return "Consumption Plan";
   const top = pointer.split("/")[1];
-  return TAB_BY_TOP_KEY[top] ?? "No tab today";
+  return tabs.byTopKey[top] ?? "No tab today";
+}
+
+/** The tabs in deck order, for the given contract version. */
+export function tabOrder(schemaVersion) {
+  return [...tabsFor(schemaVersion).order];
 }
 
 /** True for a value that renders as a gap: "", null, or an empty array. `false` and 0 are values. */
@@ -137,7 +169,7 @@ export const isEmpty = (v) => v === "" || v === null || v === undefined || (Arra
 /** A short human label for a record so a gap row can say which record it belongs to. */
 export function recordLabel(record) {
   if (!record || typeof record !== "object") return "";
-  for (const k of ["name", "risk", "customerName", "label", "need", "offering", "useCases", "element", "tier", "key"]) {
+  for (const k of ["name", "risk", "customerName", "label", "need", "offering", "useCases", "element", "tier", "key", "title", "initiative"]) {
     if (typeof record[k] === "string" && record[k].trim()) return record[k].trim().slice(0, 48);
   }
   return "";

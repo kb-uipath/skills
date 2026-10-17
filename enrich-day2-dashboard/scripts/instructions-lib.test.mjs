@@ -50,10 +50,10 @@ test("falls back to the current guide name when a route has no usable manifest",
   t.mock.method(globalThis, "fetch", async (url) => {
     requested.push(String(url));
     if (String(url).endsWith("release-manifest.json")) return new Response("not found", { status: 404 });
-    return new Response(JSON.stringify({ targetSchemaVersion: "1.11", fields: {} }));
+    return new Response(JSON.stringify({ targetSchemaVersion: "1.12", fields: {} }));
   });
   const { from } = await loadInstructions({ baseUrl: "https://example.test/day2/" });
-  assert.equal(from, "https://example.test/day2/llm-guide/day2-dashboard-field-instructions-v1.11.json");
+  assert.equal(from, "https://example.test/day2/llm-guide/day2-dashboard-field-instructions-v1.12.json");
   assert.equal(requested.length, 2);
 });
 
@@ -69,4 +69,18 @@ test("sends a curl-style user agent on every request, which the route's WAF requ
   await loadInstructions({ baseUrl: "https://example.test/day2/" });
   assert.equal(agents.length, 2);
   assert.ok(agents.every((agent) => /^curl\//.test(agent ?? "")), JSON.stringify(agents));
+});
+
+test("maps a pointer to the tab that reads it, by the contract's schema version", async () => {
+  const { tabOf, tabOrder } = await import("./instructions-lib.mjs");
+  assert.equal(tabOf("/renewalTest/rows/0/confidence", "1.12"), "Renewal Test");
+  assert.equal(tabOf("/consumptionPlan/groups/0/rows/0/soldQuantity", "1.12"), "Renewal Test");
+  assert.equal(tabOf("/snapshot/csPriorities/0/title", "1.12"), "Snapshot");
+  assert.equal(tabOf("/pipelineOpportunities/0/name", "1.12"), "Snapshot");
+  assert.equal(tabOf("/strategicInitiatives/2/status", "1.12"), "Strategic Initiatives");
+  assert.equal(tabOf("/background/region", "1.12"), "No tab today");
+  assert.equal(tabOf("/background/region", "1.11"), "Background");
+  assert.equal(tabOf("/background/region"), "Background", "an unversioned call keeps the 1.11 map");
+  assert.deepEqual(tabOrder("1.12"), ["Cover", "Snapshot", "Renewal Test", "Strategic Initiatives", "No tab today"]);
+  assert.deepEqual(tabOrder("1.13"), tabOrder("1.12"), "a newer minor reads the newest map");
 });

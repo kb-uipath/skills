@@ -26,7 +26,7 @@ if (!file) {
   process.exit(2);
 }
 const repo = opt("--repo");
-const baseUrl = (opt("--base-url") ?? "https://agenticgtm.alpha.uipath.host/day2-v6/").replace(/\/?$/, "/");
+const baseUrl = (opt("--base-url") ?? "https://agenticgtm.alpha.uipath.host/day2-v7/").replace(/\/?$/, "/");
 
 const doc = JSON.parse(readFileSync(file, "utf8"));
 const { json: instructions, from } = await loadInstructions({ instructions: opt("--instructions"), repo, baseUrl });
