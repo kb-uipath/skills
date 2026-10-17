@@ -129,11 +129,21 @@ function checkLeaf(gp, value, f, concrete) {
     if (/YYYY-MM-DD/.test(spec.format ?? "") && !ISO_DATE.test(value)) errors.push(`${concrete}: must be YYYY-MM-DD`);
   }
   if (t === "number" && (!Number.isFinite(value) || value < 0)) errors.push(`${concrete}: must be a finite nonnegative number`);
+  const limit = itemLimit(spec);
+  if (t === "array" && limit !== undefined && value.length > limit) errors.push(`${concrete}: ${value.length} items; at most ${limit}`);
   const allowed = spec.allowedValues ?? [];
   if (allowed.length && value !== spec.emptyValue && !(t === "array" ? value.every((x) => allowed.includes(x)) : allowed.includes(value))) {
     errors.push(`${concrete}: ${JSON.stringify(value)} is not in [${allowed.join(", ")}]`);
   }
   if (t === "array") value.forEach((item, i) => checkTree(`${gp}/*`, item, f, `${concrete}/${i}`));
+}
+
+/** A list's item limit, as the descriptors state it in prose ("At most three ids"). */
+function itemLimit(spec) {
+  const m = JSON.stringify(spec?.constraints ?? []).match(/At most (\d+|one|two|three|four|five|six|seven|eight|nine|ten) (?:ids|items|entries)/i);
+  if (!m) return undefined;
+  const words = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+  return /^\d+$/.test(m[1]) ? +m[1] : words.indexOf(m[1].toLowerCase()) + 1;
 }
 
 /** The ids of every record of one kind in the document (after any ref: minting). */
@@ -309,6 +319,10 @@ for (const [n, f] of (findings ?? []).entries()) {
   if (!elementSpec) { errors.push(`${tag}: ${arrayGp}/* is not in the instructions`); continue; }
   if (typeof f.value === "string") { // a list of strings (e.g. executionPlan.day30)
     checkLeaf(`${arrayGp}/*`, f.value, f, `${f.pointer}/-`);
+    const limit = itemLimit(fields[arrayGp]);
+    if (limit !== undefined && !arr.value.includes(f.value) && arr.value.length >= limit) {
+      errors.push(`${tag}: ${f.pointer} already holds ${arr.value.length}; at most ${limit} (set the whole list, with supersedes, to replace one)`);
+    }
     if (errors.length > before) continue;
     if (!arr.value.includes(f.value)) {
       arr.value.push(f.value);
@@ -323,7 +337,15 @@ for (const [n, f] of (findings ?? []).entries()) {
   checkTree(`${arrayGp}/*`, written, f, `${f.pointer}/-`);
   if (errors.length > before) continue;
   const existingIndex = idKey ? arr.value.findIndex((r) => norm(r[idKey]) !== "" && norm(r[idKey]) === norm(f.value[idKey])) : -1;
-  if (fixed && existingIndex < 0) { errors.push(`${tag}: ${fixed}; ${JSON.stringify(f.value[idKey] ?? null)} is not one of them`); continue; }
+  if (fixed && existingIndex < 0) {
+    // A key the instructions allow but this document lacks is a hand-authored baseline, not an unknown key.
+    const known = fields[`${arrayGp}/*/${idKey}`]?.allowedValues ?? [];
+    const key = f.value[idKey];
+    errors.push(known.some((k) => norm(k) === norm(key))
+      ? `${tag}: this document has no ${JSON.stringify(key)} row to patch; the app restores all of them on import, so start from a document the app exported`
+      : `${tag}: ${fixed}; ${JSON.stringify(key ?? null)} is not one of them (${known.join(", ")})`);
+    continue;
+  }
   if (existingIndex >= 0) { // patch in place, keeping the id
     patchRecord(arrayGp, arr.value[existingIndex], f.value, f, tag, `${f.pointer}/${existingIndex}`);
   } else {

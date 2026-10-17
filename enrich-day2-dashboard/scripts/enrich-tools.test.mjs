@@ -167,7 +167,7 @@ const v7 = {
   targetSchemaVersion: "1.12",
   fields: {
     "/snapshot": f("object", "evidence_required"),
-    "/snapshot/topPursuitIds": f("array", "attestation_allowed"),
+    "/snapshot/topPursuitIds": f("array", "attestation_allowed", { constraints: ["At most three ids; each must match an existing /pipelineOpportunities/*/id."] }),
     "/snapshot/topPursuitIds/*": f("string", "attestation_allowed", { format: "uuid" }),
     "/snapshot/pursuits": f("array", "evidence_required"),
     "/snapshot/pursuits/*": f("object", "evidence_required"),
@@ -189,7 +189,7 @@ const v7 = {
     "/renewalTest/rows/*/demand12MoUnits": f("number", "evidence_required", { nullable: true, emptyValue: null }),
     "/strategicInitiatives": f("array", "evidence_required"),
     "/strategicInitiatives/*": f("object", "evidence_required"),
-    "/strategicInitiatives/*/initiative": f("string", "system_managed", { allowedValues: ["agentification", "codingAgents"] }),
+    "/strategicInitiatives/*/initiative": f("string", "system_managed", { allowedValues: ["agentification", "codingAgents", "orchestration"] }),
     "/strategicInitiatives/*/goal6Mo": f("string", "evidence_required"),
     "/strategicInitiatives/*/status": f("string", "attestation_allowed", { allowedValues: ["On track", "At risk", "Not started", ""] }),
     "/pipelineOpportunities": f("array", "evidence_required"),
@@ -310,7 +310,26 @@ test("v7: the five initiatives are updated in place by key and never added", () 
   assert.equal(patched.status, 0, patched.stderr);
   assert.equal(patched.doc.strategicInitiatives.length, 2);
   assert.equal(patched.doc.strategicInitiatives[1].goal6Mo, "Three developers shipping");
-  assert.match(applyV7([{ op: "add", pointer: "/strategicInitiatives", value: { initiative: "quantum", goal6Mo: "x" }, ...ok }]).stderr, /five initiatives are fixed/);
+  assert.match(applyV7([{ op: "add", pointer: "/strategicInitiatives", value: { initiative: "quantum", goal6Mo: "x" }, ...ok }]).stderr,
+    /five initiatives are fixed; "quantum" is not one of them \(agentification, codingAgents, orchestration\)/);
+});
+
+test("v7: a fixed initiative missing from a hand-authored baseline is named as missing, not as unknown", () => {
+  const r = applyV7([{ op: "add", pointer: "/strategicInitiatives", value: { initiative: "orchestration", goal6Mo: "x" }, ...ok }]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /has no "orchestration" row/);
+  assert.doesNotMatch(r.stderr, /not one of them/);
+});
+
+test("v7: the top pursuits take at most three ids, as the guide says", () => {
+  const opps = [1, 2, 3, 4].map((n) => ({ id: `11111111-1111-4111-8111-00000000000${n}`, key: `OPP-${n}` }));
+  const four = write("v7-four.json", { ...v7Baseline, pipelineOpportunities: opps, snapshot: { topPursuitIds: opps.slice(0, 3).map((o) => o.id), pursuits: [] } });
+  const attested = { attestedBy: "Account executive (call 2026-10-01)", supersedes: "The team re-ranked its pursuits", ...ok };
+  const refs = (n) => opps.slice(0, n).map((o) => `ref:opportunity:${o.key}`);
+  assert.match(applyV7([{ op: "set", pointer: "/snapshot/topPursuitIds", value: refs(4), ...attested }], four).stderr, /4 items; at most 3/);
+  assert.match(applyV7([{ op: "add", pointer: "/snapshot/topPursuitIds", value: "ref:opportunity:OPP-4", ...attested }], four).stderr, /already holds 3; at most 3/);
+  assert.deepEqual(applyV7([{ op: "set", pointer: "/snapshot/topPursuitIds", value: refs(3).reverse(), ...attested }], four).doc.snapshot.topPursuitIds,
+    opps.slice(0, 3).map((o) => o.id).reverse());
 });
 
 test("v7: the healthy threshold is the account team's to set", () => {
