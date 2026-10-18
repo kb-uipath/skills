@@ -30,6 +30,7 @@ The one `not_used` field the UI edits without that limit is `relationships`, whi
 | --- | --- | --- |
 | `accountTeam.*` (CSM and TAM as CS owners, AE and SE as collaborators, exec sponsor) | evidence | **The SFDC account team first — system of record**; only where SFDC is silent, intro emails or signatures naming the role holder |
 | `reviewTier`, `dataClassification` | attest | The user's statement for this run |
+| `reviewAsOfDate` | attest | The date of the review this document is for, as the user states it. Blocks publication; with `snapshot.contractStartDate` and `renewalDate` it places "Month X of Y" |
 
 ### Snapshot
 
@@ -38,10 +39,17 @@ The one `not_used` field the UI edits without that limit is `relationships`, whi
 | `snapshot.accountPlay` | evidence | The account plan or SFDC account record: Consumption, Commercial or Hybrid |
 | `supportTier`, `renewalDate`, `renewalEconomics.currentArrUsd` | evidence | Contract and SFDC contract/renewal records (Contracted ARR is `currentArrUsd`) |
 | `snapshot.contractStartDate` | evidence | The start date of the contract `renewalDate` ends (SFDC contract) — it drives "Month X of Y" |
+| `programClock.monthsElapsed`, `.totalMonths` | evidence | Only when the dates cannot place the clock (no contract start): the contracted term and the months elapsed, as a source states them |
 | `snapshot.status` (Healthy / At risk / Unhealthy) | attest | An explicit account-team health call for this review; never from tone or figures |
-| `statusSummary` (the bottom line's 1–2 sentences) | evidence | What the team says is working and the top risks, paraphrased |
-| `pipelineOpportunities[]`: `name`, `key`, `owner`, `liveBy` (close date or go-live) | evidence | **SFDC opportunities first**; `liveBy` from the stated go-live, else the close date marked as such |
-| `pipelineOpportunities[]`: `products[]` (card tags), `successMeasure`, `blocker`, `execAsk` (Leadership ask), `customerValueUsd` | evidence | Solution designs, pursuit plans and team statements; `customerValueUsd` only from a validated statement — never hours converted to dollars |
+| `statusSummary` (the bottom line's 1–2 sentences) | evidence | What the team says is working and the top risks, paraphrased; never a restatement of the derived figures |
+| `renewalEconomics.usageOnlyEstimateUsd` / `…EvidenceId` | evidence + an approved ledger record | Only a stated usage-only estimate. Blocks publication; the evidence record's `approved` flag is `human_only`, so publication needs the account team |
+| `renewalEconomics.assurance` | **human** | `human_only` and blocks publication; High/Medium/Low only when the account team writes it |
+| `pipelineOpportunities[]`: `name`, `key`, `liveBy` (close date or go-live) | evidence | **SFDC opportunities first**; `liveBy` from the stated go-live, else the close date marked as such |
+| `pipelineOpportunities[]`: `stage`, `status`, `estimatedIarrUsd`, `consumptionRowIds[]`, `phase` | evidence | As the 1.11 Sales Plan rows below. On v7 they sit in each pursuit card's publication fields; `stage`, `status` and `estimatedIarrUsd` block publication |
+| `pipelineOpportunities[].projectedConsumption` | evidence | The quantity, unit and period the pursuit is expected to consume, as its sizing states it — never converted between units. Blocks publication for each opportunity |
+| `pipelineOpportunities[]`: `products[]` (card tags), `successMeasure`, `blocker`, `customerValueUsd` | evidence | Solution designs, pursuit plans and team statements; `customerValueUsd` only from a validated statement — never hours converted to dollars |
+| `pipelineOpportunities[].execAsk` (Leadership ask) | attest | The ask as a named person states it |
+| `pipelineOpportunities[].owner`, `.motions[]`, `.nextGate`, `.nextGateDate` | **human** | `human_only`, and each present opportunity needs them to publish. Offer the SFDC owner and close date as suggestions in the report; the account team writes them |
 | `snapshot.topPursuitIds[]` (`ref:opportunity:<key>`, at most three) | attest | The team naming its top pursuits; left empty, the slide shows the three highest-value open opportunities |
 | `snapshot.pursuits[]`: `opportunityId` (`ref:opportunity:<key>`), `draw[]` (`rowId` as `ref:row:<offering>`, `units`) | evidence | A sizing — solution design, sizing workbook or stated estimate — in each row's own unit. **Never back-solve units from an opportunity amount**; Est. rev. is derived from the draw |
 | `snapshot.pursuits[].critical`, `.cardStatus` | attest | The team saying which pursuit the renewal depends on most, and the pursuit owner's status |
