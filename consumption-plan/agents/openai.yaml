@@ -1,4 +1,4 @@
 interface:
   display_name: "Consumption Plan Builder"
-  short_description: "Build license consumption plans and Day 2 tabs"
-  default_prompt: "Use $consumption-plan to build a Salesforce-sourced license consumption plan workbook and feed the Day 2 Consumption Plan tab without inventing utilization."
+  short_description: "Fill every Day 2 number and the consumption plan"
+  default_prompt: "Use $consumption-plan to complete this account's Day 2 v7 draft: every number from Salesforce, governed telemetry and open opportunities, the words through enrich-day2-dashboard, and a gap list that gives each remaining blank an owner, without inventing utilization."

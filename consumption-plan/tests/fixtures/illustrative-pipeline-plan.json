@@ -1,0 +1,73 @@
+{
+  "account": { "name": "Example Corp (Illustrative)", "salesforceId": "" },
+  "asOf": "2026-08-01",
+  "contract": { "contractNumber": "00000001", "startDate": "2025-12-01", "renewalDate": "2026-12-01" },
+  "rows": [
+    { "category": "Users", "product": "Automation Developer", "productCode": "", "unit": "users", "licensingModel": "capped", "arrUsd": 60000, "discountPercent": 25, "purchasedQuantity": 20, "consumedQuantity": null, "forecastUnits": { "q1": null, "q2": null, "q3": null, "q4": null }, "notes": "" },
+    { "category": "Robots", "product": "Unattended Robot", "productCode": "UIFDUR00000", "unit": "robots", "licensingModel": "capped", "arrUsd": 300000, "discountPercent": 32.5, "purchasedQuantity": 100, "consumedQuantity": 60, "forecastUnits": { "q1": null, "q2": null, "q3": null, "q4": null }, "notes": "" },
+    { "category": "Consumables", "product": "AI Units", "productCode": "", "unit": "units", "licensingModel": "capped", "arrUsd": 40000, "discountPercent": 20, "purchasedQuantity": 1000000, "consumedQuantity": null, "forecastUnits": { "q1": null, "q2": null, "q3": null, "q4": null }, "notes": "" },
+    { "category": "Platform / Capabilities", "product": "Platform - Standard", "productCode": "", "unit": "tier", "licensingModel": "", "arrUsd": 0, "discountPercent": null, "purchasedQuantity": 1, "consumedQuantity": null, "forecastUnits": { "q1": null, "q2": null, "q3": null, "q4": null }, "notes": "" }
+  ],
+  "pipeline": {
+    "opportunities": [
+      {
+        "salesforceId": "006EXAMPLE0000001", "name": "Example Corp - AI Units and Robot Expansion", "stage": "Negotiation", "amountUsd": 120000,
+        "closeDate": "2026-10-01", "lastModifiedDate": "2026-07-20", "isRenewal": false, "ownerName": "Illustrative Owner",
+        "lines": [
+          { "product": "AI Units Bundle 1K", "productCode": "", "quantity": 400, "units": 400000, "row": "AI Units" },
+          { "product": "Unattended Robot", "productCode": "UIFDUR00000", "quantity": 20, "units": 20, "row": "Unattended Robot" }
+        ]
+      },
+      {
+        "salesforceId": "006EXAMPLE0000002", "name": "Example Corp - AI Units Phase 2", "stage": "Proposal", "amountUsd": 100000,
+        "closeDate": "2027-05-01", "lastModifiedDate": "2026-07-30", "isRenewal": false, "ownerName": "Illustrative Owner",
+        "lines": [
+          { "product": "AI Units Bundle 1K", "productCode": "", "quantity": 1000, "units": 1000000, "row": "AI Units" }
+        ]
+      },
+      {
+        "salesforceId": "006EXAMPLE0000003", "name": "Example Corp - Robot Expansion FY28", "stage": "Prospecting", "amountUsd": 5000,
+        "closeDate": "2027-10-01", "lastModifiedDate": "2026-07-25", "isRenewal": false, "ownerName": "Illustrative Owner",
+        "lines": [
+          { "product": "Unattended Robot", "productCode": "UIFDUR00000", "quantity": 10, "units": 10, "row": "Unattended Robot" }
+        ]
+      },
+      {
+        "salesforceId": "006EXAMPLE0000004", "name": "Example Corp - Annual Renewal", "stage": "Negotiation", "amountUsd": 300000,
+        "closeDate": "2026-11-30", "lastModifiedDate": "2026-07-18", "isRenewal": true, "ownerName": "Illustrative Owner",
+        "lines": [
+          { "product": "Unattended Robot", "productCode": "UIFDUR00000", "quantity": 100, "units": 100, "row": "Unattended Robot" },
+          { "product": "Automation Developer", "productCode": "", "quantity": 20, "units": 20, "row": "Automation Developer" }
+        ]
+      },
+      {
+        "salesforceId": "006EXAMPLE0000005", "name": "Example Corp - Legacy Robot Upsell", "stage": "Proposal", "amountUsd": 200000,
+        "closeDate": "2026-07-15", "lastModifiedDate": "2026-05-02", "isRenewal": false, "ownerName": "Illustrative Owner",
+        "lines": [
+          { "product": "Unattended Robot", "productCode": "UIFDUR00000", "quantity": 50, "units": 50, "row": "Unattended Robot" }
+        ]
+      },
+      {
+        "salesforceId": "006EXAMPLE0000006", "name": "Example Corp - Agent Pilot", "stage": "Qualification", "amountUsd": 40000,
+        "closeDate": "2026-12-01", "lastModifiedDate": "2026-07-22", "isRenewal": false, "ownerName": "Illustrative Owner",
+        "lines": [
+          { "product": "Agent Units Bundle 1K", "productCode": "", "quantity": 50, "units": 50000, "row": "" }
+        ]
+      },
+      {
+        "salesforceId": "006EXAMPLE0000007", "name": "Example Corp - AI Units Enterprise Agreement", "stage": "Qualification", "amountUsd": 30000,
+        "closeDate": "2026-12-15", "lastModifiedDate": "2026-07-23", "isRenewal": false, "ownerName": "Illustrative Owner",
+        "lines": [
+          { "product": "AI Units Enterprise Agreement", "productCode": "", "quantity": 1, "units": null, "row": "AI Units" }
+        ]
+      },
+      {
+        "salesforceId": "006EXAMPLE0000008", "name": "Example Corp - Platform Standard Tier", "stage": "Proposal", "amountUsd": 20000,
+        "closeDate": "2027-01-15", "lastModifiedDate": "2026-07-24", "isRenewal": false, "ownerName": "Illustrative Owner",
+        "lines": [
+          { "product": "Platform - Standard", "productCode": "", "quantity": 1, "units": 1, "row": "Platform - Standard" }
+        ]
+      }
+    ]
+  }
+}

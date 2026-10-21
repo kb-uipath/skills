@@ -43,7 +43,7 @@ const IDENTITY = {
 const FIXED = { "/strategicInitiatives": "the five initiatives are fixed" };
 // Fields that hold another record's id, by the kind of record: a leaf name, or an exact generic pointer.
 const REFERENCE_LEAVES = { rowId: "row", opportunityId: "opportunity" };
-const REFERENCE_POINTERS = { "/snapshot/topPursuitIds/*": "opportunity" };
+const REFERENCE_POINTERS = { "/snapshot/topPursuitIds/*": "opportunity", "/pipelineOpportunities/*/consumptionRowIds/*": "row" };
 const REFERENCE_NAMES = { row: "consumption row", opportunity: "pipeline opportunity" };
 const referenceKind = (gp) => REFERENCE_POINTERS[gp] ?? REFERENCE_LEAVES[gp.split("/").pop()];
 const PLACEHOLDER = /^\s*(tbd|unknown|n\/a|none|-+|\?+)\s*$/i;

@@ -31,12 +31,11 @@ field instructions are ~350 KB: filter them by pointer prefix instead of reading
 Read `llm.md` before writing any field; this skill only adds the evidence process around it.
 
 Two anchors used throughout:
-- **Skill root** — this directory (`~/.claude/skills/enrich-day2-dashboard`); all
-  `scripts/…` and `references/…` paths are relative to it.
-- **Dashboard repo** — the app's source checkout (needed for the envelope contract, the
-  `--repo` validation mode, and the archive binding). Ask the user for its path if it
-  isn't the working directory; on this machine it has lived at
-  `~/Documents/Day 2 Review Dashboard Generator`.
+- **Skill root** — this directory; all `scripts/…` and `references/…` paths are relative
+  to it.
+- **Dashboard repo** — the dashboard app's source checkout (needed for the envelope
+  contract, the `--repo` validation mode, and the archive binding). Ask the user for its
+  path if it isn't the working directory.
 
 Schema-1.4 documents and the retired Salesforce-first flow: use `legacy/` unchanged
 (see [legacy/LEGACY.md](legacy/LEGACY.md)). Do not port 1.4 machinery into this flow.
@@ -86,19 +85,37 @@ Schema-1.4 documents and the retired Salesforce-first flow: use `legacy/` unchan
   existing `id` unchanged; new collection entries get fresh UUIDs (the apply script mints
   them). Never overwrite a non-empty value without a stated reason in the finding.
 - **The consumption rows have their own skill.** Entitlement is not consumption, and the
-  rows, ids and forecasts carry decisions the account owner already made. When the baseline
-  has a filled `consumptionPlan`, do not write to `consumptionPlan.*`; refresh it with
-  `consumption-plan` instead. From here you may add the evidence-backed
-  `renewalEconomics.*` fields and the v7 containers that *refer* to rows — `renewalTest.rows`
-  and a pursuit's `draw` — naming each row as `ref:row:<offering>`. The apply script
-  resolves the reference and, when a row has no id yet, gives it a deterministic one: the
-  only thing it ever writes on a row.
-- **Est. rev. is derived, never entered.** A pursuit card's Est. rev. is its unit draw
-  priced at the account's contracted unit prices. Fill `snapshot.pursuits[].draw[]` (units
-  per row) only from a sizing — a solution design, a sizing workbook, a stated estimate —
-  and never back-solve units from a Salesforce opportunity amount, which is new sales, not
-  entitlement being consumed. `renewalTest.rows[].demand6MoUnits`/`demand12MoUnits` come
-  only from a stated forecast.
+  rows, ids and forecasts carry decisions the account owner already made. Never write to
+  `consumptionPlan.*`; `consumption-plan` owns the rows. A usage statement you find for a
+  row (seats assigned, robots in production, units consumed) goes into that skill's plan
+  file — `consumedQuantity`, `consumedAsOf`, the source in `notes`, and `consumedBasis`
+  with the basis `consumption-plan`'s `references/evidence-precedence.md` gives it (a
+  robot figure with no telemetry is `estimate`, never `statement`) — and reaches the
+  document through its `to-day2.mjs`. From here you may add the
+  evidence-backed `renewalEconomics.*` fields and the v7 containers that *refer* to rows —
+  `renewalTest.rows` and a pursuit's `draw` — naming each row as `ref:row:<offering>`. The
+  apply script resolves the reference and, when a row has no id yet, gives it a
+  deterministic one: the only thing it ever writes on a row.
+- **Est. rev. is derived, never entered; draws and demand come from quantities.** A
+  pursuit card's Est. rev. is its unit draw priced at the account's contracted unit
+  prices. Renewal Test demand (`demand6MoUnits`, `demand12MoUnits`) comes from an open
+  opportunity's line units, timed by its close date, or from a sizing or forecast a
+  document states in units with a date. Draw units (`snapshot.pursuits[].draw[]`) come
+  only from a pursuit the team sized (a use case in `consumption-plan`'s plan file, or a
+  team-stated sizing of that pursuit's use of today's entitlement): **an opportunity never
+  draws**, since its product lines are new entitlement the customer is buying and a draw is use of what the
+  account already holds, so its card shows no Est. rev. `consumption-plan` writes the
+  demand, the use cases' draws and `snapshot.otherPipelineActivityUsd` by the rule in its
+  `references/pipeline-demand.md`: an unsized line leaves its row's demand (and a use
+  case's draw units) blank. An opportunity's quantities are the "stated forecast" the
+  field instructions ask for, not a draw's "sized figure"; where
+  [references/field-mapping.md](references/field-mapping.md) or
+  [references/source-playbooks.md](references/source-playbooks.md) read narrower, this
+  rule wins. Never back-solve units from an opportunity amount: dollars size nothing. A
+  newer dated forecast for a row wins over the opportunity figure, and the report says so.
+- **A pipeline driver names an opportunity or use case and when it lands.** A remark with
+  no landing date ("the idle robots wait for the next rollout") is a lead for the report,
+  never a driver.
 - **The five strategic initiatives are fixed.** Update a row by its `initiative`
   (`agentification`, `codingAgents`, `orchestration`, `applicationTesting`,
   `verticalSolutions`); the apply script refuses to add one. A milestone needs a date, an
@@ -140,6 +157,15 @@ Pick the baseline, in order of preference:
 3. **Blank template** — `llm-guide/day2-dashboard-template-v1.12.json` for a brand-new
    account.
 
+**Numbers first.** Run `consumption-plan` before anything else when the baseline's
+consumption rows are empty, when its `consumptionPlan.asOf` falls in an earlier fiscal
+quarter than today, or, on a schema 1.12 document, when its rows are current but no
+pipeline numbers were ever computed: it has no `renewalTest.rows` and no pursuit draws
+while Salesforce has open, non-renewal opportunities for the account (a schema 1.11
+document has neither field, so this last test never applies to it). Its one run (its
+Step 9) fills the rows, and on schema 1.12 the pipeline numbers, brings you back to Step 2
+here with its document as the baseline, and finishes with the gap list and delivery.
+
 Then run the gap inventory; it is the scope of the sweep:
 
 ```
@@ -164,12 +190,16 @@ and `BLOCKS`: typically `reviewTier` and `dataClassification`.
 
 **Start with Salesforce.** It is the system of record for basic account data: resolve
 the Account exactly (stopping if the name is ambiguous) and fill everything SFDC can
-authoritatively answer — pipeline stage, amount, close date, owner, region, account-team
-names — before touching any other source. A customer can span several Salesforce
-accounts (one customer on two accounts and two contracts): resolve each exactly, name the primary
-one for the cover and account-team fields, and keep consumption rows grouped by contract.
-Then sweep the remaining sources newest first for what SFDC does not hold, which is the
-judgment and narrative material.
+authoritatively answer — pipeline stage, amount, close date, region, account-team
+names, and the opportunity owner as a suggestion — before touching any other source.
+When `consumption-plan` ran first on a schema 1.12 document, its open opportunities are
+already in the document, keyed by Salesforce id: add words to those records by that key,
+and leave out what it left out (renewals, opportunities past their close date). On schema
+1.11 it merged the rows only, so the opportunities are yours to fill as usual. A customer can span several
+Salesforce accounts (one customer on two accounts and two contracts): resolve each
+exactly, name the primary one for the cover and account-team fields, and keep consumption
+rows grouped by contract. Then sweep the remaining sources newest first for what SFDC
+does not hold, which is the judgment and narrative material.
 
 Follow the per-source recipes in
 [references/source-playbooks.md](references/source-playbooks.md). Write findings to a
@@ -252,9 +282,10 @@ Edit UI (slower, same lineage).
 ### 6. Verify and hand off
 
 - Reload the app; confirm the cover and the three tabs render the enriched content and the
-  console is clean. On the Snapshot, every top-pursuit card should show an Est. rev. (a gap
-  there means a draw is unsized or on an unpriced row) and the Known pipeline demand card
-  should equal the total column. On the Renewal Test, a "Set the healthy threshold" gap
+  console is clean. On the Snapshot, a top-pursuit card with no Est. rev. is an
+  opportunity's (it draws nothing), or a use case's whose draw is missing, unsized or on
+  an unpriced row: the gap list names each. Once every card shows one, the Known pipeline
+  demand card should equal the total column. On the Renewal Test, a "Set the healthy threshold" gap
   means the account team has not agreed `healthyAtPercent` yet — that is theirs to set.
 - Confirm lineage: open the Save to Shared Archive dialog and check its "Parent
   revision" line equals the account's latest archived revision id (none is shown for a
@@ -274,7 +305,12 @@ Edit UI (slower, same lineage).
 | Marking health/severity from meeting tone, or copying severities from a deck an assistant drafted | Judgment fields need explicit team statements from a person |
 | Importing again to "update" a draft | Import makes a new draft each time; update in place, or tell the user which card is newest |
 | Overwriting existing Consumption Plan rows from an enrichment sweep | Rows belong to `consumption-plan`; leave them alone and refer to them with `ref:row:` |
-| Entering the Salesforce opportunity amount as a pursuit's Est. rev., or back-solving units from it | Est. rev. is derived from a sized unit draw; leave the draw empty until a sizing states it |
+| Entering the Salesforce opportunity amount as a pursuit's Est. rev., or back-solving units from it | Est. rev. is derived from the unit draw; draw units come from a use case's sizing, never from an amount |
+| Drawing an opportunity's line quantities on its pursuit card | An opportunity is new entitlement and draws nothing from today's rows; only a use case the team sized draws. Ask the team to name top pursuits that draw on existing entitlement |
+| Leaving demand empty because an opportunity's line items are "new sales, not consumption" | They are the stated demand for the rows they map to, timed by close date; `consumption-plan` writes them |
+| Writing a seat or robot count you found into `consumptionPlan.*` | Put it in `consumption-plan`'s plan file, with the basis its `references/evidence-precedence.md` gives (a robot figure with no telemetry is `estimate`), and merge it with its `to-day2.mjs` |
+| A pipeline driver from a remark with no landing date | Name an opportunity or use case and when it lands; report the remark as a lead |
+| Adding an opportunity again after `consumption-plan` wrote it, or one it left out | Patch the existing record by its Salesforce-id key; renewals and stale opportunities stay out |
 | Setting the healthy threshold from an example (70%, 85%) | `renewalTest.healthyAtPercent` is `human_only`: the account team agrees it for this account |
 | Adding a sixth strategic initiative | The five are fixed; record other work as a CS Day 2 Priority |
 | Writing a raw row or opportunity id into a finding | Name it with `ref:row:` / `ref:opportunity:`; ids are minted and resolved by the script |

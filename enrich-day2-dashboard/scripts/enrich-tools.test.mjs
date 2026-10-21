@@ -195,6 +195,8 @@ const v7 = {
     "/pipelineOpportunities": f("array", "evidence_required"),
     "/pipelineOpportunities/*": f("object", "evidence_required"),
     "/pipelineOpportunities/*/key": f("string", "evidence_required"),
+    "/pipelineOpportunities/*/consumptionRowIds": f("array", "evidence_required"),
+    "/pipelineOpportunities/*/consumptionRowIds/*": f("string", "evidence_required", { format: "uuid" }),
   },
 };
 const OPP = "11111111-1111-4111-8111-000000000001";
@@ -285,6 +287,17 @@ test("v7: patching a pursuit's draw merges lines by row and keeps the lines the 
   assert.match(applyV7([changeUnits], v7Pursuits).stderr, /draw\/0\/units already has a value/);
   const superseded = applyV7([{ ...changeUnits, supersedes: "The Q3 forecast replaces the August estimate" }], v7Pursuits);
   assert.deepEqual(superseded.doc.snapshot.pursuits[1].draw, [{ id: APP_LINE, rowId: ROBOT, units: 9 }]);
+});
+
+test("v7: an opportunity's consumptionRowIds take ref:row tokens, in the order given, and nothing else", () => {
+  const add = (ids) => applyV7([{ op: "add", pointer: "/pipelineOpportunities", value: { key: "OPP-1", consumptionRowIds: ids }, ...ok }]);
+  const r = add(["ref:row:Unattended Robot", "ref:row:AI Units"]);
+  assert.equal(r.status, 0, r.stderr);
+  const [aiUnits, robot] = r.doc.consumptionPlan.groups.map((group) => group.rows[0].id);
+  assert.match(aiUnits, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/, "a row with no id is given one");
+  assert.deepEqual(r.doc.pipelineOpportunities, [{ id: OPP, key: "OPP-1", consumptionRowIds: [robot, aiUnits] }], "the existing opportunity is patched, not duplicated");
+  assert.match(add(["ref:opportunity:OPP-1"]).stderr, /holds a ref:opportunity id; this field takes ref:row/);
+  assert.match(add([OPP]).stderr, /names no consumption row in this document/);
 });
 
 test("v7: a resolved id goes only into a reference field of its own kind, never into an id", () => {

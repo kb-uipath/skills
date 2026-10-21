@@ -58,17 +58,20 @@ wrong shape for this read-only flow) or the retired `sf`-CLI schema-1.4-era flow
 `legacy/` — do not port that machinery here.
 
 SFDC is strong for: the pipeline (`name`, `key`, owner, close date — v7's pursuit cards and
-`liveBy`; v6's Sales Plan `stage`/`estimatedIarrUsd`/`nextGateDate`), the account team
-names for `accountTeam.*` (and v6's `background.region`), the contract dates behind v7's
+`liveBy`; v6's Sales Plan `stage`/`estimatedIarrUsd`/`nextGateDate`), the account team names
+for `accountTeam.*` (and v6's `background.region`), the contract dates behind v7's
 `snapshot.contractStartDate` and `renewalDate`, and confirming
-`pipelineOpportunities[].owner`. An opportunity amount is new sales: it never becomes a v7
-pursuit's unit draw or Est. rev. It is weak or unusable for anything judgment- or
-narrative-based: `background.accountStrategy`, `salesPlan.executionPlan`
-(`day30`/`day60`/`day90`), `salesPlan.nextExecutiveMove`, `background.coreMotions[]`,
-`renewalEconomics.assurance`, and any `relationships[].relationshipStatus` or MEDDPICC-style
-role judgment. Flag these explicitly as candidates for the conversational interview agent
-(the embedded assistant's interview mode) rather than guessing from SFDC data that doesn't
-actually state them.
+`pipelineOpportunities[].owner`. An opportunity's line quantities are the stated demand for
+the rows they map to, timed by its close date: `consumption-plan` turns them into Renewal
+Test demand and other pipeline activity (its `references/pipeline-demand.md`), never into a
+pursuit draw, since they are new entitlement, not use of today's rows. An opportunity amount
+never becomes a unit draw or Est. rev.: units are never back-solved from dollars. SFDC is
+weak or unusable for anything judgment- or narrative-based: `background.accountStrategy`,
+`salesPlan.executionPlan` (`day30`/`day60`/`day90`), `salesPlan.nextExecutiveMove`,
+`background.coreMotions[]`, `renewalEconomics.assurance`, and any
+`relationships[].relationshipStatus` or MEDDPICC-style role judgment. Flag these explicitly
+as candidates for the conversational interview agent (the embedded assistant's interview
+mode) rather than guessing from SFDC data that doesn't actually state them.
 
 ## Slack (public channels)
 

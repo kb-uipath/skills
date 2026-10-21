@@ -60,3 +60,23 @@ to the matched SKU's `meteringBasis` in the pricebook:
 Getting this backwards inflates a seat forecast fourfold. Prefer `"auto"` and
 let the pricebook decide; override only when the customer's own basis is known
 to differ, and say why in `entitlementNote`.
+
+## The Renewal Test's demand from the forecast
+
+The plan file's rows carry no `forecastBasis` and `pipeline.mjs` reads no
+pricebook, so when a row's team forecast gives its +6/+12-month demand
+([pipeline-demand.md](pipeline-demand.md#the-teams-forecast-wins)) the row's
+kind (its `kind`, else its category) decides, as the field instructions'
+"named users, robots, and platform tiers are peak; unit bundles are
+cumulative" does:
+
+| Row kind | Window's demand |
+| --- | --- |
+| `Consumables` | The counted quarters' sum |
+| `Users`, `Robots`, any other consumed row | The busiest counted quarter less the row's consumed figure, never below 0; no figure without a consumed figure |
+| `Platform / Capabilities` | None: a tier is granted, not consumed |
+
+A peak forecast is a count in use, so only what it adds over today's consumed
+figure is new demand: robots forecast at 65 and 85 against 60 in use is 25 more
+within six months, not 150. Write seat and robot quarters as the count expected
+in use in each quarter, and consumable quarters as each quarter's draw.
